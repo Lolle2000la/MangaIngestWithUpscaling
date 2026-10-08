@@ -115,10 +115,7 @@ a change resets the spool and the worker's engine identity no longer varies with
   `SweepStale` could in theory reclaim an in-use spool within the retention window.
 - Detection stem-collision handling and detection-upload exception classification are inconsistent
   with the upscale path (both preserve the spool, so safe).
-- On host shutdown the worker is stopped by best-effort NDJSON `cancel`/`shutdown` commands; a failed
-  `cancel` send is now logged at Information instead of Debug, so a lost stop is visible. The
-  terminal's SIGINT also reaches the child directly, and the worker now handles SIGINT/SIGTERM
-  gracefully (submodule `9e0a956`).
+- On host shutdown the in-process upscale worker terminates gracefully via `CancellationToken`.
 
 ## Architecture follow-ups (still open)
 

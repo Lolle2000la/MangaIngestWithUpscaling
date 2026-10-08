@@ -74,6 +74,7 @@ public class OnnxUpscaleEngine(
 
                 cancellationToken.ThrowIfCancellationRequested();
 
+                using var inferenceScope = sessionFactory.EnterInferenceScope();
                 InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
                 bool isFp16 =
                     session.InputMetadata.TryGetValue("input", out var inputMeta)
@@ -306,11 +307,6 @@ public class OnnxUpscaleEngine(
             }
 
             File.Move(tempOutCbz, outputCbzPath);
-
-            // Invalidate cached sessions after a chapter completes to return all GPU VRAM and GTT
-            // buffers back to the driver. This guarantees zero cumulative memory creep across chapters.
-            sessionFactory.InvalidateAllSessions();
-            GC.Collect();
         }
         finally
         {

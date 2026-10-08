@@ -392,13 +392,30 @@ public class MangaJaNaiUpscaler(
 
         foreach (var package in GetModelPackages())
         {
-            bool needsDownload = await ShouldDownloadPackage(package, cancellationToken);
+            string markerPath = Path.Combine(ModelPath, $".verified_{package.ZipHash}");
+            bool needsDownload = await ShouldDownloadPackage(
+                package,
+                markerPath,
+                cancellationToken
+            );
 
             if (needsDownload)
             {
                 await DownloadAndExtractPackage(package, cancellationToken);
                 // Verify all model file hashes immediately after download/extraction
                 await VerifyPackageHashes(package, cancellationToken);
+                try
+                {
+                    await File.WriteAllTextAsync(markerPath, package.ZipHash, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "Failed to write package verification marker {MarkerPath}",
+                        markerPath
+                    );
+                }
             }
         }
     }
@@ -644,6 +661,7 @@ public class MangaJaNaiUpscaler(
 
     private async Task<bool> ShouldDownloadPackage(
         ModelPackage package,
+        string markerPath,
         CancellationToken cancellationToken
     )
     {
@@ -667,7 +685,34 @@ public class MangaJaNaiUpscaler(
             }
         }
 
-        return false;
+        if (File.Exists(markerPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            logger.LogInformation(
+                "Verifying file integrity for existing model package {ZipUrl}...",
+                package.ZipUrl
+            );
+            await VerifyPackageHashes(package, cancellationToken);
+            try
+            {
+                await File.WriteAllTextAsync(markerPath, package.ZipHash, cancellationToken);
+            }
+            catch { }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Model files for package {ZipUrl} failed integrity verification, re-download required",
+                package.ZipUrl
+            );
+            return true;
+        }
     }
 
     private async Task DownloadAndExtractPackage(

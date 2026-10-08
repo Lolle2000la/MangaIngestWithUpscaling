@@ -10,6 +10,7 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Analysis;
 
+[Collection("SplitDetectionLayout")]
 public class SplitDetectionServiceTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("split_detect_cli").FullName;
@@ -105,3 +106,9 @@ public class SplitDetectionServiceTests : IDisposable
         );
     }
 }
+
+/// <summary>
+/// Serializes tests that mutate the process-wide <see cref="SplitDetectionLayout.Root" />.
+/// </summary>
+[CollectionDefinition("SplitDetectionLayout", DisableParallelization = true)]
+public class SplitDetectionLayoutCollection;

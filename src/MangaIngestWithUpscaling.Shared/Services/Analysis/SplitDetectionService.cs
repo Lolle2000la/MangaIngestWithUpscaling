@@ -29,12 +29,6 @@ public class SplitDetectionService(
         bool releaseUpscalerGpu = true
     )
     {
-        if (releaseUpscalerGpu)
-        {
-            onnxSessionFactory.InvalidateAllSessions();
-            GC.Collect();
-        }
-
         var results = new List<SplitDetectionResult>();
 
         if (File.Exists(inputPath))
@@ -167,6 +161,7 @@ public class SplitDetectionService(
 
                     cancellationToken.ThrowIfCancellationRequested();
 
+                    using var inferenceScope = onnxSessionFactory.EnterInferenceScope();
                     InferenceSession session = onnxSessionFactory.GetOrCreateSession(modelPath);
 
                     var inputTensor = new DenseTensor<float>(

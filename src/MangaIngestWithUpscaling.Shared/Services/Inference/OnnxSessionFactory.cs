@@ -20,39 +20,93 @@ public sealed class OnnxSessionFactory(
     private static bool? _openVinoAvailable;
     private static bool? _migraphxAvailable;
     private static bool? _directMlAvailable;
-    private readonly ConcurrentDictionary<string, InferenceSession> _sessions = new();
+    private readonly Lock _lock = new();
+    private readonly Dictionary<string, InferenceSession> _sessions = new(
+        StringComparer.OrdinalIgnoreCase
+    );
+    private readonly LinkedList<string> _lruOrder = new();
+    private readonly ReaderWriterLockSlim _activeExecutionLock = new(
+        LockRecursionPolicy.SupportsRecursion
+    );
+    public const int MaxCachedSessions = 4;
     private bool _disposed;
+
+    public IDisposable EnterInferenceScope()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _activeExecutionLock.EnterReadLock();
+        return new InferenceScopeDisposable(_activeExecutionLock);
+    }
+
+    private sealed class InferenceScopeDisposable(ReaderWriterLockSlim lockSlim) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                lockSlim.ExitReadLock();
+            }
+        }
+    }
 
     public InferenceSession GetOrCreateSession(string modelPath)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         string fullPath = Path.GetFullPath(modelPath);
-        if (_sessions.TryGetValue(fullPath, out var existing))
-        {
-            return existing;
-        }
 
-        // Single-model active policy: Large super-resolution models consume gigabytes of GPU VRAM
-        // and execution provider buffers. Keeping multiple models loaded simultaneously causes
-        // VRAM exhaustion and driver spillover into system RAM (GTT).
-        // Evict any other active model sessions before creating the new one.
-        foreach (var key in _sessions.Keys.ToList())
+        lock (_lock)
         {
-            if (!string.Equals(key, fullPath, StringComparison.OrdinalIgnoreCase))
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            if (_sessions.TryGetValue(fullPath, out var existing))
             {
-                logger.LogInformation(
-                    "Evicting cached model {OldModel} to free GPU memory for {NewModel}",
-                    Path.GetFileName(key),
-                    Path.GetFileName(fullPath)
-                );
-                InvalidateSession(key);
+                _lruOrder.Remove(fullPath);
+                _lruOrder.AddLast(fullPath);
+                return existing;
             }
-        }
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
 
-        return _sessions.GetOrAdd(fullPath, CreateSession);
+            // Evict least-recently-used sessions if at capacity
+            while (_sessions.Count >= MaxCachedSessions && _lruOrder.Count > 0)
+            {
+                string oldestPath = _lruOrder.First!.Value;
+                _lruOrder.RemoveFirst();
+
+                if (_sessions.Remove(oldestPath, out var oldSession))
+                {
+                    logger.LogInformation(
+                        "Evicting least recently used model {OldModel} to free GPU memory (capacity {Capacity})",
+                        Path.GetFileName(oldestPath),
+                        MaxCachedSessions
+                    );
+
+                    _activeExecutionLock.EnterWriteLock();
+                    try
+                    {
+                        oldSession.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "Failed to cleanly dispose evicted session for {Model}",
+                            Path.GetFileName(oldestPath)
+                        );
+                    }
+                    finally
+                    {
+                        _activeExecutionLock.ExitWriteLock();
+                    }
+                }
+            }
+
+            InferenceSession session = CreateSession(fullPath);
+            _sessions[fullPath] = session;
+            _lruOrder.AddLast(fullPath);
+            return session;
+        }
     }
 
     public void InvalidateSession(string modelPath)
@@ -60,11 +114,25 @@ public sealed class OnnxSessionFactory(
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         string fullPath = Path.GetFullPath(modelPath);
-        if (_sessions.TryRemove(fullPath, out var session))
+        InferenceSession? sessionToDispose = null;
+
+        lock (_lock)
         {
+            if (_disposed)
+                return;
+            if (_sessions.Remove(fullPath, out var session))
+            {
+                _lruOrder.Remove(fullPath);
+                sessionToDispose = session;
+            }
+        }
+
+        if (sessionToDispose != null)
+        {
+            _activeExecutionLock.EnterWriteLock();
             try
             {
-                session.Dispose();
+                sessionToDispose.Dispose();
             }
             catch (Exception ex)
             {
@@ -74,6 +142,10 @@ public sealed class OnnxSessionFactory(
                     Path.GetFileName(modelPath)
                 );
             }
+            finally
+            {
+                _activeExecutionLock.ExitWriteLock();
+            }
         }
     }
 
@@ -81,9 +153,40 @@ public sealed class OnnxSessionFactory(
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        foreach (var key in _sessions.Keys.ToList())
+        List<InferenceSession> sessionsToDispose;
+        lock (_lock)
         {
-            InvalidateSession(key);
+            if (_disposed)
+                return;
+            sessionsToDispose = [.. _sessions.Values];
+            _sessions.Clear();
+            _lruOrder.Clear();
+        }
+
+        if (sessionsToDispose.Count > 0)
+        {
+            _activeExecutionLock.EnterWriteLock();
+            try
+            {
+                foreach (var session in sessionsToDispose)
+                {
+                    try
+                    {
+                        session.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "Failed to cleanly dispose session during InvalidateAllSessions"
+                        );
+                    }
+                }
+            }
+            finally
+            {
+                _activeExecutionLock.ExitWriteLock();
+            }
         }
     }
 
@@ -560,10 +663,36 @@ public sealed class OnnxSessionFactory(
             return;
         _disposed = true;
 
-        foreach (var session in _sessions.Values)
+        List<InferenceSession> sessionsToDispose;
+        lock (_lock)
         {
-            session.Dispose();
+            sessionsToDispose = [.. _sessions.Values];
+            _sessions.Clear();
+            _lruOrder.Clear();
         }
-        _sessions.Clear();
+
+        _activeExecutionLock.EnterWriteLock();
+        try
+        {
+            foreach (var session in sessionsToDispose)
+            {
+                try
+                {
+                    session.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "Failed to cleanly dispose session during factory disposal"
+                    );
+                }
+            }
+        }
+        finally
+        {
+            _activeExecutionLock.ExitWriteLock();
+            _activeExecutionLock.Dispose();
+        }
     }
 }

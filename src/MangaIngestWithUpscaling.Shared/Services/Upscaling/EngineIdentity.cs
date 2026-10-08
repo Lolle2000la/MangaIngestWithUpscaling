@@ -39,9 +39,6 @@ public static class EngineIdentity
     /// <see cref="GpuBackend.Auto"/>: two default deployments on different hardware would otherwise hash the same
     /// and be allowed to blend pages. Falls back to the preference when the backend has not been probed yet.
     /// </param>
-    /// <param name="environmentVersion">
-    /// Optional legacy environment version parameter for backwards compatibility.
-    /// </param>
     /// <param name="engineVersion">
     /// Overrides <see cref="CurrentEngineVersion"/>; intended for tests. Production callers omit it so
     /// bumping the constant invalidates every chapter's spool.
@@ -49,7 +46,6 @@ public static class EngineIdentity
     public static string ForUpscaler(
         UpscalerConfig config,
         GpuBackend? resolvedBackend = null,
-        int? environmentVersion = null,
         int? engineVersion = null
     )
     {
@@ -68,19 +64,14 @@ public static class EngineIdentity
             // from a GPU run (SelectedDeviceIndex > 0).
             .Append(config.UseCPU || config.SelectedDeviceIndex == 0)
             .Append('|')
-            // The *resolved* accelerator backend, so a CUDA and a ROCm run never mix even when both
+            // The *resolved* accelerator backend, so a CUDA and a WebGPU run never mix even when both
             // are configured Auto. The GPU index itself is not hashed, so a same-backend hand-off
             // keeps the spool.
             .Append(resolvedBackend ?? config.PreferredGpuBackend)
             .Append('|')
-            // The engine code version: a Python-submodule bump changes no .NET assembly, so it needs
-            // its own component or two different engines would hash the same.
+            // The engine code version: changes to engine execution code can be bumped explicitly
+            // or two different engines would hash the same.
             .Append(engineVersion ?? CurrentEngineVersion)
-            .Append('|')
-            // The installed Python environment version (torch/runtime + package set): a worker that
-            // force-accepted an older environment, or otherwise has a different runtime, must not
-            // blend pages with a freshly installed one.
-            .Append(environmentVersion?.ToString(CultureInfo.InvariantCulture) ?? "none")
             .Append('|')
             .Append(BuildVersion())
             .Append('|');

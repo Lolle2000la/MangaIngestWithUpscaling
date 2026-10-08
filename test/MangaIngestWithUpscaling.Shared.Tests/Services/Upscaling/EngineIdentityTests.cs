@@ -5,9 +5,7 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
-// Shares the process-wide SplitDetectionLayout.Root with the detector tests, so the mutations below
-// cannot race them.
-[Collection("DetectServerClientLayout")]
+[Collection("SplitDetectionLayout")]
 public class EngineIdentityTests
 {
     [Fact]
@@ -120,8 +118,8 @@ public class EngineIdentityTests
             byte[] b = new byte[256];
             a[0] = 1;
             b[0] = 2;
-            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
-            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+            File.WriteAllBytes(Path.Combine(first, "model.onnx"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.onnx"), b);
 
             UpscalerConfig firstConfig = Config();
             firstConfig.ModelsDirectory = first;
@@ -155,8 +153,8 @@ public class EngineIdentityTests
             byte[] b = new byte[size];
             a[size - 1] = 1;
             b[size - 1] = 2;
-            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
-            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+            File.WriteAllBytes(Path.Combine(first, "model.onnx"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.onnx"), b);
 
             UpscalerConfig firstConfig = Config();
             firstConfig.ModelsDirectory = first;
@@ -191,8 +189,8 @@ public class EngineIdentityTests
             byte[] b = new byte[size];
             a[size - 1] = 1;
             b[size - 1] = 2;
-            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
-            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+            File.WriteAllBytes(Path.Combine(first, "model.onnx"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.onnx"), b);
 
             UpscalerConfig firstConfig = Config();
             firstConfig.ModelsDirectory = first;
@@ -233,7 +231,7 @@ public class EngineIdentityTests
     {
         // The preference defaults to Auto, so two default deployments on different hardware would
         // share an identity unless the resolved backend is hashed. The provider passes the value the
-        // Python environment actually installed.
+        // ONNX session factory actually resolved.
         UpscalerConfig config = Config();
         Assert.Equal(GpuBackend.Auto, config.PreferredGpuBackend);
 
@@ -251,31 +249,9 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ForUpscaler_ChangesWhenTheEnvironmentVersionChanges()
-    {
-        // The installed environment version carries the torch/runtime and package set, which the .NET
-        // build version does not: a worker that force-accepted an older environment must not blend
-        // pages with a freshly installed one.
-        UpscalerConfig config = Config();
-
-        Assert.NotEqual(
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 15),
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 14)
-        );
-
-        // A worker whose environment is not prepared yet hashes a fixed marker, distinct from any
-        // concrete version.
-        Assert.NotEqual(
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU),
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 15)
-        );
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
     public void ForUpscaler_ChangesWhenTheEngineVersionChanges()
     {
-        // The Python engine code version is not part of the .NET assembly version, so it is hashed
+        // The engine code version is not part of the .NET assembly version, so it is hashed
         // explicitly. The parameter override asserts the effect without bumping the constant (which
         // would invalidate every chapter's spool).
         UpscalerConfig config = Config();

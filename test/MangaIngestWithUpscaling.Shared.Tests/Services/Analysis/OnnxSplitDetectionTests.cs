@@ -28,11 +28,10 @@ public class OnnxSplitDetectionTests
         }
 
         return Path.Combine(
-            AppContext.BaseDirectory,
-            "backend",
-            "src",
-            "manga-vert-split-nn",
-            "assets",
+            Directory.GetCurrentDirectory(),
+            "test",
+            "MangaIngestWithUpscaling.Shared.Tests",
+            "TestData",
             "manga splits visualized.png"
         );
     }

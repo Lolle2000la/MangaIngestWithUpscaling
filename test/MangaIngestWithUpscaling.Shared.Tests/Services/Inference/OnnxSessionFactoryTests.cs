@@ -10,7 +10,33 @@ namespace MangaIngestWithUpscaling.Shared.Tests.Services.Inference;
 
 public class OnnxSessionFactoryTests
 {
-    private static readonly string TestModelPath = SplitDetectionLayout.ResolveModelPath();
+    private static readonly string? TestModelPath = ResolveStableTestModelPath();
+
+    private static string? ResolveStableTestModelPath()
+    {
+        string currentTestData = Path.Combine(
+            Directory.GetCurrentDirectory(),
+            "test_data",
+            "models",
+            "page_break_detector.onnx"
+        );
+        if (File.Exists(currentTestData))
+        {
+            return currentTestData;
+        }
+
+        string directModelsPath = Path.Combine(
+            AppContext.BaseDirectory,
+            "models",
+            "page_break_detector.onnx"
+        );
+        if (File.Exists(directModelsPath))
+        {
+            return directModelsPath;
+        }
+
+        return null;
+    }
 
     [Fact]
     [Trait("Category", "Unit")]
