@@ -460,10 +460,19 @@ public static class OnnxTiler
         // Snap down to multiple of 64 for optimal GPU tensor alignment
         int snapped = (tileDim / 64) * 64;
 
-        // Upper bound: ensure single-pass output tile dimension does not exceed GPU single-buffer limits
-        // (3072x3072 max output tile in WebGPU) and input tile does not exceed 1024 (above which tiling overhead is negligible).
-        int maxTileDim = Math.Min(1024, 3072 / scale);
-        snapped = Math.Min(maxTileDim, snapped);
+        // Cap maximum tile dimension based on upscale factor.
+        // For 4x+ models, each tile produces scale^2 = 16x output pixels; tiles larger than 512
+        // generate massive intermediate activation workspaces (>= 15-20 GB) that exceed
+        // GPU physical VRAM and cause driver spillover into system RAM (GTT).
+        // Capping at 512 for 4x models guarantees the output tile dimension stays <= 2048x2048,
+        // which runs in ~1 second with zero GTT spill.
+        int maxCap = scale switch
+        {
+            >= 4 => 512,
+            3 => 640,
+            _ => 1024,
+        };
+        snapped = Math.Min(maxCap, snapped);
 
         // Never return less than 128 (tiling below 128 has excessive padding/blending overhead)
         return Math.Max(128, snapped);

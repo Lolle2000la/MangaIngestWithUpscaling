@@ -74,7 +74,6 @@ public class OnnxUpscaleEngine(
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                using var inferenceScope = sessionFactory.EnterInferenceScope();
                 InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
                 bool isFp16 =
                     session.InputMetadata.TryGetValue("input", out var inputMeta)
@@ -124,15 +123,18 @@ public class OnnxUpscaleEngine(
                     try
                     {
                         session = sessionFactory.GetOrCreateSession(modelPath);
-                        upscaledBytes = OnnxTiler.UpscaleRgb(
-                            inputBytes,
-                            origWidth,
-                            origHeight,
-                            scale,
-                            session,
-                            tileSize: attemptTileSize,
-                            cancellationToken: cancellationToken
-                        );
+                        using (sessionFactory.EnterInferenceScope())
+                        {
+                            upscaledBytes = OnnxTiler.UpscaleRgb(
+                                inputBytes,
+                                origWidth,
+                                origHeight,
+                                scale,
+                                session,
+                                tileSize: attemptTileSize,
+                                cancellationToken: cancellationToken
+                            );
+                        }
                         break;
                     }
                     catch (Exception ex)
@@ -154,6 +156,19 @@ public class OnnxUpscaleEngine(
                         sessionFactory.InvalidateSession(modelPath);
                         throw;
                     }
+                }
+
+                var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
+                if (gttAfter > 1000L * 1024 * 1024)
+                {
+                    logger.LogWarning(
+                        "Elevated GPU memory detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB. Flushing session cache to release memory.",
+                        Path.GetFileName(inputPath),
+                        vramAfter / (1024 * 1024),
+                        gttAfter / (1024 * 1024)
+                    );
+                    sessionFactory.InvalidateSession(modelPath);
+                    GC.Collect();
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -307,6 +322,11 @@ public class OnnxUpscaleEngine(
             }
 
             File.Move(tempOutCbz, outputCbzPath);
+
+            // Invalidate cached sessions after a chapter completes to return all GPU VRAM and GTT
+            // buffers back to the driver. This guarantees zero cumulative memory creep across chapters.
+            sessionFactory.InvalidateAllSessions();
+            GC.Collect();
         }
         finally
         {

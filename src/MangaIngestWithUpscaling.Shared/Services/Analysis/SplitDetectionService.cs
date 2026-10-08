@@ -161,8 +161,8 @@ public class SplitDetectionService(
 
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    using var inferenceScope = onnxSessionFactory.EnterInferenceScope();
                     InferenceSession session = onnxSessionFactory.GetOrCreateSession(modelPath);
+                    using var inferenceScope = onnxSessionFactory.EnterInferenceScope();
 
                     var inputTensor = new DenseTensor<float>(
                         tensorData,

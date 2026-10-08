@@ -524,7 +524,7 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_RespectsScaleAwareMaximumCap()
     {
-        // Even with huge 32 GiB memory budget, tile size is bounded by single-buffer output limits (<= 3072 output)
+        // Even with huge 32 GiB memory budget, tile size is bounded by scale-aware activation workspace limits
         long hugeBudget = 32L * 1024 * 1024 * 1024;
 
         int tile4x = OnnxTiler.EstimateTileSize(
@@ -535,7 +535,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: hugeBudget,
             isFp16: true
         );
-        Assert.Equal(768, tile4x);
+        Assert.Equal(512, tile4x);
 
         int tile3x = OnnxTiler.EstimateTileSize(
             4000,
@@ -545,7 +545,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: hugeBudget,
             isFp16: true
         );
-        Assert.Equal(1024, tile3x);
+        Assert.Equal(640, tile3x);
 
         int tile2x = OnnxTiler.EstimateTileSize(
             4000,

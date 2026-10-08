@@ -28,7 +28,7 @@ public sealed class OnnxSessionFactory(
     private readonly ReaderWriterLockSlim _activeExecutionLock = new(
         LockRecursionPolicy.SupportsRecursion
     );
-    public const int MaxCachedSessions = 4;
+    public const int MaxCachedSessions = 1;
     private bool _disposed;
 
     public IDisposable EnterInferenceScope()
