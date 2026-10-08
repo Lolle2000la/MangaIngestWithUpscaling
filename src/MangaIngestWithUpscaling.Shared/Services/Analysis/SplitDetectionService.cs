@@ -196,7 +196,7 @@ public class SplitDetectionService(
 
                         if (peakMaskTensor[0, y])
                         {
-                            int yOrig = (int)Math.Round(y / scale);
+                            int yOrig = (int)Math.Round(y / vscale);
                             float confidence = probsTensor[0, y];
                             splits.Add(
                                 new DetectedSplit

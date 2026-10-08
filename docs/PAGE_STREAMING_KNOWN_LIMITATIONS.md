@@ -131,8 +131,7 @@ a change resets the spool and the worker's engine identity no longer varies with
 - A single `TaskQueue.TryBeginChapterTaskAsync(task, onDefer)` owning gate + conflict check + claim
   (the conflict rule itself is now single-sourced in `ChapterConflictGuard`).
 - A real engine-fingerprint seam (`IEngineFingerprint`/`IRuntimeInfo`) instead of the static
-  `EngineIdentity` plus `PythonService.Environment` reach-through; the runtime version and engine
-  constant are now hashed, but the seam would make them injectable and testable.
+  `EngineIdentity`; the engine constant and backend are now hashed, but the seam would make them injectable and testable.
 
 ## Architecture follow-ups
 

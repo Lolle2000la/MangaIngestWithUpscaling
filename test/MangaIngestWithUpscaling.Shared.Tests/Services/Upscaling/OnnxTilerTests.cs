@@ -557,4 +557,22 @@ public class OnnxTilerTests
         );
         Assert.Equal(1024, tile2x);
     }
+
+    [Fact]
+    public void EstimateTileSize_ElongatedImage_DoesNotOomOrAssumeZeroWhenPaddingIsSignificant()
+    {
+        // 8000x200 image has 1.6 MP raw, but with padding and heavy ESRGAN it must be safely tiled
+        long budget = 2L * 1024 * 1024 * 1024; // 2 GB budget
+        int tile = OnnxTiler.EstimateTileSize(
+            8000,
+            200,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: budget,
+            isFp16: true
+        );
+        // Heavy ESRGAN on 8000 wide image should be tiled, not return 0 (single pass)
+        Assert.True(tile > 0);
+        Assert.True(tile <= 768);
+    }
 }

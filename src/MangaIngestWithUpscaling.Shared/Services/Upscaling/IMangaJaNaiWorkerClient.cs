@@ -3,9 +3,8 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
 /// <summary>
-/// Drives a single long-running <c>worker.py</c> process (NDJSON over stdin/stdout) so that
-/// PyTorch models and the GPU stay warm across consecutive upscale jobs instead of being
-/// reinitialized per job.
+/// Drives upscale execution so that models and GPU sessions stay cached across
+/// consecutive upscale jobs instead of being reinitialized per job.
 /// </summary>
 public interface IMangaJaNaiWorkerClient
 {

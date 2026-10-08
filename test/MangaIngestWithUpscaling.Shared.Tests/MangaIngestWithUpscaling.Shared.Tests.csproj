@@ -32,9 +32,6 @@
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\src\MangaIngestWithUpscaling\appstate2.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
     <None Include="TestData\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

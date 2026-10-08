@@ -40,20 +40,14 @@ public record UpscalerConfig
 
     /// <summary>
     ///     When enabled, the upscaler will only run on the remote worker. No local consumption will be attempted.
-    ///     As a side effect, this will also disable automatic attempts to install necessary Python packages.
+    ///     As a side effect, this will also disable automatic attempts to download models locally.
     /// </summary>
     public bool RemoteOnly { get; set; } = false;
 
     /// <summary>
-    ///     Specifies which GPU backend to use for PyTorch. Auto will attempt to detect the best available option.
+    ///     Specifies which GPU backend / execution provider to use for ONNX Runtime. Auto will attempt to detect the best available option.
     /// </summary>
     public GpuBackend PreferredGpuBackend { get; set; } = GpuBackend.Auto;
-
-    /// <summary>
-    ///     When enabled, forces acceptance of existing Python environments without version or backend checks.
-    ///     This is useful when using a manually managed Python environment that should not be recreated automatically.
-    /// </summary>
-    public bool ForceAcceptExistingEnvironment { get; set; } = false;
 
     /// <summary>
     ///     When true, uses 16-bit floating point (FP16) half-precision models.
@@ -111,8 +105,7 @@ public record UpscalerConfig
         );
 
     /// <summary>
-    /// The models directory as an absolute path. A relative configured value is resolved against the
-    /// process CWD so the engine identity and the spawned Python worker agree on one directory.
+    /// The models directory as an absolute path. A relative configured value is resolved against the process CWD.
     /// </summary>
     public string ResolvedModelsDirectory
     {
@@ -128,13 +121,6 @@ public record UpscalerConfig
             }
         }
     }
-
-    public string PythonEnvironmentDirectory { get; set; } =
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MangaIngestWithUpscaling",
-            "Python-Env"
-        );
 
     /// <summary>
     /// Dedicated, app-owned directory the page-streaming spool is written to. The app creates its own
@@ -223,62 +209,4 @@ public record UpscalerConfig
     ///     Must be in the range (0, 1).
     /// </summary>
     public double SmartDownscaleFactor { get; set; } = 0.75;
-
-    /// <summary>
-    ///     How long the persistent upscale worker process may sit idle (no in-flight or queued
-    ///     job) before it is shut down to release GPU/VRAM resources. The process is respawned
-    ///     lazily on the next job, so this only affects idle resource usage.
-    /// </summary>
-    public TimeSpan WorkerIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>
-    ///     Maximum time a single request to the resident detection server may run before the request
-    ///     is cancelled and the server process killed; the caller then falls back to the per-image
-    ///     CLI, so a wedged detector cannot hang a task forever. Zero disables the guard.
-    /// </summary>
-    public TimeSpan DetectServerRequestTimeout { get; set; } = TimeSpan.FromMinutes(10);
-
-    /// <summary>
-    ///     Maximum number of jobs the persistent upscale worker may have in flight plus queued
-    ///     at once. Upscaling is processed sequentially, so this is normally 1.
-    /// </summary>
-    public int WorkerQueueCapacity { get; set; } = 1;
-
-    /// <summary>
-    ///     When enabled, the worker preloads all chain models before accepting its first job
-    ///     (worker.py --warmup). Disabled by default: models are loaded lazily on first use and
-    ///     cached in the engine, so consecutive jobs stay warm without paying the cold-start cost
-    ///     of loading every model up front.
-    /// </summary>
-    public bool WorkerWarmup { get; set; } = false;
-
-    /// <summary>
-    ///     When enabled, every line the worker writes to stderr is mirrored to the host's stderr
-    ///     regardless of the configured log level. Defaults to on in Development and off elsewhere;
-    ///     either can be overridden explicitly via configuration.
-    /// </summary>
-    public bool WorkerLogToStderr { get; set; } =
-        string.Equals(
-            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
-            "Development",
-            StringComparison.OrdinalIgnoreCase
-        );
-
-    /// <summary>
-    ///     How long the persistent upscale worker must sit idle (no in-flight job) before it
-    ///     returns its cached allocator blocks (VRAM) to the driver, so co-tenant GPU processes
-    ///     (e.g. split detection) can run while the worker stays warm. Zero disables the release.
-    ///     The worker can also be asked to release immediately via
-    ///     <see cref="IMangaJaNaiWorkerClient.ReleaseGpuCacheAsync"/>.
-    /// </summary>
-    public TimeSpan WorkerIdleCacheReleaseTimeout { get; set; } = TimeSpan.FromSeconds(10);
-
-    /// <summary>
-    ///     When true, split detection shuts the persistent upscaling worker down entirely before
-    ///     running, guaranteeing maximum free VRAM. Intended for very VRAM-limited GPUs where even
-    ///     an idle worker (model weights + CUDA context) would starve detection. When false (the
-    ///     default), detection only asks the worker to release its cached VRAM and both processes
-    ///     coexist.
-    /// </summary>
-    public bool ShutdownWorkerBeforeSplitDetection { get; set; } = false;
 }

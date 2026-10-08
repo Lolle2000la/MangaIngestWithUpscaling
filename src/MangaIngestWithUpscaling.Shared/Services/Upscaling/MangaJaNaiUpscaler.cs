@@ -397,10 +397,9 @@ public class MangaJaNaiUpscaler(
             if (needsDownload)
             {
                 await DownloadAndExtractPackage(package, cancellationToken);
+                // Verify all model file hashes immediately after download/extraction
+                await VerifyPackageHashes(package, cancellationToken);
             }
-
-            // Verify all model file hashes after download/extraction
-            await VerifyPackageHashes(package, cancellationToken);
         }
     }
 
@@ -641,14 +640,14 @@ public class MangaJaNaiUpscaler(
         return scaledTimeout;
     }
 
+    private static readonly HttpClient SharedHttpClient = new() { Timeout = TimeSpan.FromHours(1) };
+
     private async Task<bool> ShouldDownloadPackage(
         ModelPackage package,
         CancellationToken cancellationToken
     )
     {
-        using var sha256 = SHA256.Create();
-
-        foreach (var (fileName, expectedHash) in package.ExpectedFileHashes)
+        foreach (var (fileName, _) in package.ExpectedFileHashes)
         {
             string filePath = Path.Combine(ModelPath, fileName);
             if (!File.Exists(filePath))
@@ -660,17 +659,10 @@ public class MangaJaNaiUpscaler(
                 return true;
             }
 
-            await using FileStream stream = File.OpenRead(filePath);
-            byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
-            string hashString = Convert.ToHexStringLower(hash);
-            if (hashString != expectedHash)
+            var fileInfo = new FileInfo(filePath);
+            if (fileInfo.Length == 0)
             {
-                logger.LogWarning(
-                    "Model file {fileName} has incorrect hash, download required. Expected: {expectedHash}, Actual: {hashString}",
-                    fileName,
-                    expectedHash,
-                    hashString
-                );
+                logger.LogWarning("Model file {fileName} is empty, download required", fileName);
                 return true;
             }
         }
@@ -683,11 +675,10 @@ public class MangaJaNaiUpscaler(
         CancellationToken cancellationToken
     )
     {
-        var httpClient = new HttpClient { Timeout = TimeSpan.FromHours(1) };
         using var sha256 = SHA256.Create();
 
         logger.LogInformation("Downloading {zipUrl}", package.ZipUrl);
-        using HttpResponseMessage response = await httpClient.GetAsync(
+        using HttpResponseMessage response = await SharedHttpClient.GetAsync(
             package.ZipUrl,
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken

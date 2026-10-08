@@ -118,7 +118,6 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | `EnableSmartDownscale` | `Ingest_Upscaler__EnableSmartDownscale` | `true` | Detect and downscale cheaply-upscaled images before AI upscaling — see [Smart Downscale](SMART_DOWNSCALE.md). |
 | `SmartDownscaleThreshold` | `Ingest_Upscaler__SmartDownscaleThreshold` | `15.0` | Laplacian std-dev below which an image is considered cheaply upscaled. Lower = stricter; higher = more aggressive. |
 | `SmartDownscaleFactor` | `Ingest_Upscaler__SmartDownscaleFactor` | `0.75` | Fallback scale factor (e.g. `0.75` = 75 %) used when the FFT cliff detector finds no clear cutoff frequency. |
-| `DetectServerRequestTimeout` | `Ingest_Upscaler__DetectServerRequestTimeout` | `00:10:00` | Maximum time a single request to the resident split-detection server may run before it is cancelled and the server killed; the caller then falls back to the per-image CLI, so a wedged detector cannot hang a task. `0` disables the guard. |
 
 ```yaml
     environment:
@@ -164,8 +163,7 @@ supported formats and use-case examples.
 
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
-| `RemoteOnly` | `Ingest_Upscaler__RemoteOnly` | `false` | Disable local upscaling entirely; all tasks are forwarded to remote workers. Also suppresses Python environment setup. |
-| `ForceAcceptExistingEnvironment` | `Ingest_Upscaler__ForceAcceptExistingEnvironment` | `false` | Skip version and backend checks and use the existing Python environment as-is. Useful for air-gapped systems with a manually provisioned environment. |
+| `RemoteOnly` | `Ingest_Upscaler__RemoteOnly` | `false` | Disable local upscaling entirely; all tasks are forwarded to remote workers. Also suppresses local model downloading. |
 
 ---
 
@@ -182,9 +180,7 @@ to your `appsettings.json`:
     "UseFp16": true,
     "UseCPU": false,
     "ModelsDirectory": "/models/MangaJaNai",
-    "PythonEnvironmentDirectory": "/data/pyenv",
     "RemoteOnly": false,
-    "ForceAcceptExistingEnvironment": false,
     "UpscaleTimeout": "00:01:00",
     "MaxDimensionBeforeUpscaling": null,
     "EnableSmartDownscale": false,
@@ -204,7 +200,7 @@ Environment variables always take precedence over `appsettings.json` values.
 
 ## See Also
 
-- [GPU Backend Configuration](GPU_BACKEND_CONFIGURATION.md) — auto-detection details, PyTorch version matrix, environment recreation logic
+- [GPU Backend Configuration](GPU_BACKEND_CONFIGURATION.md) — auto-detection details and supported execution providers
 - [Image Format Conversion](IMAGE_FORMAT_CONVERSION.md) — supported formats, quality settings, troubleshooting
 - [Smart Downscale](SMART_DOWNSCALE.md) — detecting and correcting cheaply-upscaled source images
 - [Upscaling Timeout](UPSCALING_TIMEOUT.md) — per-pixel scaling formula and how to tune it

@@ -138,11 +138,6 @@
     />
   </ItemGroup>
   <ItemGroup>
-    <None Include="appstate2.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
     <ProjectReference Include="..\MangaIngestWithUpscaling.Data\MangaIngestWithUpscaling.Data.csproj" />
     <ProjectReference Include="..\MangaIngestWithUpscaling.Data.Sqlite\MangaIngestWithUpscaling.Data.Sqlite.csproj" />

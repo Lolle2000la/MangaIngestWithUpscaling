@@ -404,7 +404,10 @@ public static class OnnxTiler
         var arch = DetectArchitecture(modelNameOrPath);
         double multiplier = GetMemoryMultiplier(arch, scale, modelSizeBytes);
         int elementSize = isFp16 ? 2 : 4;
-        long inputBytes = (long)width * height * 3 * elementSize;
+        // Account for uniform padding alignment to multiples of 64 plus overlap padding
+        int paddedW = ((width + 64 + 63) / 64) * 64;
+        int paddedH = ((height + 64 + 63) / 64) * 64;
+        long inputBytes = (long)paddedW * paddedH * 3 * elementSize;
         return (long)(inputBytes * multiplier);
     }
 
@@ -921,10 +924,11 @@ public static class OnnxTiler
         // Determine uniform padded dimensions across all tiles across all images.
         // Passing identical uniform tensor shapes to ONNX Runtime (WebGPU / Dawn EP) prevents
         // per-tile and per-page buffer re-allocation and memory arena accumulation in Vulkan VRAM/GTT.
+        // Dimensions are padded independently to multiples of 64 to avoid exploding elongated aspect ratios into giant squares.
         int maxPaddedW = maxTileSizeX + 2 * overlap;
         int maxPaddedH = maxTileSizeY + 2 * overlap;
-        int uniformTargetDim = Math.Max(maxPaddedW, maxPaddedH);
-        int uniformTargetSize = ((uniformTargetDim + 63) / 64) * 64;
+        int uniformTargetW = ((maxPaddedW + 63) / 64) * 64;
+        int uniformTargetH = ((maxPaddedH + 63) / 64) * 64;
 
         if (tileCountX <= 1 && tileCountY <= 1)
         {
@@ -935,8 +939,8 @@ public static class OnnxTiler
                 scale,
                 session,
                 cancellationToken,
-                targetW: uniformTargetSize,
-                targetH: uniformTargetSize
+                targetW: uniformTargetW,
+                targetH: uniformTargetH
             );
         }
 
@@ -1003,8 +1007,8 @@ public static class OnnxTiler
                     crop,
                     tileJobs[0].PaddedW,
                     tileJobs[0].PaddedH,
-                    uniformTargetSize,
-                    uniformTargetSize,
+                    uniformTargetW,
+                    uniformTargetH,
                     elementType,
                     cancellationToken
                 );
@@ -1042,8 +1046,8 @@ public static class OnnxTiler
                                 nextCrop,
                                 nextJob.PaddedW,
                                 nextJob.PaddedH,
-                                uniformTargetSize,
-                                uniformTargetSize,
+                                uniformTargetW,
+                                uniformTargetH,
                                 elementType,
                                 cancellationToken
                             );

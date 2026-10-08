@@ -482,6 +482,78 @@ public sealed class OnnxSessionFactory(
         }
     }
 
+    public GpuBackend GetEffectiveBackend()
+    {
+        UpscalerConfig currentConfig = config.Value;
+        if (currentConfig.UseCPU || currentConfig.SelectedDeviceIndex <= 0)
+        {
+            return GpuBackend.CPU;
+        }
+
+        GpuBackend backend = currentConfig.PreferredGpuBackend;
+#pragma warning disable CS0618
+        if (backend is GpuBackend.ROCm or GpuBackend.ROCm_GFX120X or GpuBackend.XPU)
+        {
+            backend = GpuBackend.WebGPU;
+        }
+        else if (backend is GpuBackend.CUDA_12_8)
+        {
+            backend = GpuBackend.CUDA;
+        }
+#pragma warning restore CS0618
+
+        if (backend != GpuBackend.Auto)
+        {
+            return backend;
+        }
+
+        int deviceId = Math.Max(0, currentConfig.SelectedDeviceIndex - 1);
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            using var testOptions = new SessionOptions();
+            if (TryConfigureCuda(testOptions, deviceId, "probe"))
+            {
+                return GpuBackend.CUDA;
+            }
+            if (TryConfigureWebGpu(testOptions, deviceId, "probe"))
+            {
+                return GpuBackend.WebGPU;
+            }
+            return GpuBackend.CPU;
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            using var testOptions = new SessionOptions();
+            if (TryConfigureWebGpu(testOptions, deviceId, "probe"))
+            {
+                return GpuBackend.WebGPU;
+            }
+            if (TryConfigureDirectML(testOptions, deviceId, "probe"))
+            {
+                return GpuBackend.DirectML;
+            }
+            if (TryConfigureCuda(testOptions, deviceId, "probe"))
+            {
+                return GpuBackend.CUDA;
+            }
+            return GpuBackend.CPU;
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            using var testOptions = new SessionOptions();
+            if (TryConfigureWebGpu(testOptions, deviceId, "probe"))
+            {
+                return GpuBackend.WebGPU;
+            }
+            return GpuBackend.CPU;
+        }
+
+        return GpuBackend.CPU;
+    }
+
     public void Dispose()
     {
         if (_disposed)

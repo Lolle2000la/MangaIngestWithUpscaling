@@ -27,4 +27,10 @@ public interface IOnnxSessionFactory : IDisposable
     /// Invalidates and disposes all currently cached sessions, releasing GPU VRAM back to the driver.
     /// </summary>
     void InvalidateAllSessions();
+
+    /// <summary>
+    /// Resolves and returns the effective hardware accelerator backend (e.g. CUDA, WebGPU, or CPU)
+    /// based on configuration and platform availability.
+    /// </summary>
+    Shared.Configuration.GpuBackend GetEffectiveBackend();
 }
