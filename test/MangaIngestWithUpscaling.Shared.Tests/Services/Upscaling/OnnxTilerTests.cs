@@ -704,6 +704,95 @@ public class OnnxTilerTests
     }
 
     [Fact]
+    public void CalculateVramBudget_SharedCardWithBoundedPartner_CanStayExclusive()
+    {
+        // A video transcoder reliably holds ~700 MB. With the default threshold the card is treated
+        // as a desktop and the budget throws away 1.5-3 GiB; raising the threshold recovers it.
+        long total = 12L * 1024 * 1024 * 1024;
+        long used = 700L * 1024 * 1024;
+
+        long guarded = OnnxTiler.CalculateVramBudget(total, used);
+        long exclusive = OnnxTiler.CalculateVramBudget(
+            total,
+            used,
+            exclusiveThresholdBytes: 1024L * 1024 * 1024
+        );
+
+        // guarded = 12 GiB - 700 MiB - 1.8 GiB (15% desktop margin), exclusive = ... - 256 MiB
+        Assert.InRange(guarded, (long)(9.3 * 1024 * 1024 * 1024), (long)(9.7 * 1024 * 1024 * 1024));
+        Assert.InRange(exclusive, (long)(10.8 * 1024 * 1024 * 1024), total);
+        Assert.True(
+            exclusive > guarded,
+            $"raising the exclusive threshold should recover the desktop margin: {exclusive} vs {guarded}"
+        );
+    }
+
+    [Fact]
+    public void CalculateVramBudget_ThresholdAtOrBelow_IsInclusive()
+    {
+        // "At or below" the threshold, not "below": usage exactly equal to the threshold still counts
+        // as quasi-exclusive, and one byte more does not.
+        long total = 12L * 1024 * 1024 * 1024;
+        long threshold = 700L * 1024 * 1024;
+
+        long atThreshold = OnnxTiler.CalculateVramBudget(
+            total,
+            threshold,
+            exclusiveThresholdBytes: threshold
+        );
+        long aboveThreshold = OnnxTiler.CalculateVramBudget(
+            total,
+            threshold + 1,
+            exclusiveThresholdBytes: threshold
+        );
+
+        Assert.True(
+            atThreshold > aboveThreshold,
+            $"expected the exclusive margin at exactly the threshold, got {atThreshold} vs {aboveThreshold}"
+        );
+    }
+
+    [Fact]
+    public void CalculateVramBudget_CustomMarginOrFraction_BeatsTheThreshold()
+    {
+        // An explicit margin or fraction still wins over both branches, so the threshold cannot
+        // silently override a deliberate setting.
+        long total = 12L * 1024 * 1024 * 1024;
+        long used = 700L * 1024 * 1024;
+
+        long withMargin = OnnxTiler.CalculateVramBudget(
+            total,
+            used,
+            customSafetyMarginBytes: 2L * 1024 * 1024 * 1024,
+            exclusiveThresholdBytes: 1024L * 1024 * 1024
+        );
+        long withFraction = OnnxTiler.CalculateVramBudget(
+            total,
+            used,
+            customUtilizationFraction: 0.75,
+            exclusiveThresholdBytes: 1024L * 1024 * 1024
+        );
+
+        Assert.Equal(total - used - 2L * 1024 * 1024 * 1024, withMargin);
+        Assert.Equal((long)((total - used) * 0.75), withFraction);
+    }
+
+    [Fact]
+    public void CalculateVramBudget_NonPositiveThreshold_FallsBackToDefault()
+    {
+        // 0 or a negative value must not make every card "exclusive".
+        long total = 12L * 1024 * 1024 * 1024;
+        long used = 700L * 1024 * 1024;
+
+        long withZero = OnnxTiler.CalculateVramBudget(total, used, exclusiveThresholdBytes: 0);
+        long withNegative = OnnxTiler.CalculateVramBudget(total, used, exclusiveThresholdBytes: -1);
+        long withDefault = OnnxTiler.CalculateVramBudget(total, used);
+
+        Assert.Equal(withDefault, withZero);
+        Assert.Equal(withDefault, withNegative);
+    }
+
+    [Fact]
     public void GetGpuVramInfo_OnSupportedHost_DiscoversValidVram()
     {
         var (total, used, free) = OnnxTiler.GetGpuVramInfo(0);

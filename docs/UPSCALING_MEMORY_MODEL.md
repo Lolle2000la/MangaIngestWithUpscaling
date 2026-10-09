@@ -230,6 +230,27 @@ formula does not try to model exactly.
 
 ---
 
+### 4.3 Sharing the card with a bounded partner
+
+`CalculateVramBudget` decides between a quasi-exclusive and a desktop budget by looking at how much
+VRAM is already used. Below the threshold it keeps only a 256 MB reserve; above it, the driver
+eviction margin of 15% of total VRAM (1.5–3 GiB) kicks in, because drivers start evicting into GTT
+past 85–90% utilisation.
+
+The default threshold is 350 MB — driver plus a display server. That is pessimistic for a card that
+*is* shared, but with a partner whose footprint is known and bounded (a video transcoder holding
+700 MB, a second inference server). `VramExclusiveThresholdBytes` moves the boundary:
+
+| setting | 12 GB card, 700 MB used | budget |
+|---|---|---|
+| default (350 MB) | desktop branch | 9.5 GB |
+| `VramExclusiveThresholdBytes = 1073741824` (1 GiB) | exclusive branch | 11.1 GB |
+
+That is ~1.6 GB of VRAM handed back to tile sizing. The comparison is inclusive — usage *equal* to
+the threshold still counts as exclusive — and an explicit `VramSafetyMarginBytes` or
+`VramUtilizationFraction` still takes precedence over both branches. A value of 0 or negative falls
+back to the default rather than making every card exclusive.
+
 ## 5. Why this is better than the old caps
 
 Old behaviour, 4x ESRGAN fp16, 1125×1600 page, real weight size:

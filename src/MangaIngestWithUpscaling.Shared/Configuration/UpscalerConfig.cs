@@ -106,6 +106,17 @@ public record UpscalerConfig
     /// </summary>
     public long? VramSafetyMarginBytes { get; set; } = null;
 
+    /// <summary>
+    ///     VRAM usage (in bytes) below which the GPU is treated as quasi-exclusive to the upscaler.
+    ///     At or below it the budget keeps only a minimal reserve (256 MB); above it the budget keeps
+    ///     a desktop-sized safety margin (15% of total VRAM, clamped to 1.5-3 GiB), because drivers
+    ///     start evicting into GTT near 85-90% utilisation.
+    ///     Raise this when another process reliably shares the card but stays bounded — e.g. a video
+    ///     transcoder holding 700 MB: at 1 GiB the upscaler budgets the card as if exclusive again.
+    ///     Defaults to 350 MB (driver plus a display server or a couple of light helpers).
+    /// </summary>
+    public long? VramExclusiveThresholdBytes { get; set; } = null;
+
     public string ModelsDirectory { get; set; } =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

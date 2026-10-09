@@ -306,6 +306,13 @@ public static class OnnxTiler
     public const long SessionReservationBytes = 384L * 1024 * 1024;
 
     /// <summary>
+    /// VRAM usage at or below which the GPU is treated as quasi-exclusive to the upscaler (driver
+    /// plus a display server or a couple of light helpers). Configurable via
+    /// <see cref="UpscalerConfig.VramExclusiveThresholdBytes"/>.
+    /// </summary>
+    public const long DefaultExclusiveThresholdBytes = 350L * 1024 * 1024;
+
+    /// <summary>
     /// A whole image is only run as a single pass when its predicted peak stays below this
     /// fraction of the budget. The headroom covers alignment/padding effects that the quadratic
     /// model does not capture exactly.
@@ -618,17 +625,25 @@ public static class OnnxTiler
 
     /// <summary>
     /// Calculates the available VRAM budget for tile estimation from total and currently used VRAM.
-    /// In dedicated/headless environments (e.g. NAS) with exclusive GPU use (usedVram &lt;= 350 MB),
-    /// utilizes up to ~97% of free VRAM (leaving a minimal 256 MB buffer for driver/command submission).
-    /// In desktop environments (usedVram &gt; 350 MB) with display compositors/browsers,
-    /// utilizes ~95% of free VRAM with an adaptive 512 MB - 1024 MB safety margin to prevent compositor stutters.
-    /// Can be explicitly overridden with a custom utilization fraction or safety margin.
+    /// <para>
+    /// At or below <see cref="DefaultExclusiveThresholdBytes"/> of usage (headless/NAS, or a partner
+    /// process whose footprint is known to stay bounded) the card is budgeted as quasi-exclusive:
+    /// only a minimal reserve of 256 MB is kept. Above it the budget keeps a desktop-sized margin of
+    /// 15% of total VRAM (clamped to 1.5-3.0 GiB), because drivers start evicting VRAM into system
+    /// memory (GTT) past 85-90% utilisation.
+    /// </para>
+    /// <para>
+    /// <paramref name="exclusiveThresholdBytes"/> overrides where that boundary sits; see
+    /// <see cref="UpscalerConfig.VramExclusiveThresholdBytes"/>. A custom utilization fraction or
+    /// safety margin still takes precedence over both branches.
+    /// </para>
     /// </summary>
     public static long CalculateVramBudget(
         long totalVram,
         long usedVram,
         double? customUtilizationFraction = null,
-        long? customSafetyMarginBytes = null
+        long? customSafetyMarginBytes = null,
+        long? exclusiveThresholdBytes = null
     )
     {
         long freeVram = Math.Max(0, totalVram - usedVram);
@@ -648,16 +663,16 @@ public static class OnnxTiler
             return Math.Max(256L * 1024 * 1024, freeVram - customSafetyMarginBytes.Value);
         }
 
-        // Automatic adaptive budgeting:
-        // When usedVram <= 350 MB: Headless / dedicated environment (e.g. NAS) with exclusive GPU use.
-        // Minimal safety margin (256 MB or 3% of free memory) to maximize utilization up to 100%.
-        //
-        // When usedVram > 350 MB: Desktop environment with active display manager, compositor, or browser.
-        // GPU drivers (AMDGPU, Intel) begin evicting VRAM allocations into system memory (GTT) when total VRAM
-        // utilization crosses 85-90%. To prevent compositor stutters and driver GTT spill, reserve a 15%
-        // safety margin of total VRAM (clamped between 1.5 GiB and 3.0 GiB) so peak total GPU usage stays comfortably under 85%.
+        // Automatic adaptive budgeting. The boundary is configurable because "is anything else
+        // using the card?" is not always a yes/no question: a video transcoder that reliably holds
+        // 700 MB still leaves the rest of the card to the upscaler, and budgeting for a full desktop
+        // there would throw away several GB of VRAM.
+        long exclusiveThreshold = exclusiveThresholdBytes is > 0
+            ? exclusiveThresholdBytes.Value
+            : DefaultExclusiveThresholdBytes;
+
         long safetyMargin;
-        if (usedVram <= 350L * 1024 * 1024)
+        if (usedVram <= exclusiveThreshold)
         {
             safetyMargin = Math.Min(256L * 1024 * 1024, (long)(freeVram * 0.03));
         }
@@ -682,7 +697,8 @@ public static class OnnxTiler
     public static long GetAvailableVramBudget(
         int deviceId = 0,
         double? utilizationFraction = null,
-        long? safetyMarginBytes = null
+        long? safetyMarginBytes = null,
+        long? exclusiveThresholdBytes = null
     )
     {
         // 1. Try Vulkan VK_EXT_memory_budget (primary for all GPUs)
@@ -699,7 +715,8 @@ public static class OnnxTiler
                     vkMem.TotalVramBytes,
                     vkMem.UsedVramBytes,
                     utilizationFraction,
-                    safetyMarginBytes
+                    safetyMarginBytes,
+                    exclusiveThresholdBytes
                 );
             }
 
@@ -713,7 +730,8 @@ public static class OnnxTiler
                 vkMem.TotalVramBytes,
                 vkMem.UsedVramBytes,
                 utilizationFraction,
-                safetyMarginBytes
+                safetyMarginBytes,
+                exclusiveThresholdBytes
             );
         }
 
@@ -721,7 +739,13 @@ public static class OnnxTiler
         var (total, used, free) = GetGpuVramInfo(deviceId);
         if (total > 0 && free > 0)
         {
-            return CalculateVramBudget(total, used, utilizationFraction, safetyMarginBytes);
+            return CalculateVramBudget(
+                total,
+                used,
+                utilizationFraction,
+                safetyMarginBytes,
+                exclusiveThresholdBytes
+            );
         }
 
         // Safe fallback for systems where no GPU query succeeded (e.g. CPU): 4 GiB
