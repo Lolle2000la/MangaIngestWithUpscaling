@@ -152,7 +152,7 @@ public class UpscalerConfigValidatorTests
 
         OptionsValidationException exception = await Assert.ThrowsAsync<OptionsValidationException>(
             () =>
-                host.StartAsync()
+                host.StartAsync(TestContext.Current.CancellationToken)
         );
         Assert.Contains("Upscaler:MemoryBudgetBytes", exception.Message, StringComparison.Ordinal);
         Assert.Contains("12 Gigabytes", exception.Message, StringComparison.Ordinal);
@@ -182,14 +182,14 @@ public class UpscalerConfigValidatorTests
             })
             .Build();
 
-        await host.StartAsync();
+        await host.StartAsync(TestContext.Current.CancellationToken);
         UpscalerConfig resolved = host
             .Services.GetRequiredService<IOptions<UpscalerConfig>>()
             .Value;
 
         Assert.Equal(12884901888L, resolved.ResolvedMemoryBudgetBytes);
         Assert.Equal(1073741824L, resolved.ResolvedVramExclusiveThresholdBytes);
-        await host.StopAsync();
+        await host.StopAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -211,14 +211,14 @@ public class UpscalerConfigValidatorTests
             })
             .Build();
 
-        await host.StartAsync();
+        await host.StartAsync(TestContext.Current.CancellationToken);
         UpscalerConfig resolved = host
             .Services.GetRequiredService<IOptions<UpscalerConfig>>()
             .Value;
 
         Assert.Equal(0, resolved.ResolvedMemoryBudgetBytes);
         Assert.Null(resolved.ResolvedVramSafetyMarginBytes);
-        await host.StopAsync();
+        await host.StopAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
