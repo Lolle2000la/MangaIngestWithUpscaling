@@ -126,8 +126,8 @@ public sealed class PageStreamSpool : IPageSpoolStore
     {
         _logger = logger;
         _maxTaskBytes =
-            config.Value.MaxSpoolBytesPerTask > 0
-                ? config.Value.MaxSpoolBytesPerTask
+            config.Value.ResolvedMaxSpoolBytesPerTask > 0
+                ? config.Value.ResolvedMaxSpoolBytesPerTask
                 : MaxTaskBytes;
 
         // Unique per PageStreamSpool instance (and therefore per process): two app instances, or two

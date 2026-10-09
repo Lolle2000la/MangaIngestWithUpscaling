@@ -251,6 +251,34 @@ the threshold still counts as exclusive — and an explicit `VramSafetyMarginByt
 `VramUtilizationFraction` still takes precedence over both branches. A value of 0 or negative falls
 back to the default rather than making every card exclusive.
 
+### 4.4 Human-readable size strings
+
+Every memory setting accepts either a plain byte count or a size string, so a configuration file no
+longer has to spell out `367001600`:
+
+| Setting | Examples |
+|---|---|
+| `MemoryBudgetBytes` | `4GiB`, `12288MiB`, `4294967296`, unset |
+| `VramSafetyMarginBytes` | `512MiB`, `1.5 GiB`, unset |
+| `VramExclusiveThresholdBytes` | `700MiB`, `1 GiB`, `350MiB`, unset |
+| `MaxSpoolBytesPerTask` | `8 GiB`, `2GiB`, `8589934592` |
+
+Decimal suffixes are powers of 1000, binary ones powers of 1024 — `1GB` is 1000000000 and `1GiB` is
+1073741824. The distinction exists precisely because the arithmetic in this document is binary, so
+pasting the wrong unit cannot silently mean a different number. Bare byte counts keep working, so
+existing configuration files do not have to change.
+
+```yaml
+environment:
+  Ingest_Upscaler__MemoryBudgetBytes: "12 GiB"          # fixed budget, no auto-detection
+  Ingest_Upscaler__VramExclusiveThresholdBytes: "1GiB"  # a transcoder owns the first GiB
+  Ingest_Upscaler__VramSafetyMarginBytes: "512MiB"      # instead of the automatic margin
+```
+
+Unparseable values fall back to "unset" (auto-detect) rather than failing startup, so a typo cannot
+take the service down — it just loses the override. `ByteSize.ToString()` renders values back with
+binary units, which is what the logs use.
+
 ## 5. Why this is better than the old caps
 
 Old behaviour, 4x ESRGAN fp16, 1125×1600 page, real weight size:

@@ -1,5 +1,6 @@
 extern alias remote;
 
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Claims;
 using System.Text;
@@ -161,7 +162,9 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                     ImageFormatConversionRules = [],
                     MaxDimensionBeforeUpscaling = null,
                     EnableSmartDownscale = false,
-                    MaxSpoolBytesPerTask = maxSpoolBytesPerTask,
+                    MaxSpoolBytesPerTask = maxSpoolBytesPerTask.ToString(
+                        CultureInfo.InvariantCulture
+                    ),
                 }
             )
         );
@@ -1083,8 +1086,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     [Trait("Category", "Integration")]
     public async Task UploadPage_EnforcesThePerTaskBudgetOverGrpc()
     {
-        // A dedicated server with a tiny budget, so the handler-level reservation/commit checks can be
-        // driven with a couple of bytes (the production default is 8 GiB).
+        // A dedicated server with a tiny budget, so the handler-level reservation/commit checks can
+        // be driven with a few bytes (the production default is 8 GiB).
         await using WebApplication budgetApp = await BuildAppAsync(maxSpoolBytesPerTask: 16);
         TestServer server = budgetApp.GetTestServer();
         using GrpcChannel channel = GrpcChannel.ForAddress(

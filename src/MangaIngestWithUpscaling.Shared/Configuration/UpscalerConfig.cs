@@ -80,10 +80,18 @@ public record UpscalerConfig
     public int TileSize { get; set; } = 0;
 
     /// <summary>
-    ///     Memory budget in bytes for automatic tile size estimation.
-    ///     0 = Auto-detect from GPU / system VRAM (default).
+    ///     Memory budget for automatic tile size estimation, as a byte count or a size string
+    ///     (<c>1GiB</c>, <c>12 GiB</c>, <c>12288MiB</c>). Unset, empty or unparseable means 0
+    ///     (<see cref="ResolvedMemoryBudgetBytes"/>).
     /// </summary>
-    public long MemoryBudgetBytes { get; set; } = 0;
+    public string? MemoryBudgetBytes { get; set; }
+
+    /// <summary>
+    ///     Gets the parsed memory budget. 0 when nothing usable is configured, which is the signal
+    ///     for tile sizing to detect the budget from the device instead.
+    /// </summary>
+    public long ResolvedMemoryBudgetBytes =>
+        ByteSize.TryParse(MemoryBudgetBytes, out ByteSize parsed) ? parsed.Bytes : 0;
 
     /// <summary>
     ///     Optional fraction of free GPU VRAM to utilize for automatic tile budgeting (0.0 to 1.0).
@@ -101,21 +109,31 @@ public record UpscalerConfig
     public bool RecalibrateDeviceMemory { get; set; } = false;
 
     /// <summary>
-    ///     Optional safety margin in bytes subtracted from free VRAM when estimating tile budget.
-    ///     Defaults to null (automatically chosen: 256 MB in headless environments, 512 MB-1024 MB when desktop is active).
+    ///     Optional safety margin subtracted from free VRAM when estimating tile budget, as a byte
+    ///     count or a size string (<c>512MiB</c>, <c>1.5 GiB</c>). Unset means the margin is chosen
+    ///     automatically (256 MiB headless, 1.5-3.0 GiB with a desktop attached).
     /// </summary>
-    public long? VramSafetyMarginBytes { get; set; } = null;
+    public string? VramSafetyMarginBytes { get; set; }
+
+    public long? ResolvedVramSafetyMarginBytes =>
+        ByteSize.TryParse(VramSafetyMarginBytes, out ByteSize parsed) ? parsed.Bytes : null;
 
     /// <summary>
-    ///     VRAM usage (in bytes) below which the GPU is treated as quasi-exclusive to the upscaler.
-    ///     At or below it the budget keeps only a minimal reserve (256 MB); above it the budget keeps
-    ///     a desktop-sized safety margin (15% of total VRAM, clamped to 1.5-3 GiB), because drivers
-    ///     start evicting into GTT near 85-90% utilisation.
-    ///     Raise this when another process reliably shares the card but stays bounded — e.g. a video
-    ///     transcoder holding 700 MB: at 1 GiB the upscaler budgets the card as if exclusive again.
-    ///     Defaults to 350 MB (driver plus a display server or a couple of light helpers).
+    ///     VRAM usage below which the GPU is treated as quasi-exclusive to the upscaler, as a byte
+    ///     count or a size string (<c>700MiB</c>, <c>1 GiB</c>). Unset means 350 MiB (driver plus a
+    ///     display server or a couple of light helpers).
+    ///     <para>
+    ///     At or below it the budget keeps only a minimal reserve (256 MiB); above it the budget keeps
+    ///     a desktop-sized safety margin (15% of total VRAM, clamped to 1.5-3.0 GiB), because drivers
+    ///     start evicting into GTT near 85-90% utilisation. Raise this when another process reliably
+    ///     shares the card but stays bounded — e.g. a video transcoder holding 700 MiB: at
+    ///     <c>1GiB</c> the upscaler budgets the card as if exclusive again.
+    ///     </para>
     /// </summary>
-    public long? VramExclusiveThresholdBytes { get; set; } = null;
+    public string? VramExclusiveThresholdBytes { get; set; }
+
+    public long? ResolvedVramExclusiveThresholdBytes =>
+        ByteSize.TryParse(VramExclusiveThresholdBytes, out ByteSize parsed) ? parsed.Bytes : null;
 
     public string ModelsDirectory { get; set; } =
         Path.Combine(
@@ -156,7 +174,12 @@ public record UpscalerConfig
     /// disk. Defaults to 8 GiB. There is no process-wide cap; see
     /// <c>docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md</c>.
     /// </summary>
-    public long MaxSpoolBytesPerTask { get; set; } = 8L * 1024 * 1024 * 1024;
+    public string? MaxSpoolBytesPerTask { get; set; } = "8 GiB";
+
+    public long ResolvedMaxSpoolBytesPerTask =>
+        ByteSize.TryParse(MaxSpoolBytesPerTask, out ByteSize parsed)
+            ? parsed.Bytes
+            : 8L * 1024 * 1024 * 1024;
 
     /// <summary>
     /// How long a worker waits for a page manifest. The manifest normally returns immediately, but

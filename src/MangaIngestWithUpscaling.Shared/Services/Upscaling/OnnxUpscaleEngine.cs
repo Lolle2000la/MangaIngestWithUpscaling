@@ -109,13 +109,13 @@ public class OnnxUpscaleEngine(
 
                 int deviceId = Math.Max(0, config.Value.SelectedDeviceIndex - 1);
                 long budget =
-                    config.Value.MemoryBudgetBytes > 0
-                        ? config.Value.MemoryBudgetBytes
+                    config.Value.ResolvedMemoryBudgetBytes > 0
+                        ? config.Value.ResolvedMemoryBudgetBytes
                         : OnnxTiler.GetAvailableVramBudget(
                             deviceId,
                             config.Value.VramUtilizationFraction,
-                            config.Value.VramSafetyMarginBytes,
-                            config.Value.VramExclusiveThresholdBytes
+                            config.Value.ResolvedVramSafetyMarginBytes,
+                            config.Value.ResolvedVramExclusiveThresholdBytes
                         );
 
                 // First upscale on a device runs a short benchmark so tile sizing uses what this

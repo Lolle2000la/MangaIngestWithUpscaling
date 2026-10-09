@@ -602,7 +602,7 @@ public class PageStreamSpoolTests
     {
         var spool = new PageStreamSpool(
             Substitute.For<ILogger<PageStreamSpool>>(),
-            Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = 100 })
+            Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = "100B" })
         );
         PageStreamSession session = spool.GetOrCreateSession(63, "identity", "engine", 2);
 
