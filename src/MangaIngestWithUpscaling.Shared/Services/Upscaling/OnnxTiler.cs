@@ -536,17 +536,78 @@ public static class OnnxTiler
     }
 
     /// <summary>
-    /// Estimates the largest tile dimension (in pixels) whose single-inference footprint plus the
-    /// model weights fits into <paramref name="memoryBudgetBytes"/>.
-    /// Returns 0 when the whole image already fits in a single pass, and never returns less than
-    /// <see cref="MinimumTileSize"/>.
+    /// How a page of <paramref name="Columns"/> x <paramref name="Rows"/> tiles of
+    /// <paramref name="TileWidth"/> x <paramref name="TileHeight"/> splits for a maximum tile size.
+    /// Single source of truth for the split, shared by the tiler and the tile-size derivation so
+    /// both always agree on what a tile size actually buys.
+    /// </summary>
+    public readonly record struct TileSplit(int Columns, int Rows, int TileWidth, int TileHeight)
+    {
+        public static TileSplit For(int width, int height, int tileSize)
+        {
+            int bound = tileSize > 0 ? tileSize : Math.Max(width, height);
+            int columns = Math.Max(1, (width + bound - 1) / bound);
+            int rows = Math.Max(1, (height + bound - 1) / bound);
+            return new TileSplit(
+                columns,
+                rows,
+                Math.Max(1, (width + columns - 1) / columns),
+                Math.Max(1, (height + rows - 1) / rows)
+            );
+        }
+
+        /// <summary>
+        /// Pixels a single tile of this split is really inferred at: the tile plus
+        /// <see cref="DefaultTilePad"/> overlap on every side, rounded up to the tensor alignment.
+        /// </summary>
+        public long PaddedTilePixels
+        {
+            get
+            {
+                (int w, int h) = OnnxTiler.UniformTileTensorShape(this);
+                return (long)w * h;
+            }
+        }
+
+        /// <summary>Pixels the whole page is inferred at, overlap and alignment waste included.</summary>
+        public long TotalPaddedPixels => PaddedTilePixels * Columns * Rows;
+    }
+
+    /// <summary>
+    /// The single padded tensor shape every tile of this split is inferred at.
     /// <para>
-    /// There is deliberately no upper cap: the memory model is quadratic in tile pixels with no
-    /// cliff, so with the derived formula a large budget on a big card yields a single pass instead
-    /// of an arbitrary 512/1024 px clamp that left both memory and throughput on the table.
+    /// It follows the tiles the page actually splits into, never the tile size the budget allowed:
+    /// a page narrower or shorter than that budget would otherwise be inferred at the budget's shape
+    /// and throw away everything between the page edge and the tile edge as reflection padding — an
+    /// 800 px wide page inferred as a 1600 px tile pays double for the same output.
     /// </para>
     /// </summary>
-    public static int EstimateTileSize(
+    public static (int Width, int Height) UniformTileTensorShape(TileSplit split) =>
+        (
+            Math.Max(TileAlignment, ((split.TileWidth + 2 * DefaultTilePad + 63) / 64) * 64),
+            Math.Max(TileAlignment, ((split.TileHeight + 2 * DefaultTilePad + 63) / 64) * 64)
+        );
+
+    /// <summary>
+    /// Plans the grid a page of <paramref name="width"/> x <paramref name="height"/> is upscaled in
+    /// for <paramref name="memoryBudgetBytes"/>: the number of tiles per axis and their size.
+    /// <para>
+    /// A single tile is run at a time, so a grid is affordable when one of its tiles is. Among the
+    /// affordable grids the one with the fewest total padded pixels is planned, because that is the
+    /// page for the least inference work — which is throughput, since one inference runs at a time.
+    /// The alternative of deriving a square tile side from the budget leaves most of it unused
+    /// whenever the page's own aspect does not match: a 1125x1600 4x page at 13 GB splits 2x3 at a
+    /// 704 px tile side, while a 2x2 grid covers the same page with fewer, better-fitting tiles.
+    /// </para>
+    /// <para>
+    /// The whole page as one inference is only planned when its footprint stays below
+    /// <see cref="SinglePassSafetyFraction"/> of the budget, because a single-pass overflow cannot
+    /// be recovered without restarting the page. There is deliberately no upper cap beyond that:
+    /// the memory model is quadratic in tile pixels with no cliff, so a large budget on a big card
+    /// yields a single pass instead of an arbitrary clamp that left memory and throughput unused.
+    /// </para>
+    /// </summary>
+    public static TileSplit PlanTileSplit(
         int width,
         int height,
         int scale,
@@ -577,50 +638,60 @@ public static class OnnxTiler
 
         double bytesPerPixel = analytic.BytesPerPixel(scale, isFp16) * activationScale;
 
-        // Static cost the device carries for the whole session: weights plus the execution
-        // provider's session and arena reservation, which is independent of tile size.
-        long availableForActivation = memoryBudgetBytes - weights - sessionReservation;
-
-        // Whole image in a single pass: only claim it when the peak stays comfortably inside the
-        // budget, because a single-pass overflow cannot be recovered without restarting the page.
-        long singlePassPixels = (long)AlignedTileDimension(width) * AlignedTileDimension(height);
-        long singlePassBytes = weights + (long)(bytesPerPixel * singlePassPixels);
-        if (singlePassBytes <= memoryBudgetBytes * SinglePassSafetyFraction)
+        if (width <= 0 || height <= 0)
         {
-            return 0;
+            return TileSplit.For(Math.Max(width, 1), Math.Max(height, 1), MinimumTileSize);
         }
 
-        if (availableForActivation <= 0)
-        {
-            return MinimumTileSize;
-        }
-
-        // Largest tile whose padded footprint still fits: solve
-        // weights + bytesPerPixel * AlignedTileDimension(T + 2*pad)^2 <= memoryBudget.
-        int tileDim = (int)Math.Sqrt(availableForActivation / bytesPerPixel);
-        if (tileDim > 2 * DefaultTilePad)
-        {
-            tileDim -= 2 * DefaultTilePad;
-        }
-
-        int snapped = Math.Max(TileAlignment, (tileDim / TileAlignment) * TileAlignment);
-        while (
-            snapped > TileAlignment
-            && weights
-                + (long)(
-                    bytesPerPixel
-                    * (long)AlignedTileDimension(snapped + 2 * DefaultTilePad)
-                    * AlignedTileDimension(snapped + 2 * DefaultTilePad)
-                )
-                > memoryBudgetBytes
+        // Whole page as one inference: only claim it when the padded footprint stays comfortably
+        // inside the budget, because a single-pass overflow cannot be recovered without restarting
+        // the page.
+        TileSplit singlePass = TileSplit.For(width, height, 0);
+        if (
+            weights + (long)(bytesPerPixel * singlePass.PaddedTilePixels)
+            <= memoryBudgetBytes * SinglePassSafetyFraction
         )
         {
-            snapped -= TileAlignment;
+            return singlePass;
         }
 
-        // Never tile below the quality floor: sub-256 px tiles cost more in overlap/blending than
-        // they save in memory and visibly hurt manga screentones.
-        return Math.Max(MinimumTileSize, snapped);
+        // Nothing left for activations even before the first tile is chosen. Splitting at the
+        // quality floor is the best that can be done: it protects the output, and the engine halves
+        // the tiles again if the driver then refuses the allocation.
+        if (memoryBudgetBytes - weights - sessionReservation <= 0)
+        {
+            return TileSplit.For(width, height, MinimumTileSize);
+        }
+
+        int maxColumns = (width + MinimumTileSize - 1) / MinimumTileSize;
+        int maxRows = (height + MinimumTileSize - 1) / MinimumTileSize;
+
+        TileSplit best = TileSplit.For(width, height, MinimumTileSize);
+        long bestWork = long.MaxValue;
+        for (int columns = 1; columns <= maxColumns; columns++)
+        {
+            int tileWidth = (width + columns - 1) / columns;
+            for (int rows = 1; rows <= maxRows; rows++)
+            {
+                var candidate = new TileSplit(columns, rows, tileWidth, (height + rows - 1) / rows);
+
+                long work = candidate.TotalPaddedPixels;
+                if (work >= bestWork)
+                {
+                    continue;
+                }
+
+                if (weights + (long)(bytesPerPixel * candidate.PaddedTilePixels) > memoryBudgetBytes)
+                {
+                    continue;
+                }
+
+                best = candidate;
+                bestWork = work;
+            }
+        }
+
+        return best;
     }
 
     /// <summary>
@@ -1036,14 +1107,11 @@ public static class OnnxTiler
         int height,
         int scale,
         InferenceSession session,
-        int tileSize = DefaultTileSize,
+        TileSplit split,
         int tilePad = DefaultTilePad,
         CancellationToken cancellationToken = default
     )
     {
-        int currentMaxTileSizeX = tileSize > 0 ? tileSize : width;
-        int currentMaxTileSizeY = tileSize > 0 ? tileSize : height;
-
         while (true)
         {
             try
@@ -1054,23 +1122,54 @@ public static class OnnxTiler
                     height,
                     scale,
                     session,
-                    currentMaxTileSizeX,
-                    currentMaxTileSizeY,
+                    split,
                     tilePad,
                     cancellationToken
                 );
             }
             catch (Exception ex)
                 when (IsMemoryException(ex)
-                    && (currentMaxTileSizeX > 16 || currentMaxTileSizeY > 16)
+                    && (split.TileWidth > 16 || split.TileHeight > 16)
                 )
             {
-                currentMaxTileSizeX = Math.Max(16, currentMaxTileSizeX / 2);
-                currentMaxTileSizeY = Math.Max(16, currentMaxTileSizeY / 2);
+                split = HalveSplit(width, height, split);
                 GC.Collect();
             }
         }
     }
+
+    /// <summary>
+    /// <see cref="UpscaleRgb"/> for a maximum tile size, which is how a configured override is
+    /// expressed. Anything derived from the budget should plan a <see cref="TileSplit"/> instead,
+    /// because a single tile side cannot express grids that split the axes differently (a 4x3 grid
+    /// is the cheapest for some pages and is reachable by no tile size at all).
+    /// </summary>
+    public static byte[] UpscaleRgb(
+        byte[] rgbBytes,
+        int width,
+        int height,
+        int scale,
+        InferenceSession session,
+        int tileSize = DefaultTileSize,
+        int tilePad = DefaultTilePad,
+        CancellationToken cancellationToken = default
+    ) =>
+        UpscaleRgb(
+            rgbBytes,
+            width,
+            height,
+            scale,
+            session,
+            TileSplit.For(width, height, tileSize),
+            tilePad,
+            cancellationToken
+        );
+
+    /// <summary>
+    /// The same grid with the largest tile side halved, for the driver refusing an allocation.
+    /// </summary>
+    public static TileSplit HalveSplit(int width, int height, TileSplit split) =>
+        TileSplit.For(width, height, Math.Max(split.TileWidth, split.TileHeight) / 2);
 
     private static byte[] AutoSplit(
         byte[] rgbBytes,
@@ -1078,28 +1177,23 @@ public static class OnnxTiler
         int height,
         int scale,
         InferenceSession session,
-        int maxTileSizeX,
-        int maxTileSizeY,
+        TileSplit split,
         int overlap,
         CancellationToken cancellationToken
     )
     {
-        int tileCountX = (int)Math.Ceiling((double)width / maxTileSizeX);
-        int tileCountY = (int)Math.Ceiling((double)height / maxTileSizeY);
-        int tileSizeX = (int)Math.Ceiling((double)width / tileCountX);
-        int tileSizeY = (int)Math.Ceiling((double)height / tileCountY);
+        int tileCountX = split.Columns;
+        int tileCountY = split.Rows;
+        int tileSizeX = split.TileWidth;
+        int tileSizeY = split.TileHeight;
 
         int outWidth = width * scale;
         int outHeight = height * scale;
 
-        // Determine uniform padded dimensions across all tiles across all images.
-        // Passing identical uniform tensor shapes to ONNX Runtime (WebGPU / Dawn EP) prevents
-        // per-tile and per-page buffer re-allocation and memory arena accumulation in Vulkan VRAM/GTT.
-        // Dimensions are padded independently to multiples of 64 to avoid exploding elongated aspect ratios into giant squares.
-        int maxPaddedW = maxTileSizeX + 2 * overlap;
-        int maxPaddedH = maxTileSizeY + 2 * overlap;
-        int uniformTargetW = ((maxPaddedW + 63) / 64) * 64;
-        int uniformTargetH = ((maxPaddedH + 63) / 64) * 64;
+        // One uniform tensor shape for every tile keeps ONNX Runtime (WebGPU / Dawn EP) from
+        // re-allocating per tile and accumulating arena memory in Vulkan VRAM/GTT. It follows the
+        // tiles this grid produces, so nothing is inferred that the page does not contain.
+        (int uniformTargetW, int uniformTargetH) = UniformTileTensorShape(split);
 
         if (tileCountX <= 1 && tileCountY <= 1)
         {

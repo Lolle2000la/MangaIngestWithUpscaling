@@ -126,36 +126,41 @@ public class OnnxUpscaleEngine(
                     cancellationToken
                 );
 
-                int effectiveTileSize =
-                    config.Value.TileSize > 0 ? config.Value.TileSize
-                    : config.Value.TileSize < 0 ? 0
-                    : OnnxTiler.EstimateTileSize(
-                        origWidth,
-                        origHeight,
-                        scale,
-                        modelPath,
-                        budget,
-                        modelSizeBytes,
-                        isFp16,
-                        profile
-                    );
+                OnnxTiler.TileSplit split =
+                    config.Value.TileSize > 0
+                        ? OnnxTiler.TileSplit.For(origWidth, origHeight, config.Value.TileSize)
+                        : config.Value.TileSize < 0
+                        ? OnnxTiler.TileSplit.For(origWidth, origHeight, 0)
+                        : OnnxTiler.PlanTileSplit(
+                            origWidth,
+                            origHeight,
+                            scale,
+                            modelPath,
+                            budget,
+                            modelSizeBytes,
+                            isFp16,
+                            profile
+                        );
 
                 var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
                 logger.LogDebug(
-                    "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model} with tile size {TileSize} (budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
+                    "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
                     Path.GetFileName(inputPath),
                     origWidth,
                     origHeight,
                     isGrayscale,
                     Path.GetFileName(modelPath),
-                    effectiveTileSize == 0 ? "Full image" : effectiveTileSize.ToString(),
+                    split.Columns,
+                    split.Rows,
+                    split.TileWidth,
+                    split.TileHeight,
                     budget / (1024 * 1024),
                     vramBefore / (1024 * 1024),
                     gttBefore / (1024 * 1024)
                 );
 
                 byte[] upscaledBytes;
-                int attemptTileSize = effectiveTileSize;
+                OnnxTiler.TileSplit attempt = split;
                 while (true)
                 {
                     try
@@ -169,23 +174,26 @@ public class OnnxUpscaleEngine(
                                 origHeight,
                                 scale,
                                 session,
-                                tileSize: attemptTileSize,
+                                attempt,
                                 cancellationToken: cancellationToken
                             );
                         }
                         break;
                     }
                     catch (Exception ex)
-                        when (OnnxTiler.IsMemoryException(ex) && attemptTileSize > 128)
+                        when (OnnxTiler.IsMemoryException(ex) && attempt.TileWidth > 128)
                     {
                         logger.LogWarning(
                             ex,
-                            "Memory pressure encountered upscaling {Input} with tile size {TileSize}. Halving tile size and recreating session.",
+                            "Memory pressure encountered upscaling {Input} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight}. Halving tile size and recreating session.",
                             Path.GetFileName(inputPath),
-                            attemptTileSize
+                            attempt.Columns,
+                            attempt.Rows,
+                            attempt.TileWidth,
+                            attempt.TileHeight
                         );
                         sessionFactory.InvalidateSession(modelPath);
-                        attemptTileSize = Math.Max(128, attemptTileSize / 2);
+                        attempt = OnnxTiler.HalveSplit(origWidth, origHeight, attempt);
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
                     }

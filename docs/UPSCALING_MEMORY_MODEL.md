@@ -1,7 +1,7 @@
 # Upscaling Memory Model & Tile Size Derivation
 
 This document explains how the upscaler decides how large a tile it may run, and where the
-numbers come from. It exists so the tile size is a *derived* quantity instead of an arbitrary
+numbers come from. It exists so the tile split is a *derived* quantity instead of an arbitrary
 constant, and so the derivation can be re-checked when the model set changes.
 
 Everything here was measured on the hardware this repository develops against:
@@ -93,35 +93,68 @@ the budget once, as `OnnxTiler.SessionReservationBytes` (384 MiB).
 
 ---
 
-## 2. How the tile size is derived
+## 2. How the split is derived
+
+A tile *size* is only ever a way of selecting a **grid**: `ceil(width / n)` columns and
+`ceil(height / n)` rows, each then shrinking back to `ceil(width / columns)`. The budget is therefore
+spent on the grid itself, not on a square tile side.
 
 ```csharp
-long weights   = EstimateModelBytes(modelNameOrPath, modelSizeBytes);
-double bpp     = C_arch · scale² · (isFp16 ? 2 : 4);           // bytes per input pixel
-long  avail    = memoryBudgetBytes - weights - SessionReservationBytes;
+long weights = EstimateModelBytes(modelNameOrPath, modelSizeBytes);
+double bpp   = C_arch · scale² · (isFp16 ? 2 : 4);      // bytes per input pixel
 
-// single pass only if the whole page fits with headroom
-if (weights + bpp · aligned(w)·aligned(h) <= 0.9 · memoryBudgetBytes) return 0;
+// the whole page in one inference, only with headroom
+if (weights + bpp · paddedTilePixels(1x1) <= 0.9 · memoryBudgetBytes) return 1x1;
 
-// otherwise: largest n such that a padded, aligned tile still fits
-n0  = sqrt(avail / bpp) - 2·tilePad
-n   = snap_down_to_64(n0)
-while (weights + bpp · aligned(n + 2·tilePad)² > memoryBudgetBytes) n -= 64;
-return max(256, n);
+// otherwise: every grid whose single tile fits the budget ...
+for (columns = 1 .. ceil(w / MinimumTileSize))
+for (rows    = 1 .. ceil(h / MinimumTileSize))
+{
+    tile     = (ceil(w / columns), ceil(h / rows));
+    work     = columns · rows · paddedTilePixels(tile);   // overlap + alignment included
+    if (work < bestWork && weights + bpp · paddedTilePixels(tile) <= budget)
+        best = (columns, rows);
+}
+return best ?? grid at MinimumTileSize;                    // quality floor when nothing fits
 ```
 
 Notes:
 
-* **`0` means "single pass"**, kept as the existing contract.
-* **No upper cap.** The tile size is whatever the budget supports. On this card (16 GB, ~2 GB used
-  by the desktop, so a 14.2 GB Vulkan budget) a 4x model derives 768–896 px tiles and a 2x model
-  runs the whole 1125×1600 page in a single pass. At a 32 GB budget the 4x model reaches 1152 px.
-  The old `maxCap = { ≥4 => 512, 3 => 640, _ => 1024 }` is gone.
-* **`MinimumTileSize = 256`** remains, for quality (receptive field on screentones) and because
-  the fixed per-tile cost dominates below that. When even a 256 px tile does not fit the budget,
-  the engine's existing `OnnxTiler.IsMemoryException` path halves it further.
-* Tiles are snapped to a **multiple of 64**, matching `AutoSplit`'s uniform-tensor alignment, so
-  re-sized tiles keep the same shapes and do not churn the arena.
+* **One tile runs at a time**, so a grid is affordable exactly when a single tile of it is. The whole
+  page as one inference is only planned when its footprint stays below
+  `SinglePassSafetyFraction = 0.9` of the budget, because a single-pass overflow cannot be recovered
+  without restarting the page.
+* **The objective is throughput, not the tile size.** Fewer total padded pixels means fewer (or
+  smaller) inferences, and one inference runs at a time. That is what makes the search pick 4x3 over
+  2x2 on a 1125x1600 4x page at 13 GB — the page is taller than wide, so the budget is best spent on
+  rows.
+* **No upper cap.** On this card (16 GB, ~2 GB used by the desktop, so a ~13.4 GB Vulkan budget) a 4x
+  model plans 563x800 tiles and a 2x model runs the whole 1125x1600 page in a single pass. The old
+  `maxCap = { ≥4 => 512, 3 => 640, _ => 1024 }` is gone.
+* **`MinimumTileSize = 256`** remains the quality floor (receptive field on screentones), and the grid
+  never gets finer than it. When even that grid does not fit the budget, the engine's existing
+  `OnnxTiler.IsMemoryException` path halves it further.
+* Tiles are inferred at **one uniform shape per page** (a multiple of 64), which keeps the driver from
+  re-allocating per tile. It is derived from the grid the page actually has, *not* from the budget's
+  tile side: an 800 px wide page inferred as a 1600 px tile computes every tile at twice the pixels
+  the page contains, for identical output.
+
+### 2.1 What the padding actually costs
+
+`UniformTileTensorShape` is what a page is *really* inferred at, per tile:
+
+| page | bound | grid | tensor per tile | vs. the page |
+|---|---|---|---|---|
+| 1125x1600 | 1125 | 1x1 | 1216x1664 = 2.02 MP | +12% |
+| 1125x1600 | 800 | 2x2 | 640x832 = 0.53 MP x4 | +18% |
+| 1125x1600 | 704 | 2x3 | 640x576 = 0.37 MP x6 | +23% |
+| 800x5685 | 1536 | 1x4 | 832x1472 = 1.22 MP x4 | +8% |
+| 8000x200 | 286 | 28x1 | 320x256 = 0.08 MP x28 | +40% |
+
+The first two rows are the single-pass and 2x2 case of a normal page; the third is what a square-derived
+704 px tile side used to buy. The 8000x200 row is a stitched webtoon strip, where the 16 px overlap on
+both axes is a large fraction of a 200 px tall tile — unavoidable, and irrelevant because such strips
+are not the common case.
 
 ---
 
@@ -191,13 +224,13 @@ CPU/short-lived session and is not tiled).
 | `page_break_detector` | – | 2.3 MB | – | – | page-split detector, small, never tiled |
 
 The per-model codebook (`W`, `C_arch`, `scale`) is what `OnnxUpscaleEngine` feeds into
-`OnnxTiler.EstimateTileSize`. Because all models of an architecture share a graph, the per-model
+`OnnxTiler.PlanTileSplit`. Because all models of an architecture share a graph, the per-model
 differences reduce to the weight size, which the formula reads off the file.
 
 ### 4.1 Measurement of the real GPU peak vs prediction
 
 `UpscaleProfiler` (`~/mangamem/profiler`) reproduces the engine's exact path —
-`OnnxTiler.UpscaleRgb` with the derived tile size — and samples VRAM/GTT around it. 1125×1600 page
+`OnnxTiler.UpscaleRgb` with the planned grid — and samples VRAM/GTT around it. 1125×1600 page
 (typical manga page after smart downscale), 12 GB budget, fp16:
 
 ```
@@ -296,18 +329,24 @@ Old behaviour, 4x ESRGAN fp16, 1125×1600 page, real weight size:
 * the estimate said a 512 px tile needed 2.9 GB, then the cap forced 512 px anyway — so a 16 GB
   budget produced 12 tiles and the card sat at roughly a fifth of its usable VRAM.
 
-New behaviour (same page, same models, derived tile sizes):
+New behaviour (same page, same models, planned grids — RX 9070 XT, WebGPU, measured end-to-end):
 
-| budget | old tile (4x ESRGAN) | old tiles | new tile (4x) | new tiles |
+| budget | old tiles | new grid | new tensor per tile | inference |
 |---|---|---|---|---|
-| 8 GB | 512 | 12 | 512 | 12 |
-| 12 GB | 512 | 12 | 704 | 6 |
-| 16 GB | 512 | 12 | 832 | 4 |
-| 24 GB | 512 | 12 | 1024 | 4 |
-| 32 GB | 512 | 12 | 1152 | 2 |
+| 8 GB | 12 x 512 | 5x7 | 320x320 | 76.8 s → 52.9 s |
+| 12 GB | 12 x 512 | 4x3 | 320x576 | 56.4 s → 48.1 s |
+| 13.4 GB | 12 x 512 | 2x3 | 640x576 | 41.7 s → 41.7 s |
+| 16 GB | 12 x 512 | 1x3 | 1216x576 | — |
 
-and the 2x models run the whole page in a single pass from a 12 GB budget upwards (768 px at
-8 GB, 1024 px at 6 GB — the old cap held them at 1024 px no matter how much memory was free).
+and the 2x models run the whole page in a single pass from a 12 GB budget upwards — the old cap held
+them at 1024 px no matter how much memory was free.
+
+Two of the rows are *not* improvements, which is worth writing down rather than hiding:
+`FDAT_XL` at 13.4 GB is 5% slower in a 2x2 grid than in the 2x3 grid the old cap produced, because
+that model is measurably less efficient per pixel on 640x832 tiles than on 640x576 ones (18.6 vs
+20.5 ns/px, repeated). ESRGAN, DAT2 and HAT_L all get *faster* per pixel as the tile grows, so for them
+the least-work grid is also the fastest. The planner optimises padded work; per-pixel efficiency is a
+model property it does not model, and the difference between the two behaviours is a few percent.
 
 ---
 
@@ -419,7 +458,7 @@ are measurement tools, not part of the app:
 | `shape_peaks.py` | analytic working set per model via shape inference + liveness |
 | `single.sh` + `profiler/Program.cs` | GPU measurement of one inference at a fixed tile size |
 | `join.py` | joins both into the `C_arch` table |
-| `profiler/validate/` | end-to-end check: derive a tile size, run a page, verify VRAM/GTT |
+| `profiler/validate/` | end-to-end check: plan a grid, run a page, verify VRAM/GTT |
 
 To force a re-measurement in the app, set `Ingest_Upscaler__RecalibrateDeviceMemory=true` for one
 upscale and delete `<models>/device-memory-profile.json` (or just leave it — the fingerprint

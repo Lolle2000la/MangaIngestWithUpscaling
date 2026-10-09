@@ -186,20 +186,21 @@ public class DeviceMemoryCalibratorTests
     }
 
     [Fact]
-    public void EstimateTileSize_MeasuredProfile_ChangesDerivedTile()
+    public void PlanTileSplit_MeasuredProfile_ChangesDerivedGrid()
     {
-        // The same budget and model must produce different tiles with and without a profile:
-        // a profile whose measured scale is higher than the built-in one shrinks the tile.
+        // The same budget and model must produce different grids with and without a profile:
+        // a profile whose measured scale is higher than the built-in one shrinks the tiles.
         long budget = 12L * 1024 * 1024 * 1024;
         string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        long weights = 34L * 1024 * 1024;
 
-        int builtin = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit builtin = OnnxTiler.PlanTileSplit(
             1125,
             1600,
             4,
             model,
             budget,
-            34L * 1024 * 1024,
+            weights,
             isFp16: true
         );
 
@@ -214,42 +215,45 @@ public class DeviceMemoryCalibratorTests
             SessionReservationBytes = 64L * 1024 * 1024,
         };
 
-        int withHeavier = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit withHeavier = OnnxTiler.PlanTileSplit(
             1125,
             1600,
             4,
             model,
             budget,
-            34L * 1024 * 1024,
+            weights,
             isFp16: true,
             heavier
         );
-        int withLighter = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit withLighter = OnnxTiler.PlanTileSplit(
             1125,
             1600,
             4,
             model,
             budget,
-            34L * 1024 * 1024,
+            weights,
             isFp16: true,
             lighter
         );
 
         Assert.True(
-            withLighter > withHeavier,
-            $"expected a lighter measurement to allow a larger tile, got {withLighter} vs {withHeavier}"
+            withLighter.TotalPaddedPixels < withHeavier.TotalPaddedPixels,
+            $"expected a lighter measurement to do less work, got {withLighter.TotalPaddedPixels} vs {withHeavier.TotalPaddedPixels}"
         );
-        Assert.InRange(withHeavier, OnnxTiler.MinimumTileSize, builtin);
+        Assert.True(
+            withHeavier.TotalPaddedPixels >= builtin.TotalPaddedPixels,
+            $"expected a heavier measurement to do at least as much work as the built-in, got {withHeavier.TotalPaddedPixels} vs {builtin.TotalPaddedPixels}"
+        );
     }
 
     [Fact]
-    public void EstimateTileSize_OutOfRangeProfileValues_AreIgnored()
+    public void PlanTileSplit_OutOfRangeProfileValues_AreIgnored()
     {
         long budget = 12L * 1024 * 1024 * 1024;
         string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
         long weights = 34L * 1024 * 1024;
 
-        int baseline = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit baseline = OnnxTiler.PlanTileSplit(
             1125,
             1600,
             4,
@@ -273,7 +277,7 @@ public class DeviceMemoryCalibratorTests
             }
         )
         {
-            int withProfile = OnnxTiler.EstimateTileSize(
+            OnnxTiler.TileSplit withProfile = OnnxTiler.PlanTileSplit(
                 1125,
                 1600,
                 4,

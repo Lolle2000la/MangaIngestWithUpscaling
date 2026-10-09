@@ -375,10 +375,10 @@ public class OnnxTilerTests
     }
 
     [Fact]
-    public void EstimateTileSize_ReturnsZeroWhenWholeImageFits()
+    public void PlanTileSplit_WholeImageFits_IsASingleTile()
     {
         // SPAN on a small page: the full page fits well inside a 12 GB budget -> single pass
-        int tileSize = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             640,
             960,
             2,
@@ -386,14 +386,16 @@ public class OnnxTilerTests
             memoryBudgetBytes: 12L * 1024 * 1024 * 1024,
             isFp16: true
         );
-        Assert.Equal(0, tileSize);
+        Assert.Equal(new OnnxTiler.TileSplit(1, 1, 640, 960), split);
     }
 
     [Fact]
-    public void EstimateTileSize_Esrgan4x_DerivesTileFromBudget()
+    public void PlanTileSplit_Esrgan4x_DerivesGridFromBudget()
     {
-        // 5 GiB budget on a 4x ESRGAN page yields 256 px tiles in FP32, aligned to 64
-        int tileSize = OnnxTiler.EstimateTileSize(
+        // 5 GiB budget on a 1600x2400 4x ESRGAN page in FP32: 267x343 tiles in a 6x7 grid. The page
+        // is wider than tall, so the cheap direction is columns; the next coarser grid (6x6) needs
+        // more per inference than the budget holds.
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             1600,
             2400,
             4,
@@ -401,15 +403,17 @@ public class OnnxTilerTests
             memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(256, tileSize);
-        Assert.Equal(0, tileSize % OnnxTiler.TileAlignment);
+
+        Assert.Equal(6, split.Columns);
+        Assert.Equal(7, split.Rows);
+        Assert.Equal(320, OnnxTiler.UniformTileTensorShape(split).Width);
     }
 
     [Fact]
-    public void EstimateTileSize_Esrgan2x_AllowsLargerTileSize()
+    public void PlanTileSplit_Esrgan2x_AllowsLargerTilesThan4x()
     {
         // Same budget, half the scale -> four times the pixels fit -> much larger tiles
-        int tile2x = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit split2x = OnnxTiler.PlanTileSplit(
             1600,
             2400,
             2,
@@ -417,7 +421,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        int tile4x = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit split4x = OnnxTiler.PlanTileSplit(
             1600,
             2400,
             4,
@@ -425,15 +429,20 @@ public class OnnxTilerTests
             memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.True(tile2x > tile4x);
-        Assert.True(tile2x % 64 == 0);
+
+        Assert.True(split2x.TileWidth > split4x.TileWidth);
+        Assert.True(split2x.TotalPaddedPixels <= split4x.TotalPaddedPixels);
+
+        // What has to be round is the tensor the tiles are inferred at.
+        Assert.Equal(0, OnnxTiler.UniformTileTensorShape(split2x).Width % 64);
+        Assert.Equal(0, OnnxTiler.UniformTileTensorShape(split2x).Height % 64);
     }
 
     [Fact]
-    public void EstimateTileSize_SmallImage_ReturnsZero()
+    public void PlanTileSplit_SmallImage_IsASingleTile()
     {
         // Small 64x64 image fits in memory under any budget -> single pass
-        int tileSize = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             64,
             64,
             4,
@@ -441,14 +450,15 @@ public class OnnxTilerTests
             memoryBudgetBytes: 4L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(0, tileSize);
+        Assert.Equal(new OnnxTiler.TileSplit(1, 1, 64, 64), split);
     }
 
     [Fact]
-    public void EstimateTileSize_TightBudget_EnforcesMinimum256()
+    public void PlanTileSplit_TightBudget_SplitsAtTheQualityFloor()
     {
-        // Even under a very low budget (e.g. 500 MB), tile dimension never drops below 256
-        int tileSize = OnnxTiler.EstimateTileSize(
+        // Even under a very low budget (e.g. 500 MB) the grid is the one the quality floor produces:
+        // never finer than MinimumTileSize tiles, even though they do not fit the budget.
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             1600,
             2400,
             4,
@@ -456,11 +466,12 @@ public class OnnxTilerTests
             memoryBudgetBytes: 500L * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(OnnxTiler.MinimumTileSize, tileSize);
+
+        Assert.Equal(OnnxTiler.TileSplit.For(1600, 2400, OnnxTiler.MinimumTileSize), split);
     }
 
     [Fact]
-    public void EstimateTileSize_MangaJaNai_FP16_HalvesPeakMemoryAndExpandsTileSize()
+    public void PlanTileSplit_MangaJaNai_FP16_HalvesPeakMemoryAndExpandsGrid()
     {
         long actFp32 = OnnxTiler.EstimateActivationBytes(
             1125 * 1600,
@@ -478,7 +489,7 @@ public class OnnxTilerTests
         Assert.Equal(actFp32 / 2, actFp16);
 
         // Under a constrained 3 GiB budget, FP16 yields strictly larger tiles than FP32
-        int tileFp32 = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit splitFp32 = OnnxTiler.PlanTileSplit(
             1600,
             2400,
             4,
@@ -486,7 +497,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: 3L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        int tileFp16 = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit splitFp16 = OnnxTiler.PlanTileSplit(
             1600,
             2400,
             4,
@@ -495,14 +506,15 @@ public class OnnxTilerTests
             isFp16: true
         );
 
-        Assert.True(tileFp16 > tileFp32);
+        Assert.True(splitFp16.TileWidth > splitFp32.TileWidth);
+        Assert.True(splitFp16.TotalPaddedPixels < splitFp32.TotalPaddedPixels);
     }
 
     [Fact]
-    public void EstimateTileSize_DerivedTileFitsInsideBudget()
+    public void PlanTileSplit_PlannedGridFitsInsideBudget()
     {
-        // The core invariant: whatever tile size the formula hands back, running one tile of it
-        // (plus overlap and alignment) must stay inside the budget.
+        // The core invariant: whatever grid the planner hands back, running one tile of it (plus
+        // overlap and alignment) must stay inside the budget.
         (string Model, int Scale)[] cases = new (string Model, int Scale)[]
         {
             ("4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx", 4),
@@ -520,7 +532,7 @@ public class OnnxTilerTests
             long budget = budgetMb * 1024L * 1024L;
             foreach (var (model, scale) in cases)
             {
-                int tile = OnnxTiler.EstimateTileSize(
+                OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
                     1125,
                     1600,
                     scale,
@@ -528,35 +540,26 @@ public class OnnxTilerTests
                     memoryBudgetBytes: budget,
                     isFp16: true
                 );
-                if (tile == 0)
-                {
-                    // single pass: the whole page has to fit
-                    Assert.True(
-                        OnnxTiler.EstimatePeakMemoryBytes(1125, 1600, scale, model, isFp16: true)
-                            <= budget
+                long tileFootprint =
+                    OnnxTiler.EstimateModelBytes(model)
+                    + OnnxTiler.EstimateActivationBytes(
+                        (int)split.PaddedTilePixels,
+                        scale,
+                        model,
+                        isFp16: true
                     );
-                    continue;
-                }
 
-                Assert.True(
-                    tile % OnnxTiler.TileAlignment == 0,
-                    $"{model} tile {tile} not aligned"
-                );
-                long tileFootprint = OnnxTiler.EstimatePeakMemoryBytes(
-                    tile,
-                    tile,
-                    scale,
-                    model,
-                    isFp16: true
-                );
-                // A budget too small for even the quality floor is the one case where the tile may
+                // A budget too small for even the quality floor is the one case where the grid may
                 // exceed the budget: the floor protects output quality and the engine halves the
-                // tile again on allocation failure.
-                if (tile > OnnxTiler.MinimumTileSize)
+                // tiles again on allocation failure.
+                if (
+                    split.TileWidth > OnnxTiler.MinimumTileSize
+                    || split.TileHeight > OnnxTiler.MinimumTileSize
+                )
                 {
                     Assert.True(
                         tileFootprint <= budget,
-                        $"{model} @ {budgetMb} MB budget derived tile {tile} needing {tileFootprint / 1048576} MB"
+                        $"{model} @ {budgetMb} MB budget planned {split.Columns}x{split.Rows} of {split.TileWidth}x{split.TileHeight} needing {tileFootprint / 1048576} MB"
                     );
                 }
             }
@@ -564,12 +567,12 @@ public class OnnxTilerTests
     }
 
     [Fact]
-    public void EstimateTileSize_IsMonotonicInBudget()
+    public void PlanTileSplit_MoreBudgetNeverDoesMoreWork()
     {
-        int previous = 0;
+        long previous = long.MaxValue;
         foreach (long budgetMb in new long[] { 512, 1024, 2048, 4096, 6144, 8192, 12288, 16384 })
         {
-            int tile = OnnxTiler.EstimateTileSize(
+            OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
                 1125,
                 1600,
                 4,
@@ -577,24 +580,38 @@ public class OnnxTilerTests
                 memoryBudgetBytes: budgetMb * 1024L * 1024L,
                 isFp16: true
             );
-            Assert.True(tile >= previous, $"tile size shrank when the budget grew ({budgetMb} MB)");
-            previous = tile;
+            Assert.True(
+                split.TotalPaddedPixels <= previous,
+                $"work grew from {previous} to {split.TotalPaddedPixels} pixels at {budgetMb} MB"
+            );
+            previous = split.TotalPaddedPixels;
         }
 
-        // 1125x1600 at 4x fp16 needs ~34 GB of activation budget, so a 16 GB budget tiles at
-        // ~832 px. The old 512 px cap never allowed that.
-        Assert.Equal(832, previous);
+        // 1125x1600 at 4x fp16 needs ~34 GB of activation budget, so a 16 GB budget cannot keep the
+        // page whole. The cheapest grid that fits is one column of three 1125x534 tiles: the page is
+        // taller than wide, so the budget is best spent on rows. A square-derived 800 px tile side
+        // would have split it 2x2 instead, for 1.4% more work and one more inference.
+        OnnxTiler.TileSplit best = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 16384L * 1024L * 1024L,
+            isFp16: true
+        );
+        Assert.Equal(1, best.Columns);
+        Assert.Equal(3, best.Rows);
     }
 
     [Fact]
-    public void EstimateTileSize_HasNoScaleAwareUpperCap()
+    public void PlanTileSplit_HasNoScaleAwareUpperCap()
     {
         // The old model clamped 4x models to 512 px and 2x models to 1024 px regardless of memory.
-        // Deriving from the budget alone, a 32 GiB budget lets a 4x model use 1152 px tiles and a
+        // Deriving from the budget alone, a 32 GiB budget lets a 4x model plan 1125 px tiles and a
         // 2x model skip tiling entirely.
         long hugeBudget = 32L * 1024 * 1024 * 1024;
 
-        int tile4x = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit split4x = OnnxTiler.PlanTileSplit(
             1125,
             1600,
             4,
@@ -602,9 +619,9 @@ public class OnnxTilerTests
             memoryBudgetBytes: hugeBudget,
             isFp16: true
         );
-        Assert.True(tile4x > 1024, $"expected a large derived tile, got {tile4x}");
+        Assert.True(split4x.TileWidth > 1024, $"expected large tiles, got {split4x.TileWidth}");
 
-        int tile2x = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit split2x = OnnxTiler.PlanTileSplit(
             1125,
             1600,
             2,
@@ -612,16 +629,16 @@ public class OnnxTilerTests
             memoryBudgetBytes: hugeBudget,
             isFp16: true
         );
-        Assert.Equal(0, tile2x);
+        Assert.Equal(new OnnxTiler.TileSplit(1, 1, 1125, 1600), split2x);
     }
 
     [Fact]
-    public void EstimateTileSize_ElongatedImage_DoesNotOomOrAssumeZeroWhenPaddingIsSignificant()
+    public void PlanTileSplit_ElongatedImage_DoesNotOomOrAssumeZeroWhenPaddingIsSignificant()
     {
         // 8000x200 has 1.6 MP raw, but 4x ESRGAN needs ~34 GB of activations for it, so it must
-        // tile instead of returning 0 (single pass).
+        // tile instead of running it in one pass.
         long budget = 2L * 1024 * 1024 * 1024; // 2 GB budget
-        int tile = OnnxTiler.EstimateTileSize(
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             8000,
             200,
             4,
@@ -629,8 +646,152 @@ public class OnnxTilerTests
             memoryBudgetBytes: budget,
             isFp16: true
         );
-        Assert.True(tile > 0);
-        Assert.True(tile <= 256);
+
+        Assert.True(
+            split.Columns > 1 || split.Rows > 1,
+            "a 1.6 MP 4x ESRGAN page cannot be one pass"
+        );
+
+        // The 8000 px axis is the only one that can absorb the budget, so the split follows it:
+        // fewer columns than the quality floor alone would give.
+        Assert.Equal(1, split.Rows);
+        OnnxTiler.TileSplit floor = OnnxTiler.TileSplit.For(8000, 200, OnnxTiler.MinimumTileSize);
+        Assert.True(
+            split.Columns < floor.Columns,
+            $"expected fewer columns than the floor, got {split.Columns}"
+        );
+    }
+
+    [Fact]
+    public void UniformTileTensorShape_FollowsThePageNotTheBudget()
+    {
+        // A 1536 px tile bound on an 800 px wide, 5685 px tall page splits 1x4 into 800x1422 tiles.
+        // The uniform tensor shape has to be 832x1472 -- the tiles the page actually has -- and not
+        // 1600x1600, which is what the budget's tile side would demand. Inferring at the budget's
+        // shape computes every tile at twice the pixels the page contains, for identical output.
+        OnnxTiler.TileSplit split = OnnxTiler.TileSplit.For(800, 5685, 1536);
+        (int width, int height) = OnnxTiler.UniformTileTensorShape(split);
+
+        Assert.Equal((832, 1472), (width, height));
+    }
+
+    [Fact]
+    public void UniformTileTensorShape_SinglePassCoversThePage()
+    {
+        // Whole page as one inference: the shape is the page plus the edge overlap it is inferred
+        // with, rounded up to the tensor alignment -- no more.
+        (int width, int height) = OnnxTiler.UniformTileTensorShape(
+            OnnxTiler.TileSplit.For(1125, 1600, 0)
+        );
+
+        Assert.Equal((1216, 1664), (width, height));
+    }
+
+    [Fact]
+    public void UniformTileTensorShape_NeverDropsBelowTheAlignment()
+    {
+        // A degenerate split still yields a multiple of the alignment, because the driver is spared
+        // a one-off shape.
+        (int width, int height) = OnnxTiler.UniformTileTensorShape(
+            new OnnxTiler.TileSplit(1, 1, 1, 1)
+        );
+
+        Assert.Equal(0, width % OnnxTiler.TileAlignment);
+        Assert.Equal(0, height % OnnxTiler.TileAlignment);
+    }
+
+    [Fact]
+    public void TileSplit_For_CoversThePageExactlyOnce()
+    {
+        foreach (int tile in new[] { 0, 64, 256, 377, 512, 1024, 4096 })
+        {
+            foreach ((int width, int height) in new[] { (1125, 1600), (800, 5685), (8000, 200) })
+            {
+                OnnxTiler.TileSplit split = OnnxTiler.TileSplit.For(width, height, tile);
+
+                Assert.True(split.Columns >= 1 && split.Rows >= 1, $"no tiles for {tile}");
+                Assert.True(
+                    split.Columns * split.TileWidth >= width,
+                    $"{width}x{height} @ {tile}: {split.Columns}x{split.TileWidth} columns do not cover"
+                );
+                Assert.True(
+                    split.Rows * split.TileHeight >= height,
+                    $"{width}x{height} @ {tile}: {split.Rows}x{split.TileHeight} rows do not cover"
+                );
+                Assert.True(
+                    (split.Columns - 1) * split.TileWidth < width,
+                    $"{width}x{height} @ {tile}: {split.Columns} columns is more than needed"
+                );
+                Assert.True(
+                    (split.Rows - 1) * split.TileHeight < height,
+                    $"{width}x{height} @ {tile}: {split.Rows} rows is more than needed"
+                );
+            }
+        }
+    }
+
+    [Fact]
+    public void PlanTileSplit_PicksTheFeasibleGridWithTheLeastWork()
+    {
+        // The derivation's whole point: among all grids whose single tile fits the budget, take the
+        // one the page takes the fewest padded pixels at. Brute-forcing every grid proves no
+        // cheaper one was left on the table.
+        (string Model, int Scale)[] cases = new (string Model, int Scale)[]
+        {
+            ("4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx", 4),
+            ("2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx", 2),
+            ("4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx", 4),
+        };
+
+        foreach (long budgetMb in new long[] { 1024, 2048, 4096, 8192, 12288, 16384 })
+        {
+            long budget = budgetMb * 1024L * 1024L;
+            foreach (var (model, scale) in cases)
+            {
+                OnnxTiler.TileSplit chosen = OnnxTiler.PlanTileSplit(
+                    1125,
+                    1600,
+                    scale,
+                    model,
+                    budget,
+                    isFp16: true
+                );
+                if (chosen.Columns == 1 && chosen.Rows == 1)
+                {
+                    continue; // the whole page in one pass, the cheapest grid there is
+                }
+                long chosenWork = chosen.TotalPaddedPixels;
+                double bytesPerPixel = OnnxTiler
+                    .ActivationCoefficients.For(model)
+                    .BytesPerPixel(scale, isFp16: true);
+
+                int maxColumns = (1125 + OnnxTiler.MinimumTileSize - 1) / OnnxTiler.MinimumTileSize;
+                int maxRows = (1600 + OnnxTiler.MinimumTileSize - 1) / OnnxTiler.MinimumTileSize;
+                for (int columns = 1; columns <= maxColumns; columns++)
+                {
+                    for (int rows = 1; rows <= maxRows; rows++)
+                    {
+                        var candidate = new OnnxTiler.TileSplit(
+                            columns,
+                            rows,
+                            (1125 + columns - 1) / columns,
+                            (1600 + rows - 1) / rows
+                        );
+                        if (candidate.TotalPaddedPixels >= chosenWork)
+                        {
+                            continue;
+                        }
+
+                        Assert.True(
+                            OnnxTiler.EstimateModelBytes(model)
+                                + (long)(bytesPerPixel * candidate.PaddedTilePixels)
+                                > budget,
+                            $"{model} @ {budgetMb} MB: grid {columns}x{rows} costs less work than the chosen {chosen.Columns}x{chosen.Rows} and still fits"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     [Fact]
