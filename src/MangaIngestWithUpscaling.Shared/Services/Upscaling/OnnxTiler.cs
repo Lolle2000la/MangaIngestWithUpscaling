@@ -271,6 +271,31 @@ public enum ModelArchitecture
 }
 
 /// <summary>
+/// Raised when an inference produces non-finite values instead of an image.
+/// <para>
+/// Some execution providers do not implement every kernel the transformer architectures need.
+/// The WebGPU EP is the known case: <c>FDAT_M</c>, <c>FDAT_XL</c>, <c>DAT2</c> and <c>HAT_L</c>
+/// return an all-NaN output there rather than reporting a missing kernel, while the same model
+/// runs correctly on the CPU and on CUDA/DirectML. The fp16 tables would map those values to
+/// 0 and the page would be written as silent black, so this is thrown before any byte is
+/// produced.
+/// </para>
+/// </summary>
+public sealed class NonFiniteModelOutputException : Exception
+{
+    public NonFiniteModelOutputException()
+        : base(
+            "The model returned non-finite values (NaN or infinity). The execution provider cannot run this model."
+        ) { }
+
+    public NonFiniteModelOutputException(string message)
+        : base(message) { }
+
+    public NonFiniteModelOutputException(string message, Exception innerException)
+        : base(message, innerException) { }
+}
+
+/// <summary>
 /// Provides tiling, reflect padding, and output reconstruction for ONNX upscaling models.
 /// </summary>
 public static class OnnxTiler
@@ -349,22 +374,32 @@ public static class OnnxTiler
         for (int i = 0; i < 65536; i++)
         {
             Half h = BitConverter.UInt16BitsToHalf((ushort)i);
-            float val = (float)h * 255.0f;
-            if (float.IsNaN(val) || val <= 0f)
+            if (IsNonFiniteHalf((ushort)i))
             {
-                lut[i] = 0;
-            }
-            else if (val >= 255f)
-            {
-                lut[i] = 255;
+                // An infinity saturates, a NaN has no image value at all. Neither is ever
+                // written: <see cref="NonFiniteModelOutputException"/> rejects the whole
+                // output before this table is consulted.
+                lut[i] = float.IsNaN((float)h) ? (byte)0 : (byte)255;
             }
             else
             {
-                lut[i] = (byte)(val + 0.5f);
+                // Values below 0 clamp to black and above 1 to white: models legitimately
+                // overshoot slightly at high-contrast edges and that overshoot is not an error.
+                float val = (float)h * 255.0f;
+                lut[i] =
+                    val <= 0f ? (byte)0
+                    : val >= 255f ? (byte)255
+                    : (byte)(val + 0.5f);
             }
         }
         return lut;
     }
+
+    /// <summary>
+    /// True for the two value classes a byte table cannot represent: an fp16 with an all-ones
+    /// exponent is either a NaN or an infinity.
+    /// </summary>
+    private static bool IsNonFiniteHalf(ushort bits) => (bits & 0x7C00) == 0x7C00;
 
     /// <summary>
     /// Detects the neural network model architecture from its name or file path.
@@ -1591,6 +1626,15 @@ public static class OnnxTiler
         }
     }
 
+    /// <summary>
+    /// Converts one inference output into tightly cropped RGB bytes and rejects it when the model
+    /// produced non-finite values.
+    /// <para>
+    /// The rejection is what keeps an unusable model visible: without it the fp16 table maps NaN
+    /// to 0 and the page is written as silent black (see
+    /// <see cref="NonFiniteModelOutputException"/>).
+    /// </para>
+    /// </summary>
     public static byte[] DecodeOutputTensor(
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs,
         int tileW,
@@ -1619,6 +1663,11 @@ public static class OnnxTiler
 
             if (outNamedValue.Value is DenseTensor<Float16> halfOutTensor)
             {
+                if (ContainsNonFinite(halfOutTensor.Buffer.Span))
+                {
+                    throw new NonFiniteModelOutputException();
+                }
+
                 Memory<Float16> halfMem = halfOutTensor.Buffer;
                 Parallel.For(
                     0,
@@ -1645,6 +1694,11 @@ public static class OnnxTiler
             else
             {
                 var floatOutTensor = (DenseTensor<float>)outNamedValue.AsTensor<float>();
+                if (ContainsNonFinite(floatOutTensor.Buffer.Span))
+                {
+                    throw new NonFiniteModelOutputException();
+                }
+
                 Memory<float> floatMem = floatOutTensor.Buffer;
                 Parallel.For(
                     0,
@@ -1673,6 +1727,45 @@ public static class OnnxTiler
 
             return outCrop;
         }
+    }
+
+    /// <summary>
+    /// True when an inference output contains a value no byte can represent — a NaN or an
+    /// infinity — which is what a model the execution provider cannot run reports. The WebGPU EP
+    /// does this for the transformer architectures (<c>FDAT_M</c>, <c>FDAT_XL</c>, <c>DAT2</c>,
+    /// <c>HAT_L</c>) instead of raising a missing-kernel error, while the identical model runs
+    /// correctly on the CPU, on CUDA and on DirectML.
+    /// <para>
+    /// Values outside 0–1 are deliberately not counted: models legitimately overshoot at
+    /// high-contrast edges, and that overshoot clamps to 0 or 255.
+    /// </para>
+    /// </summary>
+    public static bool ContainsNonFinite(ReadOnlySpan<Float16> values)
+    {
+        ReadOnlySpan<ushort> bits = MemoryMarshal.Cast<Float16, ushort>(values);
+        foreach (ushort bit in bits)
+        {
+            if (IsNonFiniteHalf(bit))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <inheritdoc cref="ContainsNonFinite(ReadOnlySpan{Float16})"/>
+    public static bool ContainsNonFinite(ReadOnlySpan<float> values)
+    {
+        foreach (float value in values)
+        {
+            if (!float.IsFinite(value))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static byte[] UpscaleTile(

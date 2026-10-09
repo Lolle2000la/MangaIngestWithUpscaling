@@ -141,3 +141,25 @@ If a configured execution provider cannot be initialized (for instance, if drive
 1. Log a descriptive warning explaining why the accelerator failed to initialize.
 2. Automatically fall back to CPU execution.
 3. Continue processing tasks without crashing or dropping jobs.
+
+### Black pages
+
+**Symptom:** a page that is coloured in the source comes out of the upscaler entirely black.
+
+**Cause:** every execution provider can run the conv models (all `*_ESRGAN_*`, `*_SPAN_*`), but the WebGPU EP has no kernels for the transformer architectures. Instead of reporting a missing kernel it returns a tensor of NaN for the whole page, and the fp16 output table turns each NaN into a `0` byte — a black page. Affected models: `4x_IllustrationJaNai_*FDAT_M*`, `*FDAT_XL*`, `*DAT2*` and `*HAT_L*`. The same files run correctly on CPU, on CUDA and on DirectML, so the symptom is backend-specific, not a corrupt download.
+
+A page reaches one of those models when `IsGrayscale` classifies it as colour. A manga page with a single coloured panel, or a cover, picks the `IllustrationJaNai_*` family; a fully grayscale page picks `MangaJaNai_*` and is unaffected.
+
+**What the app does:** before a page is upscaled, each candidate model in the preference order is given a 256×256 tile through the real tiling path. A model whose output is not finite is recorded as unusable for the device and the next candidate is tried, so a colour page is upscaled by `…_V1_ESRGAN_135k.onnx` on a device that cannot run the transformer models. Each tile of the page is still checked, because a few models only fail above a certain tile size. If no candidate works, the page fails loudly instead of being written black.
+
+**What you can do:**
+- Nothing, if the warning is acceptable — colour pages are still upscaled, just by an older model.
+- Set `Upscaler:PreferredGpuBackend` to a provider that has the kernels (`CPU` for correctness regardless of speed, or `CUDA` on an NVIDIA card).
+- Run the upscaling on the [remote worker](./REMOTE_WORKER.md) on a machine whose accelerator can run those models, and set `Upscaler:RemoteOnly`.
+
+The warning that names the rejected model looks like this:
+
+```
+Model 4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx produced non-finite output on device 0 with the WebGPU execution provider, so it would have written a black page. Trying the next model.
+```
+

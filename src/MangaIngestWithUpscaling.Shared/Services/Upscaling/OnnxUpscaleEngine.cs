@@ -23,6 +23,24 @@ public class OnnxUpscaleEngine(
 {
     private string ModelsDirectory => config.Value.ResolvedModelsDirectory;
 
+    /// <summary>
+    /// Side length of the tile used to find out whether a model can run on this device.
+    /// <para>
+    /// 256 px is the smallest size at which every one of the shipped transformer models that the
+    /// WebGPU EP cannot run already reports the failure — several of them only produce valid
+    /// output up to 128 px — while still costing well under a second of inference. A model that
+    /// only breaks at a larger tile is still caught, by the per-tile guard on the page itself.
+    /// </para>
+    /// </summary>
+    private const int ModelProbeTilePixels = 256;
+
+    /// <summary>
+    /// Verdict per model for this device, keyed by full path. Scoped to the process: whether a
+    /// model runs is a property of the execution provider and the accelerator, neither of which
+    /// changes while the process runs.
+    /// </summary>
+    private readonly Dictionary<string, bool> _modelUsable = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly record struct UpscaledPage(
         byte[] Bytes,
         int Width,
@@ -79,13 +97,15 @@ public class OnnxUpscaleEngine(
                 int origWidth = vipsImage.Width;
                 int origHeight = vipsImage.Height;
 
-                string modelPath = SelectModel(ModelsDirectory, isGrayscale, origHeight, scale);
-                long modelSizeBytes = 0;
-                try
-                {
-                    modelSizeBytes = new FileInfo(modelPath).Length;
-                }
-                catch { }
+                // A page resolves to a preference list rather than one model: whether the most
+                // preferred model can run at all is a property of the execution provider and
+                // the device, and is only discovered when it returns valid output.
+                IReadOnlyList<string> candidates = SelectModelCandidates(
+                    ModelsDirectory,
+                    isGrayscale,
+                    origHeight,
+                    scale
+                );
 
                 using var flattened = vipsImage.HasAlpha() ? vipsImage.Flatten() : vipsImage.Copy();
                 using var rgb =
@@ -101,11 +121,6 @@ public class OnnxUpscaleEngine(
                 byte[] inputBytes = ucharRgb.WriteToMemory<byte>();
 
                 cancellationToken.ThrowIfCancellationRequested();
-
-                InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
-                bool isFp16 =
-                    session.InputMetadata.TryGetValue("input", out var inputMeta)
-                    && inputMeta.ElementType == typeof(Float16);
 
                 int deviceId = Math.Max(0, config.Value.SelectedDeviceIndex - 1);
                 long budget =
@@ -126,82 +141,25 @@ public class OnnxUpscaleEngine(
                     cancellationToken
                 );
 
-                OnnxTiler.TileSplit split =
-                    config.Value.TileSize > 0
-                        ? OnnxTiler.TileSplit.For(origWidth, origHeight, config.Value.TileSize)
-                    : config.Value.TileSize < 0 ? OnnxTiler.TileSplit.For(origWidth, origHeight, 0)
-                    : OnnxTiler.PlanTileSplit(
-                        origWidth,
-                        origHeight,
-                        scale,
-                        modelPath,
-                        budget,
-                        modelSizeBytes,
-                        isFp16,
-                        profile
-                    );
-
-                var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
-                logger.LogDebug(
-                    "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
-                    Path.GetFileName(inputPath),
+                (string model, byte[] upscaledBytes) = await UpscaleWithFirstWorkingModelAsync(
+                    inputPath,
+                    candidates,
+                    inputBytes,
                     origWidth,
                     origHeight,
-                    isGrayscale,
-                    Path.GetFileName(modelPath),
-                    split.Columns,
-                    split.Rows,
-                    split.TileWidth,
-                    split.TileHeight,
-                    budget / (1024 * 1024),
-                    vramBefore / (1024 * 1024),
-                    gttBefore / (1024 * 1024)
+                    scale,
+                    deviceId,
+                    budget,
+                    profile,
+                    cancellationToken
                 );
 
-                byte[] upscaledBytes;
-                OnnxTiler.TileSplit attempt = split;
-                while (true)
-                {
-                    try
-                    {
-                        session = sessionFactory.GetOrCreateSession(modelPath);
-                        using (sessionFactory.EnterInferenceScope())
-                        {
-                            upscaledBytes = OnnxTiler.UpscaleRgb(
-                                inputBytes,
-                                origWidth,
-                                origHeight,
-                                scale,
-                                session,
-                                attempt,
-                                cancellationToken: cancellationToken
-                            );
-                        }
-                        break;
-                    }
-                    catch (Exception ex)
-                        when (OnnxTiler.IsMemoryException(ex) && attempt.TileWidth > 128)
-                    {
-                        logger.LogWarning(
-                            ex,
-                            "Memory pressure encountered upscaling {Input} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight}. Halving tile size and recreating session.",
-                            Path.GetFileName(inputPath),
-                            attempt.Columns,
-                            attempt.Rows,
-                            attempt.TileWidth,
-                            attempt.TileHeight
-                        );
-                        sessionFactory.InvalidateSession(modelPath);
-                        attempt = OnnxTiler.HalveSplit(origWidth, origHeight, attempt);
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
-                    }
-                    catch (Exception)
-                    {
-                        sessionFactory.InvalidateSession(modelPath);
-                        throw;
-                    }
-                }
+                UpscaledPage page = new(
+                    upscaledBytes,
+                    origWidth * scale,
+                    origHeight * scale,
+                    isGrayscale
+                );
 
                 var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
                 if (gttAfter > 1000L * 1024 * 1024)
@@ -212,18 +170,13 @@ public class OnnxUpscaleEngine(
                         vramAfter / (1024 * 1024),
                         gttAfter / (1024 * 1024)
                     );
-                    sessionFactory.InvalidateSession(modelPath);
+                    sessionFactory.InvalidateSession(model);
                     GC.Collect();
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                return new UpscaledPage(
-                    upscaledBytes,
-                    origWidth * scale,
-                    origHeight * scale,
-                    isGrayscale
-                );
+                return page;
             },
             cancellationToken
         );
@@ -552,7 +505,16 @@ public class OnnxUpscaleEngine(
         return 0;
     }
 
-    public static string SelectModel(
+    /// <summary>
+    /// Models that can upscale a page, most preferred first.
+    /// <para>
+    /// A page's classification resolves to a preference list rather than a single model because
+    /// the preference is a guess about quality only: whether a model actually runs is a property
+    /// of the execution provider and the device, and is only known once that model has produced
+    /// finite output there. <see cref="SelectModel"/> remains the first choice.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<string> SelectModelCandidates(
         string modelsDirectory,
         bool isGrayscale,
         int height,
@@ -573,6 +535,7 @@ public class OnnxUpscaleEngine(
         }
 
         string scalePrefix = $"{scale}x_";
+        var candidates = new List<string>();
 
         if (isGrayscale)
         {
@@ -592,29 +555,22 @@ public class OnnxUpscaleEngine(
             else
                 res = "2048p";
 
-            string targetKey = $"{scalePrefix}MangaJaNai_{res}";
-            string? match = onnxFiles.FirstOrDefault(f =>
-                Path.GetFileName(f).StartsWith(targetKey, StringComparison.OrdinalIgnoreCase)
-            );
-            if (match != null)
-                return match;
+            AddMatch(candidates, onnxFiles, $"{scalePrefix}MangaJaNai_{res}");
+            AddMatch(candidates, onnxFiles, $"{scalePrefix}MangaJaNai_");
 
-            string mangaFallbackKey = $"{scalePrefix}MangaJaNai_";
-            match = onnxFiles.FirstOrDefault(f =>
-                Path.GetFileName(f).StartsWith(mangaFallbackKey, StringComparison.OrdinalIgnoreCase)
-            );
-            if (match != null)
-                return match;
+            // A grayscale page still upscales fine with an illustration model: that is a model
+            // trained on colour, not a model that only accepts colour input.
+            AddMatch(candidates, onnxFiles, $"{scalePrefix}IllustrationJaNai_");
         }
         else
         {
             string colorKey = $"{scalePrefix}IllustrationJaNai_";
             string[] preferredVersions =
             [
-                $"{scalePrefix}IllustrationJaNai_V3detail_",
-                $"{scalePrefix}IllustrationJaNai_V3denoise_",
-                $"{scalePrefix}IllustrationJaNai_V2standard_",
-                $"{scalePrefix}IllustrationJaNai_V1_",
+                $"{colorKey}V3detail_",
+                $"{colorKey}V3denoise_",
+                $"{colorKey}V2standard_",
+                $"{colorKey}V1_",
             ];
 
             // Architectures ordered by WebGPU/GPU compatibility and inference speed:
@@ -624,48 +580,381 @@ public class OnnxUpscaleEngine(
 
             foreach (var pref in preferredVersions)
             {
-                var candidates = onnxFiles
+                var versionCandidates = onnxFiles
                     .Where(f =>
                         Path.GetFileName(f).StartsWith(pref, StringComparison.OrdinalIgnoreCase)
                     )
                     .ToList();
 
-                if (candidates.Count > 0)
+                foreach (var arch in preferredArchs)
                 {
-                    foreach (var arch in preferredArchs)
-                    {
-                        var nonBf16Match = candidates.FirstOrDefault(f =>
-                            f.Contains(arch, StringComparison.OrdinalIgnoreCase)
-                            && !f.Contains("bf16", StringComparison.OrdinalIgnoreCase)
-                        );
-                        if (nonBf16Match != null)
-                            return nonBf16Match;
-
-                        var anyArchMatch = candidates.FirstOrDefault(f =>
-                            f.Contains(arch, StringComparison.OrdinalIgnoreCase)
-                        );
-                        if (anyArchMatch != null)
-                            return anyArchMatch;
-                    }
-
-                    return candidates[0];
+                    AddContaining(candidates, versionCandidates, arch, NotBf16);
+                    AddContaining(candidates, versionCandidates, arch, _ => true);
                 }
+
+                AddAll(candidates, versionCandidates);
             }
 
-            string? colorMatch = onnxFiles.FirstOrDefault(f =>
-                Path.GetFileName(f).StartsWith(colorKey, StringComparison.OrdinalIgnoreCase)
-            );
-            if (colorMatch != null)
-                return colorMatch;
+            AddMatch(candidates, onnxFiles, colorKey);
         }
 
-        string? genericMatch = onnxFiles.FirstOrDefault(f =>
-            Path.GetFileName(f).StartsWith(scalePrefix, StringComparison.OrdinalIgnoreCase)
+        // Last resort: anything else at this scale, then anything at all. Both are ordered by
+        // name so the choice does not depend on the order the file system happens to return.
+        AddAll(
+            candidates,
+            onnxFiles
+                .Where(f =>
+                    Path.GetFileName(f).StartsWith(scalePrefix, StringComparison.OrdinalIgnoreCase)
+                )
+                .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
         );
-        if (genericMatch != null)
-            return genericMatch;
+        AddAll(candidates, onnxFiles.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase));
 
-        return onnxFiles[0];
+        return candidates;
+    }
+
+    private static bool NotBf16(string path) =>
+        !Path.GetFileName(path).Contains("bf16", StringComparison.OrdinalIgnoreCase);
+
+    public static string SelectModel(
+        string modelsDirectory,
+        bool isGrayscale,
+        int height,
+        int scale
+    ) => SelectModelCandidates(modelsDirectory, isGrayscale, height, scale)[0];
+
+    private static void AddMatch(
+        List<string> candidates,
+        IEnumerable<string> files,
+        string keyPrefix
+    ) => AddMatch(candidates, files, keyPrefix, _ => true);
+
+    private static void AddMatch(
+        List<string> candidates,
+        IEnumerable<string> files,
+        string keyPrefix,
+        Func<string, bool> filter
+    )
+    {
+        foreach (var file in files)
+        {
+            if (
+                Path.GetFileName(file).StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase)
+                && filter(file)
+                && !candidates.Contains(file, StringComparer.OrdinalIgnoreCase)
+            )
+            {
+                candidates.Add(file);
+            }
+        }
+    }
+
+    private static void AddContaining(
+        List<string> candidates,
+        IEnumerable<string> files,
+        string token,
+        Func<string, bool> filter
+    )
+    {
+        foreach (var file in files)
+        {
+            if (
+                Path.GetFileName(file).Contains(token, StringComparison.OrdinalIgnoreCase)
+                && filter(file)
+                && !candidates.Contains(file, StringComparer.OrdinalIgnoreCase)
+            )
+            {
+                candidates.Add(file);
+            }
+        }
+    }
+
+    private static void AddAll(List<string> candidates, IEnumerable<string> files)
+    {
+        foreach (var file in files)
+        {
+            if (!candidates.Contains(file, StringComparer.OrdinalIgnoreCase))
+            {
+                candidates.Add(file);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Upscales a page with the first model in <paramref name="candidates"/> that actually works
+    /// on this device, and skips the rest for the lifetime of the process once a model is known
+    /// not to.
+    /// <para>
+    /// This is what stops an unusable model from becoming a black page: the WebGPU EP does not
+    /// implement the transformer kernels and returns NaN instead of failing, so the only way to
+    /// find out is to run it and check.
+    /// </para>
+    /// </summary>
+    private async Task<(string Model, byte[] Bytes)> UpscaleWithFirstWorkingModelAsync(
+        string inputPath,
+        IReadOnlyList<string> candidates,
+        byte[] inputBytes,
+        int width,
+        int height,
+        int scale,
+        int deviceId,
+        long budget,
+        DeviceMemoryProfile? profile,
+        CancellationToken cancellationToken
+    )
+    {
+        var unusable = new List<string>();
+
+        foreach (string modelPath in candidates)
+        {
+            if (!await ModelUsableOnThisDeviceAsync(modelPath, scale, cancellationToken))
+            {
+                continue;
+            }
+
+            try
+            {
+                byte[] upscaled = await UpscaleWithModelAsync(
+                    inputPath,
+                    modelPath,
+                    inputBytes,
+                    width,
+                    height,
+                    scale,
+                    deviceId,
+                    budget,
+                    profile,
+                    cancellationToken
+                );
+                return (modelPath, upscaled);
+            }
+            catch (NonFiniteModelOutputException ex)
+            {
+                MarkModelUnusable(modelPath);
+                unusable.Add(Path.GetFileName(modelPath));
+                logger.LogWarning(
+                    ex,
+                    "Model {Model} produced non-finite output on device {Device} with the {Provider} execution provider, so it would have written a black page. Trying the next model.",
+                    Path.GetFileName(modelPath),
+                    deviceId,
+                    sessionFactory.GetEffectiveBackend()
+                );
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"No model in {ModelsDirectory} can upscale {width}x{height} at {scale}x: "
+                + (
+                    unusable.Count > 0
+                        ? $"{string.Join(", ", unusable)} produced non-finite output."
+                        : "every candidate model is already known to be unusable on this device."
+                )
+        );
+    }
+
+    /// <summary>
+    /// Runs one model over the whole page, halving the tiles as often as the driver asks for more
+    /// memory. The tile plan follows the model, because a grid that is affordable for one is not
+    /// necessarily affordable for another.
+    /// </summary>
+    private async Task<byte[]> UpscaleWithModelAsync(
+        string inputPath,
+        string modelPath,
+        byte[] inputBytes,
+        int width,
+        int height,
+        int scale,
+        int deviceId,
+        long budget,
+        DeviceMemoryProfile? profile,
+        CancellationToken cancellationToken
+    ) =>
+        await Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                long modelSizeBytes = 0;
+                try
+                {
+                    modelSizeBytes = new FileInfo(modelPath).Length;
+                }
+                catch { }
+
+                InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+                bool isFp16 =
+                    session.InputMetadata.TryGetValue("input", out var inputMeta)
+                    && inputMeta.ElementType == typeof(Float16);
+
+                OnnxTiler.TileSplit split =
+                    config.Value.TileSize > 0
+                        ? OnnxTiler.TileSplit.For(width, height, config.Value.TileSize)
+                    : config.Value.TileSize < 0 ? OnnxTiler.TileSplit.For(width, height, 0)
+                    : OnnxTiler.PlanTileSplit(
+                        width,
+                        height,
+                        scale,
+                        modelPath,
+                        budget,
+                        modelSizeBytes,
+                        isFp16,
+                        profile
+                    );
+
+                var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
+                logger.LogDebug(
+                    "Upscaling {InputPath} ({Width}x{Height}, scale {Scale}) using model {Model} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
+                    Path.GetFileName(inputPath),
+                    width,
+                    height,
+                    scale,
+                    Path.GetFileName(modelPath),
+                    split.Columns,
+                    split.Rows,
+                    split.TileWidth,
+                    split.TileHeight,
+                    budget / (1024 * 1024),
+                    vramBefore / (1024 * 1024),
+                    gttBefore / (1024 * 1024)
+                );
+
+                byte[] upscaledBytes;
+                OnnxTiler.TileSplit attempt = split;
+                while (true)
+                {
+                    try
+                    {
+                        session = sessionFactory.GetOrCreateSession(modelPath);
+                        using (sessionFactory.EnterInferenceScope())
+                        {
+                            upscaledBytes = OnnxTiler.UpscaleRgb(
+                                inputBytes,
+                                width,
+                                height,
+                                scale,
+                                session,
+                                attempt,
+                                cancellationToken: cancellationToken
+                            );
+                        }
+                        break;
+                    }
+                    catch (Exception ex)
+                        when (OnnxTiler.IsMemoryException(ex) && attempt.TileWidth > 128)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "Memory pressure encountered upscaling in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight}. Halving tile size and recreating session.",
+                            attempt.Columns,
+                            attempt.Rows,
+                            attempt.TileWidth,
+                            attempt.TileHeight
+                        );
+                        sessionFactory.InvalidateSession(modelPath);
+                        attempt = OnnxTiler.HalveSplit(width, height, attempt);
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                    }
+                    catch (Exception)
+                    {
+                        sessionFactory.InvalidateSession(modelPath);
+                        throw;
+                    }
+                }
+
+                return upscaledBytes;
+            },
+            cancellationToken
+        );
+
+    /// <summary>
+    /// Whether this model can run on the configured device, remembered for the process after the
+    /// first answer.
+    /// <para>
+    /// The question is asked with one small tile through the real path, because there is no other
+    /// way to know: an execution provider that does not implement a model's kernels does not say
+    /// so at session creation, it returns NaN from the first inference. Running that check on a
+    /// 64x64 tile costs milliseconds, while running it on the page costs the whole page.
+    /// </para>
+    /// </summary>
+    private async Task<bool> ModelUsableOnThisDeviceAsync(
+        string modelPath,
+        int scale,
+        CancellationToken cancellationToken
+    )
+    {
+        lock (_modelUsable)
+        {
+            if (_modelUsable.TryGetValue(modelPath, out bool known))
+            {
+                return known;
+            }
+        }
+
+        bool usable;
+        try
+        {
+            usable = await Task.Run(
+                () =>
+                {
+                    InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+
+                    // The decode is what rejects a broken model, so the probe goes through it.
+                    OnnxTiler.UpscaleTile(
+                        CreateProbeTile(ModelProbeTilePixels),
+                        ModelProbeTilePixels,
+                        ModelProbeTilePixels,
+                        scale,
+                        session,
+                        cancellationToken
+                    );
+                    return true;
+                },
+                cancellationToken
+            );
+        }
+        catch (NonFiniteModelOutputException)
+        {
+            sessionFactory.InvalidateSession(modelPath);
+            usable = false;
+        }
+
+        lock (_modelUsable)
+        {
+            _modelUsable[modelPath] = usable;
+        }
+
+        return usable;
+    }
+
+    /// <summary>
+    /// A deterministic RGB gradient. Content does not matter for the probe — it only asks whether
+    /// the model returns numbers at all — but a flat tile would not exercise a kernel that needs
+    /// variation.
+    /// </summary>
+    private static byte[] CreateProbeTile(int size)
+    {
+        byte[] tile = new byte[size * size * 3];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                int idx = (y * size + x) * 3;
+                tile[idx] = (byte)(x * 255 / (size - 1));
+                tile[idx + 1] = (byte)(y * 255 / (size - 1));
+                tile[idx + 2] = (byte)((x + y) * 255 / (2 * size - 2));
+            }
+        }
+
+        return tile;
+    }
+
+    private void MarkModelUnusable(string modelPath)
+    {
+        lock (_modelUsable)
+        {
+            _modelUsable[modelPath] = false;
+        }
     }
 
     private static void SaveImage(

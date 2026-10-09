@@ -155,6 +155,111 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    public void SelectModel_IsTheFirstCandidate()
+    {
+        // Every path SelectModel used to return has to stay the first preference, so the
+        // candidate list is what now feeds it rather than being a second opinion.
+        string[] modelFiles =
+        [
+            "4x_MangaJaNai_1600p_v1.onnx",
+            "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx",
+            "4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx",
+            "4x_IllustrationJaNai_V3denoise_DAT2_27k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+            "4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx",
+        ];
+        foreach (var file in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_tempDir, file), "dummy");
+        }
+
+        Assert.Equal(
+            OnnxUpscaleEngine.SelectModel(_tempDir, isGrayscale: true, height: 1600, scale: 4),
+            OnnxUpscaleEngine.SelectModelCandidates(_tempDir, isGrayscale: true, height: 1600, 4)[0]
+        );
+        Assert.Equal(
+            OnnxUpscaleEngine.SelectModel(_tempDir, isGrayscale: false, height: 1600, scale: 4),
+            OnnxUpscaleEngine.SelectModelCandidates(_tempDir, isGrayscale: false, height: 1600, 4)[
+                0
+            ]
+        );
+    }
+
+    [Fact]
+    public void SelectModelCandidates_Color_KeepsAV1ModelAfterTheTransformerOnes()
+    {
+        // Regression: every 4x IllustrationJaNai transformer model returns NaN on WebGPU, so the
+        // only model that survives on that provider is the V1 ESRGAN. It has to be reachable
+        // after all of them are rejected, which it is only because the versions are ordered.
+        string[] modelFiles =
+        [
+            "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx",
+            "4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx",
+            "4x_IllustrationJaNai_V3denoise_DAT2_27k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+            "4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx",
+        ];
+        foreach (var file in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_tempDir, file), "dummy");
+        }
+
+        IReadOnlyList<string> candidates = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: false,
+            height: 1600,
+            scale: 4
+        );
+
+        string v1 = Assert.Single(
+            candidates,
+            c => Path.GetFileName(c).Contains("V1_ESRGAN", StringComparison.OrdinalIgnoreCase)
+        );
+        int v1Rank = candidates.ToList().IndexOf(v1);
+        foreach (string transformer in modelFiles.Where(f => !f.Contains("V1_ESRGAN")))
+        {
+            int rank = candidates.ToList().IndexOf(Path.Combine(_tempDir, transformer));
+            Assert.True(
+                rank >= 0 && rank < v1Rank,
+                $"{transformer} should be preferred over {v1} but ranked {rank} vs {v1Rank}"
+            );
+        }
+    }
+
+    [Fact]
+    public void SelectModelCandidates_IncludesEveryModelInTheDirectory()
+    {
+        // The fallback must never run out of candidates: if the last model also fails, the page
+        // has to fail loudly rather than silently go black.
+        string[] modelFiles =
+        [
+            "4x_MangaJaNai_1600p_v1.onnx",
+            "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx",
+            "unrelated_model.onnx",
+        ];
+        foreach (var file in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_tempDir, file), "dummy");
+        }
+
+        IReadOnlyList<string> candidates = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: false,
+            height: 1600,
+            scale: 4
+        );
+
+        foreach (string file in modelFiles)
+        {
+            Assert.Contains(Path.Combine(_tempDir, file), candidates);
+        }
+    }
+
+    [Fact]
     public void IsGrayscale_SingleBand_ReturnsTrue()
     {
         using var img = Image.Black(10, 10, bands: 1);
