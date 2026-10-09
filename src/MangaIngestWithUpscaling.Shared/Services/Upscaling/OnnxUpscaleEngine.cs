@@ -129,18 +129,17 @@ public class OnnxUpscaleEngine(
                 OnnxTiler.TileSplit split =
                     config.Value.TileSize > 0
                         ? OnnxTiler.TileSplit.For(origWidth, origHeight, config.Value.TileSize)
-                        : config.Value.TileSize < 0
-                        ? OnnxTiler.TileSplit.For(origWidth, origHeight, 0)
-                        : OnnxTiler.PlanTileSplit(
-                            origWidth,
-                            origHeight,
-                            scale,
-                            modelPath,
-                            budget,
-                            modelSizeBytes,
-                            isFp16,
-                            profile
-                        );
+                    : config.Value.TileSize < 0 ? OnnxTiler.TileSplit.For(origWidth, origHeight, 0)
+                    : OnnxTiler.PlanTileSplit(
+                        origWidth,
+                        origHeight,
+                        scale,
+                        modelPath,
+                        budget,
+                        modelSizeBytes,
+                        isFp16,
+                        profile
+                    );
 
                 var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
                 logger.LogDebug(

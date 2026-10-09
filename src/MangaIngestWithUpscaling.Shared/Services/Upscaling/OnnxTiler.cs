@@ -681,7 +681,10 @@ public static class OnnxTiler
                     continue;
                 }
 
-                if (weights + (long)(bytesPerPixel * candidate.PaddedTilePixels) > memoryBudgetBytes)
+                if (
+                    weights + (long)(bytesPerPixel * candidate.PaddedTilePixels)
+                    > memoryBudgetBytes
+                )
                 {
                     continue;
                 }
@@ -1128,9 +1131,7 @@ public static class OnnxTiler
                 );
             }
             catch (Exception ex)
-                when (IsMemoryException(ex)
-                    && (split.TileWidth > 16 || split.TileHeight > 16)
-                )
+                when (IsMemoryException(ex) && (split.TileWidth > 16 || split.TileHeight > 16))
             {
                 split = HalveSplit(width, height, split);
                 GC.Collect();
