@@ -314,7 +314,7 @@ public class OnnxTilerTests
     [Fact]
     public void EstimatePeakMemoryBytes_CalculatesRealisticRequirements()
     {
-        // 1600x2400 on 4x ESRGAN (FP32)
+        // 1600x2400 on 4x ESRGAN (FP32): the whole page at once is genuinely enormous
         long esrgan4xPeak = OnnxTiler.EstimatePeakMemoryBytes(
             1600,
             2400,
@@ -322,10 +322,9 @@ public class OnnxTilerTests
             "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
             isFp16: false
         );
-        // ~148 GB peak activation/workspace memory for full 1600x2400 page at 4x in FP32
-        Assert.InRange(esrgan4xPeak, 120L * 1024 * 1024 * 1024, 160L * 1024 * 1024 * 1024);
+        Assert.InRange(esrgan4xPeak, 140L * 1024 * 1024 * 1024, 200L * 1024 * 1024 * 1024);
 
-        // 1600x2400 on 2x SPAN (FP16)
+        // 1600x2400 on 2x SPAN (FP16): 8 MB of activations at 310 live channels, not gigabytes
         long span2xPeak = OnnxTiler.EstimatePeakMemoryBytes(
             1600,
             2400,
@@ -333,29 +332,67 @@ public class OnnxTilerTests
             "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
             isFp16: true
         );
-        // ~1.3 GB
-        Assert.InRange(span2xPeak, 1L * 1024 * 1024 * 1024, 2L * 1024 * 1024 * 1024);
+        Assert.InRange(span2xPeak, 8L * 1024 * 1024 * 1024, 12L * 1024 * 1024 * 1024);
     }
 
     [Fact]
-    public void EstimateTileSize_Span_ReturnsZeroForFullImageUnderBudget()
+    public void EstimatePeakMemoryBytes_ScaleQuadruplesFootprint()
     {
-        // SPAN requires ~1.3 GB on 1600x2400, well below a 4 GB budget -> single pass
+        long at2x = OnnxTiler.EstimatePeakMemoryBytes(
+            512,
+            512,
+            2,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            isFp16: true
+        );
+        long at4x = OnnxTiler.EstimatePeakMemoryBytes(
+            512,
+            512,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            isFp16: true
+        );
+        // scale^2 scaling: the activation term quadruples, the weight term does not
+        Assert.True(at4x > 3 * at2x);
+    }
+
+    [Fact]
+    public void EstimateActivationBytes_ScalesQuadraticallyWithTileSize()
+    {
+        long small = OnnxTiler.EstimateActivationBytes(
+            256 * 256,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            isFp16: true
+        );
+        long large = OnnxTiler.EstimateActivationBytes(
+            512 * 512,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            isFp16: true
+        );
+        Assert.Equal(4 * small, large);
+    }
+
+    [Fact]
+    public void EstimateTileSize_ReturnsZeroWhenWholeImageFits()
+    {
+        // SPAN on a small page: the full page fits well inside a 12 GB budget -> single pass
         int tileSize = OnnxTiler.EstimateTileSize(
-            1600,
-            2400,
+            640,
+            960,
             2,
             "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
-            memoryBudgetBytes: 4L * 1024 * 1024 * 1024,
+            memoryBudgetBytes: 12L * 1024 * 1024 * 1024,
             isFp16: true
         );
         Assert.Equal(0, tileSize);
     }
 
     [Fact]
-    public void EstimateTileSize_Esrgan4x_ReturnsSafeTileSize()
+    public void EstimateTileSize_Esrgan4x_DerivesTileFromBudget()
     {
-        // ESRGAN 4x under a 5 GiB budget dynamically yields safe 320x320 tiles in FP32
+        // 5 GiB budget on a 4x ESRGAN page yields 256 px tiles in FP32, aligned to 64
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
@@ -364,15 +401,15 @@ public class OnnxTilerTests
             memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(320, tileSize);
-        Assert.Equal(0, tileSize % 64);
+        Assert.Equal(256, tileSize);
+        Assert.Equal(0, tileSize % OnnxTiler.TileAlignment);
     }
 
     [Fact]
     public void EstimateTileSize_Esrgan2x_AllowsLargerTileSize()
     {
-        // ESRGAN 2x under a 5 GiB budget dynamically yields larger 704x704 tiles (scale^2 scaling)
-        int tileSize = OnnxTiler.EstimateTileSize(
+        // Same budget, half the scale -> four times the pixels fit -> much larger tiles
+        int tile2x = OnnxTiler.EstimateTileSize(
             1600,
             2400,
             2,
@@ -380,14 +417,22 @@ public class OnnxTilerTests
             memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(704, tileSize);
-        Assert.Equal(0, tileSize % 64);
+        int tile4x = OnnxTiler.EstimateTileSize(
+            1600,
+            2400,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
+            isFp16: false
+        );
+        Assert.True(tile2x > tile4x);
+        Assert.True(tile2x % 64 == 0);
     }
 
     [Fact]
     public void EstimateTileSize_SmallImage_ReturnsZero()
     {
-        // Small 64x64 icon fits in memory under any budget -> single pass
+        // Small 64x64 image fits in memory under any budget -> single pass
         int tileSize = OnnxTiler.EstimateTileSize(
             64,
             64,
@@ -402,7 +447,7 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_TightBudget_EnforcesMinimum256()
     {
-        // Even under a very low budget (e.g. 500 MB), tile dimension should never drop below 256
+        // Even under a very low budget (e.g. 500 MB), tile dimension never drops below 256
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
@@ -411,28 +456,26 @@ public class OnnxTilerTests
             memoryBudgetBytes: 500L * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(256, tileSize);
+        Assert.Equal(OnnxTiler.MinimumTileSize, tileSize);
     }
 
     [Fact]
     public void EstimateTileSize_MangaJaNai_FP16_HalvesPeakMemoryAndExpandsTileSize()
     {
-        long peakFp32 = OnnxTiler.EstimatePeakMemoryBytes(
-            1125,
-            1600,
+        long actFp32 = OnnxTiler.EstimateActivationBytes(
+            1125 * 1600,
             2,
             "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
             isFp16: false
         );
-        long peakFp16 = OnnxTiler.EstimatePeakMemoryBytes(
-            1125,
-            1600,
+        long actFp16 = OnnxTiler.EstimateActivationBytes(
+            1125 * 1600,
             2,
             "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
             isFp16: true
         );
-
-        Assert.Equal(peakFp32 / 2, peakFp16);
+        // The activation working set halves exactly; the weight term is precision-independent
+        Assert.Equal(actFp32 / 2, actFp16);
 
         // Under a constrained 3 GiB budget, FP16 yields strictly larger tiles than FP32
         int tileFp32 = OnnxTiler.EstimateTileSize(
@@ -453,6 +496,141 @@ public class OnnxTilerTests
         );
 
         Assert.True(tileFp16 > tileFp32);
+    }
+
+    [Fact]
+    public void EstimateTileSize_DerivedTileFitsInsideBudget()
+    {
+        // The core invariant: whatever tile size the formula hands back, running one tile of it
+        // (plus overlap and alignment) must stay inside the budget.
+        (string Model, int Scale)[] cases = new (string Model, int Scale)[]
+        {
+            ("4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx", 4),
+            ("2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx", 2),
+            ("2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx", 2),
+            ("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx", 4),
+            ("4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16.onnx", 4),
+            ("4x_IllustrationJaNai_V1_DAT2_190k.onnx", 4),
+            ("4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx", 4),
+        };
+
+        long[] budgets = new long[] { 512, 1024, 2048, 4096, 8192, 15360 };
+        foreach (long budgetMb in budgets)
+        {
+            long budget = budgetMb * 1024L * 1024L;
+            foreach (var (model, scale) in cases)
+            {
+                int tile = OnnxTiler.EstimateTileSize(
+                    1125,
+                    1600,
+                    scale,
+                    model,
+                    memoryBudgetBytes: budget,
+                    isFp16: true
+                );
+                if (tile == 0)
+                {
+                    // single pass: the whole page has to fit
+                    Assert.True(
+                        OnnxTiler.EstimatePeakMemoryBytes(1125, 1600, scale, model, isFp16: true)
+                            <= budget
+                    );
+                    continue;
+                }
+
+                Assert.True(
+                    tile % OnnxTiler.TileAlignment == 0,
+                    $"{model} tile {tile} not aligned"
+                );
+                long tileFootprint = OnnxTiler.EstimatePeakMemoryBytes(
+                    tile,
+                    tile,
+                    scale,
+                    model,
+                    isFp16: true
+                );
+                // A budget too small for even the quality floor is the one case where the tile may
+                // exceed the budget: the floor protects output quality and the engine halves the
+                // tile again on allocation failure.
+                if (tile > OnnxTiler.MinimumTileSize)
+                {
+                    Assert.True(
+                        tileFootprint <= budget,
+                        $"{model} @ {budgetMb} MB budget derived tile {tile} needing {tileFootprint / 1048576} MB"
+                    );
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void EstimateTileSize_IsMonotonicInBudget()
+    {
+        int previous = 0;
+        foreach (long budgetMb in new long[] { 512, 1024, 2048, 4096, 6144, 8192, 12288, 16384 })
+        {
+            int tile = OnnxTiler.EstimateTileSize(
+                1125,
+                1600,
+                4,
+                "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+                memoryBudgetBytes: budgetMb * 1024L * 1024L,
+                isFp16: true
+            );
+            Assert.True(tile >= previous, $"tile size shrank when the budget grew ({budgetMb} MB)");
+            previous = tile;
+        }
+
+        // 1125x1600 at 4x fp16 needs ~34 GB of activation budget, so a 16 GB budget tiles at
+        // ~832 px. The old 512 px cap never allowed that.
+        Assert.Equal(832, previous);
+    }
+
+    [Fact]
+    public void EstimateTileSize_HasNoScaleAwareUpperCap()
+    {
+        // The old model clamped 4x models to 512 px and 2x models to 1024 px regardless of memory.
+        // Deriving from the budget alone, a 32 GiB budget lets a 4x model use 1152 px tiles and a
+        // 2x model skip tiling entirely.
+        long hugeBudget = 32L * 1024 * 1024 * 1024;
+
+        int tile4x = OnnxTiler.EstimateTileSize(
+            1125,
+            1600,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: hugeBudget,
+            isFp16: true
+        );
+        Assert.True(tile4x > 1024, $"expected a large derived tile, got {tile4x}");
+
+        int tile2x = OnnxTiler.EstimateTileSize(
+            1125,
+            1600,
+            2,
+            "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
+            memoryBudgetBytes: hugeBudget,
+            isFp16: true
+        );
+        Assert.Equal(0, tile2x);
+    }
+
+    [Fact]
+    public void EstimateTileSize_ElongatedImage_DoesNotOomOrAssumeZeroWhenPaddingIsSignificant()
+    {
+        // 8000x200 has 1.6 MP raw, but 4x ESRGAN needs ~34 GB of activations for it, so it must
+        // tile instead of returning 0 (single pass).
+        long budget = 2L * 1024 * 1024 * 1024; // 2 GB budget
+        int tile = OnnxTiler.EstimateTileSize(
+            8000,
+            200,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: budget,
+            isFp16: true
+        );
+        Assert.True(tile > 0);
+        Assert.True(tile <= 256);
     }
 
     [Fact]
@@ -534,60 +712,5 @@ public class OnnxTilerTests
             Assert.True(total >= used);
             Assert.Equal(total - used, free);
         }
-    }
-
-    [Fact]
-    public void EstimateTileSize_RespectsScaleAwareMaximumCap()
-    {
-        // Even with huge 32 GiB memory budget, tile size is bounded by scale-aware activation workspace limits
-        long hugeBudget = 32L * 1024 * 1024 * 1024;
-
-        int tile4x = OnnxTiler.EstimateTileSize(
-            4000,
-            4000,
-            4,
-            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
-            memoryBudgetBytes: hugeBudget,
-            isFp16: true
-        );
-        Assert.Equal(512, tile4x);
-
-        int tile3x = OnnxTiler.EstimateTileSize(
-            4000,
-            4000,
-            3,
-            "model.onnx",
-            memoryBudgetBytes: hugeBudget,
-            isFp16: true
-        );
-        Assert.Equal(640, tile3x);
-
-        int tile2x = OnnxTiler.EstimateTileSize(
-            4000,
-            4000,
-            2,
-            "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
-            memoryBudgetBytes: hugeBudget,
-            isFp16: true
-        );
-        Assert.Equal(1024, tile2x);
-    }
-
-    [Fact]
-    public void EstimateTileSize_ElongatedImage_DoesNotOomOrAssumeZeroWhenPaddingIsSignificant()
-    {
-        // 8000x200 image has 1.6 MP raw, but with padding and heavy ESRGAN it must be safely tiled
-        long budget = 2L * 1024 * 1024 * 1024; // 2 GB budget
-        int tile = OnnxTiler.EstimateTileSize(
-            8000,
-            200,
-            4,
-            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
-            memoryBudgetBytes: budget,
-            isFp16: true
-        );
-        // Heavy ESRGAN on 8000 wide image should be tiled, not return 0 (single pass)
-        Assert.True(tile > 0);
-        Assert.True(tile <= 768);
     }
 }

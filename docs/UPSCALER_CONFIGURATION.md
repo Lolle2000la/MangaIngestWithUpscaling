@@ -6,6 +6,7 @@ first as an **environment variable** and then as the equivalent `appsettings.jso
 
 > **See also:** detailed deep-dives in
 > [GPU Backend Configuration](GPU_BACKEND_CONFIGURATION.md) ·
+> [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md) ·
 > [Image Format Conversion](IMAGE_FORMAT_CONVERSION.md) ·
 > [Smart Downscale](SMART_DOWNSCALE.md) ·
 > [Upscaling Timeout](UPSCALING_TIMEOUT.md) ·
@@ -88,8 +89,9 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. |
 | `UseFp16` | `Ingest_Upscaler__UseFp16` | *(auto)* | Use half-precision (FP16) inference. Defaults to auto-detecting hardware capabilities (enabled on modern GPUs, disabled on CPU or unsupported hardware). Set to `true` or `false` to override. |
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
-| `TileSize` | `Ingest_Upscaler__TileSize` | `0` | Tile size in pixels for ONNX inference. `0` = auto-estimate from model architecture and VRAM (default); `> 0` = manual tile size; `-1` = force single pass (no tiling). |
+| `TileSize` | `Ingest_Upscaler__TileSize` | `0` | Tile size in pixels for ONNX inference. `0` = auto-estimate the largest tile that fits the VRAM budget (default, derived from the model's activation footprint — see [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md)); `> 0` = manual maximum tile size; `-1` = force single pass (no tiling). |
 | `MemoryBudgetBytes` | `Ingest_Upscaler__MemoryBudgetBytes` | `0` | VRAM memory budget in bytes for tile estimation. `0` = auto-detect free VRAM (default). |
+| `RecalibrateDeviceMemory` | `Ingest_Upscaler__RecalibrateDeviceMemory` | `false` | Force the one-off per-device memory benchmark to run again on the next upscale. Normally unnecessary: the benchmark runs automatically the first time a device is seen and is cached in `device-memory-profile.json` next to the models. See [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md#6-per-device-calibration). |
 
 #### `PreferredGpuBackend` values
 

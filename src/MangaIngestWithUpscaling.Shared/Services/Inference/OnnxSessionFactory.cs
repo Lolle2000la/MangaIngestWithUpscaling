@@ -16,6 +16,7 @@ public sealed class OnnxSessionFactory(
 {
     private static readonly Lock WebGpuInitLock = new();
     private static bool _webGpuRegistered;
+    private static bool? _webGpuAvailable;
     private static bool? _cudaAvailable;
     private static bool? _openVinoAvailable;
     private static bool? _migraphxAvailable;
@@ -497,6 +498,54 @@ public sealed class OnnxSessionFactory(
             );
             _directMlAvailable = false;
             return false;
+        }
+    }
+
+    /// <summary>
+    /// True when the WebGPU execution provider can be used on this host: the EP library ships with
+    /// the app and at least one WebGPU device is visible. Cached per process, because probing
+    /// initialises <see cref="OrtEnv"/>.
+    /// </summary>
+    public static bool IsWebGpuAvailable
+    {
+        get
+        {
+            if (_webGpuAvailable is { } cached)
+            {
+                return cached;
+            }
+
+            bool available = false;
+            try
+            {
+                var env = OrtEnv.Instance();
+                lock (WebGpuInitLock)
+                {
+                    string libPath = WebGpuEp.GetLibraryPath();
+                    if (File.Exists(libPath))
+                    {
+                        env.RegisterExecutionProviderLibrary("webgpu_ep", libPath);
+                        _webGpuRegistered = true;
+                    }
+                }
+
+                string epName = WebGpuEp.GetEpName();
+                foreach (var d in env.GetEpDevices())
+                {
+                    if (d.EpName == epName)
+                    {
+                        available = true;
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                available = false;
+            }
+
+            _webGpuAvailable = available;
+            return available;
         }
     }
 

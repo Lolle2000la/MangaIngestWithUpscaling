@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
@@ -275,7 +276,8 @@ public enum ModelArchitecture
 public static class OnnxTiler
 {
     /// <summary>
-    /// Default tile size constraint. 0 means auto-estimate safe tile size based on model architecture and VRAM.
+    /// Default tile size constraint. 0 means auto-estimate safe tile size based on the model's
+    /// activation footprint and VRAM.
     /// </summary>
     public const int DefaultTileSize = 0;
 
@@ -283,6 +285,32 @@ public static class OnnxTiler
     /// Default overlap padding in pixels between adjacent tiles.
     /// </summary>
     public const int DefaultTilePad = 16;
+
+    /// <summary>
+    /// Smallest tile dimension we will pick automatically. Below this the overlap/blending overhead
+    /// per pixel and the loss of receptive-field context on manga screentones outweigh the memory
+    /// saving, and driver overhead starts to dominate.
+    /// </summary>
+    public const int MinimumTileSize = 256;
+
+    /// <summary>
+    /// Alignment (in pixels) the tiler snaps tile dimensions to, so every tile produces the same
+    /// uniform tensor shape and the driver never has to re-allocate per tile.
+    /// </summary>
+    public const int TileAlignment = 64;
+
+    /// <summary>
+    /// Device memory reserved for the execution provider's session state and its non-shrinking
+    /// arena, independent of tile size. Subtracted from the budget before sizing tiles.
+    /// </summary>
+    public const long SessionReservationBytes = 384L * 1024 * 1024;
+
+    /// <summary>
+    /// A whole image is only run as a single pass when its predicted peak stays below this
+    /// fraction of the budget. The headroom covers alignment/padding effects that the quadratic
+    /// model does not capture exactly.
+    /// </summary>
+    public const double SinglePassSafetyFraction = 0.9;
 
     private static readonly float[] ByteToFloatLut = CreateByteToFloatLut();
     private static readonly Float16[] ByteToFloat16Lut = CreateByteToFloat16Lut();
@@ -363,34 +391,105 @@ public static class OnnxTiler
     }
 
     /// <summary>
-    /// Gets the ratio of peak intermediate activation and workspace memory to input tensor bytes for a given architecture and scale.
-    /// In super-resolution neural networks, peak workspace memory consists of:
-    /// 1. Backbone features at input resolution (W x H)
-    /// 2. Upsampling feature maps and convolution GEMM/im2col workspaces at output resolution ((scale*W) x (scale*H)),
-    ///    which scale quadratically with scale^2.
+    /// Live activation channels at a model's output resolution, per architecture.
+    /// <para>
+    /// These numbers come from a graph-level working-set analysis of every model shipped in
+    /// <see cref="MangaJaNaiUpscaler"/> (see <c>docs/UPSCALING_MEMORY_MODEL.md</c>): a sequential
+    /// liveness sweep over the ONNX graph shows the peak of one inference is always dominated by a
+    /// handful of tensors living at output resolution (upsampler activations and, for the
+    /// transformer models, the attention maps). Expressed per input pixel the analytic working set
+    /// is <c>channels * scale^2 * elementSize</c> bytes, and the coefficients below are that
+    /// analytic value multiplied by the execution-model overhead measured for the ORT WebGPU EP
+    /// (fp32 casts, NCHWc re-packing and a non-shrinking arena keep ~5x that set resident), so
+    /// <see cref="EstimateActivationBytes"/> matches observed VRAM footprints within a few percent.
+    /// </para>
     /// </summary>
-    public static double GetMemoryMultiplier(
+    public static double GetOutputLiveChannels(
         ModelArchitecture architecture,
-        int scale,
         long modelSizeBytes = 0
     )
     {
-        int scaleFactorSq = scale * scale;
-        return architecture switch
+        double channels = architecture switch
         {
-            ModelArchitecture.Span => 10.0 + 12.0 * scaleFactorSq,
-            ModelArchitecture.FdatM => 120.0 + 150.0 * scaleFactorSq,
-            ModelArchitecture.FdatXl => 200.0 + 250.0 * scaleFactorSq,
-            ModelArchitecture.Dat2 => 350.0 + 350.0 * scaleFactorSq,
-            ModelArchitecture.HatL => 500.0 + 500.0 * scaleFactorSq,
-            ModelArchitecture.Esrgan => 100.0 + 195.0 * scaleFactorSq,
-            _ => (modelSizeBytes > 0 ? (modelSizeBytes / (1024.0 * 52.0)) : 75.0)
-                * (scaleFactorSq / 4.0),
+            ModelArchitecture.Span => 310.0,
+            ModelArchitecture.Esrgan => 660.0,
+            ModelArchitecture.FdatM => 460.0,
+            ModelArchitecture.FdatXl => 660.0,
+            ModelArchitecture.Dat2 => 1060.0,
+            ModelArchitecture.HatL => 1900.0,
+            // Unknown models: scale from the parameter count. The exponent sits between the pure
+            // conv nets (sqrt(params) ~ footprint) and the attention models (attention maps add a
+            // fixed multiple), so an unrecognised model is never under-estimated.
+            _ => 310.0 + 620.0 * Math.Sqrt(Math.Max(modelSizeBytes, 0L) / 1048576.0 / 100.0),
         };
+        return channels;
     }
 
     /// <summary>
-    /// Estimates peak activation memory in bytes required to upscale an image of the given dimensions.
+    /// Activation footprint of a model as a coefficient set, so the same numbers can be used for
+    /// estimation, for the device benchmark, and for diagnostics.
+    /// </summary>
+    public readonly record struct ActivationCoefficients(double OutputLiveChannels)
+    {
+        public static ActivationCoefficients For(string modelNameOrPath, long modelSizeBytes = 0)
+        {
+            var arch = DetectArchitecture(modelNameOrPath);
+            return new ActivationCoefficients(GetOutputLiveChannels(arch, modelSizeBytes));
+        }
+
+        /// <summary>Activation bytes per input pixel for a given scale and precision.</summary>
+        public double BytesPerPixel(int scale, bool isFp16) =>
+            OutputLiveChannels * Math.Max(1, scale) * Math.Max(1, scale) * (isFp16 ? 2 : 4);
+    }
+
+    /// <summary>
+    /// Activation working set of a single inference on a tile with <paramref name="tilePixels"/>
+    /// input pixels, including the execution-model overhead of the active execution provider.
+    /// Scales purely quadratically with tile size — there is no tile-size-dependent cliff, which is
+    /// what allows the tile size to be derived instead of capped.
+    /// </summary>
+    public static long EstimateActivationBytes(
+        int tilePixels,
+        int scale,
+        string modelNameOrPath,
+        long modelSizeBytes = 0,
+        bool isFp16 = false
+    )
+    {
+        ActivationCoefficients coefficients = ActivationCoefficients.For(
+            modelNameOrPath,
+            modelSizeBytes
+        );
+        return (long)(coefficients.BytesPerPixel(scale, isFp16) * tilePixels);
+    }
+
+    /// <summary>
+    /// Weight (initializer) bytes the model occupies on the device. The ONNX file size is the
+    /// straightforward upper bound: the zipped payload is dominated by the fp16/fp32 initializers.
+    /// </summary>
+    public static long EstimateModelBytes(string modelNameOrPath, long modelSizeBytes = 0)
+    {
+        if (modelSizeBytes > 0)
+        {
+            return modelSizeBytes;
+        }
+
+        try
+        {
+            return new FileInfo(modelNameOrPath).Length;
+        }
+        catch
+        {
+            return 70L * 1024 * 1024;
+        }
+    }
+
+    /// <summary>
+    /// Estimates peak device memory for upscaling a region of <paramref name="width"/> x
+    /// <paramref name="height"/> pixels: model weights plus the activation working set of a single
+    /// inference, rounded up to the tiler's uniform-tensor alignment. Edges of tiles carry
+    /// <see cref="DefaultTilePad"/> overlap on each side, which <paramref name="includeTilePadding"/>
+    /// accounts for.
     /// </summary>
     public static long EstimatePeakMemoryBytes(
         int width,
@@ -398,24 +497,47 @@ public static class OnnxTiler
         int scale,
         string modelNameOrPath,
         long modelSizeBytes = 0,
-        bool isFp16 = false
+        bool isFp16 = false,
+        bool includeTilePadding = true
     )
     {
-        var arch = DetectArchitecture(modelNameOrPath);
-        double multiplier = GetMemoryMultiplier(arch, scale, modelSizeBytes);
-        int elementSize = isFp16 ? 2 : 4;
-        // Account for uniform padding alignment to multiples of 64 plus overlap padding
-        int paddedW = ((width + 64 + 63) / 64) * 64;
-        int paddedH = ((height + 64 + 63) / 64) * 64;
-        long inputBytes = (long)paddedW * paddedH * 3 * elementSize;
-        return (long)(inputBytes * multiplier);
+        long weights = EstimateModelBytes(modelNameOrPath, modelSizeBytes);
+        int pad = includeTilePadding ? 2 * DefaultTilePad : 0;
+        long pixels = (long)AlignedTileDimension(width + pad) * AlignedTileDimension(height + pad);
+        return weights
+            + EstimateActivationBytes(
+                (int)Math.Min(pixels, int.MaxValue),
+                scale,
+                modelNameOrPath,
+                modelSizeBytes,
+                isFp16
+            );
     }
 
     /// <summary>
-    /// Estimates a safe maximum tile dimension in pixels based on model architecture, scale,
-    /// image dimensions, precision (FP16/FP32), and available memory budget.
-    /// If the whole image fits safely within the budget, returns 0 (no tiling needed).
-    /// Dynamically derives tile size from the memory budget without arbitrary hardcoded limits.
+    /// Rounds a dimension up to the alignment the tiler uses for uniform tensors (64 px), which
+    /// keeps per-tile shapes stable and avoids driver re-allocation churn.
+    /// </summary>
+    public static int AlignedTileDimension(int value)
+    {
+        if (value <= 0)
+        {
+            return TileAlignment;
+        }
+
+        return ((value + TileAlignment - 1) / TileAlignment) * TileAlignment;
+    }
+
+    /// <summary>
+    /// Estimates the largest tile dimension (in pixels) whose single-inference footprint plus the
+    /// model weights fits into <paramref name="memoryBudgetBytes"/>.
+    /// Returns 0 when the whole image already fits in a single pass, and never returns less than
+    /// <see cref="MinimumTileSize"/>.
+    /// <para>
+    /// There is deliberately no upper cap: the memory model is quadratic in tile pixels with no
+    /// cliff, so with the derived formula a large budget on a big card yields a single pass instead
+    /// of an arbitrary 512/1024 px clamp that left both memory and throughput on the table.
+    /// </para>
     /// </summary>
     public static int EstimateTileSize(
         int width,
@@ -424,59 +546,74 @@ public static class OnnxTiler
         string modelNameOrPath,
         long memoryBudgetBytes,
         long modelSizeBytes = 0,
-        bool isFp16 = false
+        bool isFp16 = false,
+        DeviceMemoryProfile? profile = null
     )
     {
-        long peakMemory = EstimatePeakMemoryBytes(
-            width,
-            height,
-            scale,
+        long weights = EstimateModelBytes(modelNameOrPath, modelSizeBytes);
+        ActivationCoefficients analytic = ActivationCoefficients.For(
             modelNameOrPath,
-            modelSizeBytes,
-            isFp16
+            modelSizeBytes
         );
 
-        // Whole image in a single pass is ONLY safe if the peak activation memory is well below 2.5 GiB
-        // (such as small images or lightweight architectures like SPAN).
-        // Heavy architectures (ESRGAN, DAT2, HAT) on full manga pages (1125x1600+) require 6-12 GB in FP32,
-        // which exhausts GPU memory margins, risks driver spillover into GTT, and breaks uniform buffer reuse.
-        if (peakMemory <= Math.Min(memoryBudgetBytes, 2500L * 1024 * 1024))
+        // A measured profile replaces the built-in execution-model factor and session reservation
+        // with what this accelerator actually does. Without one the built-ins are used; those are
+        // the WebGPU/AMD values, so they are conservative rather than optimistic elsewhere.
+        double activationScale = profile?.ActivationScale is > 0 and < 12
+            ? profile.ActivationScale
+            : 1.0;
+        long sessionReservation = profile?.SessionReservationBytes
+            is > 0
+                and < 8L * 1024 * 1024 * 1024
+            ? profile.SessionReservationBytes
+            : SessionReservationBytes;
+
+        double bytesPerPixel = analytic.BytesPerPixel(scale, isFp16) * activationScale;
+
+        // Static cost the device carries for the whole session: weights plus the execution
+        // provider's session and arena reservation, which is independent of tile size.
+        long availableForActivation = memoryBudgetBytes - weights - sessionReservation;
+
+        // Whole image in a single pass: only claim it when the peak stays comfortably inside the
+        // budget, because a single-pass overflow cannot be recovered without restarting the page.
+        long singlePassPixels = (long)AlignedTileDimension(width) * AlignedTileDimension(height);
+        long singlePassBytes = weights + (long)(bytesPerPixel * singlePassPixels);
+        if (singlePassBytes <= memoryBudgetBytes * SinglePassSafetyFraction)
         {
-            return 0; // Fits safely in a single pass without risk of memory pressure
+            return 0;
         }
 
-        var arch = DetectArchitecture(modelNameOrPath);
-        double multiplier = GetMemoryMultiplier(arch, scale, modelSizeBytes);
-        int elementSize = isFp16 ? 2 : 4;
-        long staticWeights = modelSizeBytes > 0 ? modelSizeBytes : 70L * 1024 * 1024;
-        long availableForActivation = Math.Max(
-            100L * 1024 * 1024,
-            memoryBudgetBytes - staticWeights
-        );
-
-        double tilePixels = availableForActivation / (3.0 * elementSize * multiplier);
-        int tileDim = (int)Math.Sqrt(Math.Max(64.0, tilePixels));
-
-        // Snap down to multiple of 64 for optimal GPU tensor alignment
-        int snapped = (tileDim / 64) * 64;
-
-        // Cap maximum tile dimension based on upscale factor.
-        // For 4x+ models, each tile produces scale^2 = 16x output pixels; tiles larger than 512
-        // generate massive intermediate activation workspaces (>= 15-20 GB) that exceed
-        // GPU physical VRAM and cause driver spillover into system RAM (GTT).
-        // Capping at 512 for 4x models guarantees the output tile dimension stays <= 2048x2048,
-        // which runs in ~1 second with zero GTT spill.
-        int maxCap = scale switch
+        if (availableForActivation <= 0)
         {
-            >= 4 => 512,
-            3 => 640,
-            _ => 1024,
-        };
-        snapped = Math.Min(maxCap, snapped);
+            return MinimumTileSize;
+        }
 
-        // Never return less than 256 (tiling below 256 impairs receptive field context on manga screentones
-        // and has excessive padding/blending overhead)
-        return Math.Max(256, snapped);
+        // Largest tile whose padded footprint still fits: solve
+        // weights + bytesPerPixel * AlignedTileDimension(T + 2*pad)^2 <= memoryBudget.
+        int tileDim = (int)Math.Sqrt(availableForActivation / bytesPerPixel);
+        if (tileDim > 2 * DefaultTilePad)
+        {
+            tileDim -= 2 * DefaultTilePad;
+        }
+
+        int snapped = Math.Max(TileAlignment, (tileDim / TileAlignment) * TileAlignment);
+        while (
+            snapped > TileAlignment
+            && weights
+                + (long)(
+                    bytesPerPixel
+                    * (long)AlignedTileDimension(snapped + 2 * DefaultTilePad)
+                    * AlignedTileDimension(snapped + 2 * DefaultTilePad)
+                )
+                > memoryBudgetBytes
+        )
+        {
+            snapped -= TileAlignment;
+        }
+
+        // Never tile below the quality floor: sub-256 px tiles cost more in overlap/blending than
+        // they save in memory and visibly hurt manga screentones.
+        return Math.Max(MinimumTileSize, snapped);
     }
 
     /// <summary>

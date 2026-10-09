@@ -213,6 +213,7 @@ public class OnnxUpscaleEngineTests : IDisposable
         var engine = new OnnxUpscaleEngine(
             sessionFactory,
             config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
             NullLogger<OnnxUpscaleEngine>.Instance
         );
 
@@ -236,6 +237,7 @@ public class OnnxUpscaleEngineTests : IDisposable
         var engine = new OnnxUpscaleEngine(
             sessionFactory,
             config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
             NullLogger<OnnxUpscaleEngine>.Instance
         );
 
@@ -274,6 +276,7 @@ public class OnnxUpscaleEngineTests : IDisposable
         var engine = new OnnxUpscaleEngine(
             sessionFactory,
             config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
             NullLogger<OnnxUpscaleEngine>.Instance
         );
 

@@ -17,6 +17,7 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 public class OnnxUpscaleEngine(
     IOnnxSessionFactory sessionFactory,
     IOptions<UpscalerConfig> config,
+    IDeviceMemoryCalibrator deviceCalibrator,
     ILogger<OnnxUpscaleEngine> logger
 ) : IOnnxUpscaleEngine
 {
@@ -66,7 +67,7 @@ public class OnnxUpscaleEngine(
         }
 
         UpscaledPage upscaled = await Task.Run(
-            () =>
+            async () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -116,6 +117,14 @@ public class OnnxUpscaleEngine(
                             config.Value.VramSafetyMarginBytes
                         );
 
+                // First upscale on a device runs a short benchmark so tile sizing uses what this
+                // accelerator does rather than a generic coefficient. Cached on disk per device.
+                DeviceMemoryProfile? profile = await deviceCalibrator.GetOrCalibrateAsync(
+                    deviceId,
+                    ModelsDirectory,
+                    cancellationToken
+                );
+
                 int effectiveTileSize =
                     config.Value.TileSize > 0 ? config.Value.TileSize
                     : config.Value.TileSize < 0 ? 0
@@ -126,7 +135,8 @@ public class OnnxUpscaleEngine(
                         modelPath,
                         budget,
                         modelSizeBytes,
-                        isFp16
+                        isFp16,
+                        profile
                     );
 
                 var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
@@ -512,6 +522,26 @@ public class OnnxUpscaleEngine(
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Infers the upscale factor from a model file name (<c>2x_...</c> / <c>4x_...</c>). Returns 0
+    /// when the name does not declare one, so callers can treat that as "unknown".
+    /// </summary>
+    public static int InferScaleFromModelName(string modelNameOrPath)
+    {
+        string name = Path.GetFileNameWithoutExtension(modelNameOrPath);
+        if (
+            name.Length >= 2
+            && name[1] == 'x'
+            && char.IsDigit(name[0])
+            && int.TryParse(name[0..1], out int scale)
+        )
+        {
+            return scale;
+        }
+
+        return 0;
     }
 
     public static string SelectModel(

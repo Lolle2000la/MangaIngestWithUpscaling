@@ -72,9 +72,10 @@ public record UpscalerConfig
 
     /// <summary>
     ///     Tile size for ONNX upscaling in pixels.
-    ///     0 = Auto-estimate based on model architecture, scaling factor, and available VRAM (default).
+    ///     0 = Auto-estimate from the model's activation footprint and available VRAM (default).
     ///     &gt; 0 = Explicit maximum tile size (e.g. 512, 768, 1024).
     ///     -1 = Force single pass (no tiling).
+    ///     The automatic value is derived, not clamped: see docs/UPSCALING_MEMORY_MODEL.md.
     /// </summary>
     public int TileSize { get; set; } = 0;
 
@@ -90,6 +91,14 @@ public record UpscalerConfig
     ///     Set to 1.0 on dedicated machines (like a NAS) to utilize 100% of free VRAM.
     /// </summary>
     public double? VramUtilizationFraction { get; set; } = null;
+
+    /// <summary>
+    ///     Forces the one-off device memory benchmark to run again on the next upscale, replacing the
+    ///     stored calibration for this device. The benchmark itself is automatic: it runs the first
+    ///     time a device is seen and is cached per device in <c>device-memory-profile.json</c> next to
+    ///     the models. Only set this to re-measure, e.g. after a driver or model-set change.
+    /// </summary>
+    public bool RecalibrateDeviceMemory { get; set; } = false;
 
     /// <summary>
     ///     Optional safety margin in bytes subtracted from free VRAM when estimating tile budget.
