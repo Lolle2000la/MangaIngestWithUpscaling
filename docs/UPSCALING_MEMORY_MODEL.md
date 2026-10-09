@@ -275,9 +275,19 @@ environment:
   Ingest_Upscaler__VramSafetyMarginBytes: "512MiB"      # instead of the automatic margin
 ```
 
-Unparseable values fall back to "unset" (auto-detect) rather than failing startup, so a typo cannot
-take the service down — it just loses the override. `ByteSize.ToString()` renders values back with
-binary units, which is what the logs use.
+`ByteSize.ToString()` renders values back with binary units, which is what the logs use.
+
+A value that is *present but unparseable* (`4GiBX`, `12 Gigabytes`) aborts startup with
+`OptionsValidationException` naming the setting and the value, because silently falling back to
+"unset" would drop an explicit override — the very thing the setting exists to express:
+
+```
+Unhandled exception. Microsoft.Extensions.Options.OptionsValidationException:
+Upscaler:MemoryBudgetBytes = "12 Gigabytes": expected a byte count or a size such as 4GiB, 700MiB or 1024
+```
+
+Unset values remain valid (they mean "detect automatically") and a fully unconfigured `Upscaler`
+section still starts, which is what the unmodified container deployment does.
 
 ## 5. Why this is better than the old caps
 
