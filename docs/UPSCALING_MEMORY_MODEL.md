@@ -320,20 +320,26 @@ profile**:
 }
 ```
 
-Because every profile is keyed by fingerprint, one file can carry several devices: swapping the GPU,
-or pointing the models directory at a shared volume used by two hosts, keeps both calibrations. A
-fingerprint is
+Because every profile is keyed by fingerprint, one file can carry several devices: switching the
+GPU, swapping the execution provider, or pointing the models directory at a shared volume used by
+two hosts, keeps every calibration. A fingerprint is
 
 ```
-execution provider | device name | total device memory | ONNX Runtime version | calibration version
+execution provider | device index | device name | total device memory | ONNX Runtime version | calibration version
+webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2
+cpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2
 ```
 
-so a driver/runtime change or a new calibration method invalidates it automatically.
+The provider is **not** probed independently: it comes from `IOnnxSessionFactory.GetEffectiveBackend()`,
+the same method that configures the session, so it honours `PreferredGpuBackend`, `UseCPU` and
+`SelectedDeviceIndex`. A calibration measured on WebGPU is therefore never applied to a CUDA
+session (and vice versa) just because both happen to run on the same card.
 
 ### 6.4 Behaviour and fallbacks
 
-* First upscale on an unseen device → the benchmark runs (logged at `Information`), then the cached
-  profile is used for the rest of the process lifetime.
+* First upscale on an unseen device + provider → the benchmark runs (logged at `Information`), then
+  the cached profile is used for the rest of the process lifetime. Switching
+  `PreferredGpuBackend` to another provider simply gets its own profile.
 * `RecalibrateDeviceMemory = true` forces a re-measure on the next upscale.
 * `UseCPU = true` skips calibration entirely (there is no device budget to fill).
 * A profile with a scale outside `0.2…12` or a reservation outside `0…8 GB` is discarded and the

@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -109,12 +108,14 @@ public sealed class DeviceMemoryCalibrator(
     }
 
     /// <summary>
-    /// Identity of the measured configuration: execution provider, device, its memory size, the
-    /// ONNX Runtime build and the calibration method version.
+    /// Identity of the measured configuration. The execution provider comes from the session factory
+    /// (the single place that resolves it, honouring <see cref="UpscalerConfig.PreferredGpuBackend"/>,
+    /// <see cref="UpscalerConfig.UseCPU"/> and the device index), so a calibration is only ever
+    /// reused for the provider that will actually run the model.
     /// </summary>
-    public static string BuildFingerprint(int deviceId)
+    public string BuildFingerprint(int deviceId)
     {
-        GpuBackend backend = ExecutionProviderResolver.Resolve(deviceId);
+        GpuBackend backend = sessionFactory.GetEffectiveBackend();
         string provider = backend.ToString().ToLowerInvariant();
 
         string deviceName = "unknown";
@@ -156,7 +157,7 @@ public sealed class DeviceMemoryCalibrator(
 
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"{provider}|{deviceName}|{totalBytes}|{runtimeVersion}|v{CalibrationVersion}"
+            $"{provider}|{deviceId}|{deviceName}|{totalBytes}|{runtimeVersion}|v{CalibrationVersion}"
         );
     }
 
@@ -241,7 +242,7 @@ public sealed class DeviceMemoryCalibrator(
                 var profile = new DeviceMemoryProfile
                 {
                     Fingerprint = fingerprint,
-                    Provider = ToProvider(deviceId),
+                    Provider = ToProvider(sessionFactory.GetEffectiveBackend()),
                     DeviceName = ResolveDeviceName(deviceId),
                     TotalDeviceMemoryBytes = ResolveTotalDeviceMemory(deviceId),
                     ActivationScale = activationScale,
@@ -351,8 +352,8 @@ public sealed class DeviceMemoryCalibrator(
         return Math.Clamp(tile, 128, 640);
     }
 
-    private static ExecutionProvider ToProvider(int deviceId) =>
-        ExecutionProviderResolver.Resolve(deviceId) switch
+    private static ExecutionProvider ToProvider(GpuBackend backend) =>
+        backend switch
         {
             GpuBackend.WebGPU => ExecutionProvider.WebGpu,
             GpuBackend.CUDA => ExecutionProvider.Cuda,
@@ -407,88 +408,6 @@ public sealed class DeviceMemoryCalibrator(
             return 0;
         }
     }
-}
-
-/// <summary>
-/// Resolves the execution provider exactly the way <see cref="OnnxSessionFactory"/> would, without
-/// creating a session. Used to fingerprint a calibration.
-/// </summary>
-internal static class ExecutionProviderResolver
-{
-    public static GpuBackend Resolve(int deviceId)
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            if (TryCuda(deviceId))
-            {
-                return GpuBackend.CUDA;
-            }
-
-            if (TryWebGpu())
-            {
-                return GpuBackend.WebGPU;
-            }
-
-            return GpuBackend.CPU;
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            if (TryWebGpu())
-            {
-                return GpuBackend.WebGPU;
-            }
-
-            if (TryDirectMl(deviceId))
-            {
-                return GpuBackend.DirectML;
-            }
-
-            if (TryCuda(deviceId))
-            {
-                return GpuBackend.CUDA;
-            }
-
-            return GpuBackend.CPU;
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            return TryWebGpu() ? GpuBackend.WebGPU : GpuBackend.CPU;
-        }
-
-        return GpuBackend.CPU;
-    }
-
-    private static bool TryCuda(int deviceId)
-    {
-        try
-        {
-            using var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-            options.AppendExecutionProvider_CUDA(deviceId);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool TryDirectMl(int deviceId)
-    {
-        try
-        {
-            using var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-            options.AppendExecutionProvider_DML(deviceId);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool TryWebGpu() => OnnxSessionFactory.IsWebGpuAvailable;
 }
 
 /// <summary>

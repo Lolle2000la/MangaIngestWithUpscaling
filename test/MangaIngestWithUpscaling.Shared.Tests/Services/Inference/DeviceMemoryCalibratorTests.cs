@@ -24,12 +24,47 @@ public class DeviceMemoryCalibratorTests
     [Fact]
     public void Fingerprint_IsStableForSameDevice()
     {
-        string first = DeviceMemoryCalibrator.BuildFingerprint(0);
-        string second = DeviceMemoryCalibrator.BuildFingerprint(0);
+        DeviceMemoryCalibrator calibrator = CreateCalibrator();
+
+        string first = calibrator.BuildFingerprint(0);
+        string second = calibrator.BuildFingerprint(0);
 
         // CPU-only hosts are a legitimate fingerprint too, so only require stability
         Assert.Equal(first, second);
         Assert.Contains("|", first, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Fingerprint_FollowsTheConfiguredProvider()
+    {
+        // The provider has to come from the session factory, not be guessed: forcing a backend or
+        // CPU must change the identity, otherwise a calibration measured on one provider would be
+        // reused on another.
+        string auto = CreateCalibrator().BuildFingerprint(0);
+
+        var cpuSessionFactory = Substitute.For<IOnnxSessionFactory>();
+        cpuSessionFactory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+        string cpu = new DeviceMemoryCalibrator(
+            cpuSessionFactory,
+            Options.Create(new UpscalerConfig { UseCPU = true }),
+            new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance),
+            NullLogger<DeviceMemoryCalibrator>.Instance
+        ).BuildFingerprint(0);
+
+        var migraphxSessionFactory = Substitute.For<IOnnxSessionFactory>();
+        migraphxSessionFactory.GetEffectiveBackend().Returns(GpuBackend.MIGraphX);
+        string migraphx = new DeviceMemoryCalibrator(
+            migraphxSessionFactory,
+            Options.Create(new UpscalerConfig { PreferredGpuBackend = GpuBackend.MIGraphX }),
+            new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance),
+            NullLogger<DeviceMemoryCalibrator>.Instance
+        ).BuildFingerprint(0);
+
+        Assert.NotEqual(auto, cpu);
+        Assert.NotEqual(auto, migraphx);
+        Assert.NotEqual(cpu, migraphx);
+        Assert.StartsWith("cpu|", cpu, StringComparison.Ordinal);
+        Assert.StartsWith("migraphx|", migraphx, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -53,8 +88,16 @@ public class DeviceMemoryCalibratorTests
         Directory.CreateDirectory(dir);
         try
         {
-            string fingerprint = DeviceMemoryCalibrator.BuildFingerprint(0);
             var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig()),
+                store,
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            string fingerprint = calibrator.BuildFingerprint(0);
             var cached = new DeviceMemoryProfile
             {
                 Fingerprint = fingerprint,
@@ -64,15 +107,11 @@ public class DeviceMemoryCalibratorTests
             };
             store.Save(dir, cached);
 
-            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
-            DeviceMemoryCalibrator calibrator = new(
-                sessionFactory,
-                Options.Create(new UpscalerConfig()),
-                store,
-                NullLogger<DeviceMemoryCalibrator>.Instance
+            DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
             );
-
-            DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateAsync(0, dir, TestContext.Current.CancellationToken);
 
             Assert.NotNull(profile);
             Assert.Equal(4.5, profile!.ActivationScale);
@@ -94,7 +133,10 @@ public class DeviceMemoryCalibratorTests
         {
             // No models in this directory, so the benchmark cannot run and the stored profile has
             // to survive untouched — proving the flag does not simply drop the cached value.
-            string fingerprint = DeviceMemoryCalibrator.BuildFingerprint(0);
+            DeviceMemoryCalibrator calibrator = CreateCalibrator(
+                new UpscalerConfig { RecalibrateDeviceMemory = true }
+            );
+            string fingerprint = calibrator.BuildFingerprint(0);
             var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
             var cached = new DeviceMemoryProfile
             {
@@ -103,10 +145,6 @@ public class DeviceMemoryCalibratorTests
                 CalibratedAtUtc = DateTimeOffset.UnixEpoch,
             };
             store.Save(dir, cached);
-
-            DeviceMemoryCalibrator calibrator = CreateCalibrator(
-                new UpscalerConfig { RecalibrateDeviceMemory = true }
-            );
 
             await calibrator.GetOrCalibrateAsync(0, dir, TestContext.Current.CancellationToken);
 
@@ -133,7 +171,11 @@ public class DeviceMemoryCalibratorTests
                 new UpscalerConfig { UseCPU = true }
             );
 
-            DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateAsync(0, dir, TestContext.Current.CancellationToken);
+            DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
 
             Assert.Null(profile);
         }
