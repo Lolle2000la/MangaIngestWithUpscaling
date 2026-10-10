@@ -406,13 +406,6 @@ public class MangaJaNaiUpscaler(
         }
     }
 
-    /// <summary>
-    /// The page-break detector's file name, which is not part of a precision pair and so is not
-    /// covered by <see cref="ExpectedModelFiles"/>.
-    /// </summary>
-    internal static string DetectorModelFileName =>
-        PageBreakDetectorPackage.ExpectedFileHashes.Keys.Single();
-
     internal IReadOnlyList<ModelPackage> GetModelPackages()
     {
         // Resolve the provider once: it answers two questions here, and probing it per read would
