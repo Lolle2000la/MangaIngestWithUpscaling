@@ -1,6 +1,7 @@
 using MangaIngestWithUpscaling.RemoteWorker.Background;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Options;
+using NSubstitute;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
@@ -52,46 +53,44 @@ public class EngineIdentityProviderTests
     }
 
     /// <summary>
-    /// <see cref="MangaJaNaiWorkerSettings.EnsureSettings"/> re-reads <c>appstate2.json</c> on every
-    /// worker spawn, so an edit made while this process is alive must not be served under the old
-    /// cached identity. Changing the file changes its fingerprint (length) and must force a recompute.
+    /// When PreferredGpuBackend is Auto, two workers on different hardware must produce different
+    /// engine identities according to their resolved backend (e.g. CUDA vs WebGPU) to prevent
+    /// blending pages from different accelerators into a single chapter.
     /// </summary>
     [Fact]
     [Trait("Category", "Unit")]
-    public void Upscaler_RecomputesWhenTheWorkflowConfigFingerprintChanges()
+    public void Upscaler_DifferentiatesResolvedBackends()
     {
-        string configPath = Path.Combine(AppContext.BaseDirectory, "appstate2.json");
-        byte[]? original = File.Exists(configPath) ? File.ReadAllBytes(configPath) : null;
         string directory = Directory.CreateTempSubdirectory("engine_provider_config").FullName;
         try
         {
-            var provider = new EngineIdentityProvider(
-                Options.Create(new UpscalerConfig { ModelsDirectory = directory })
+            var mockFactoryCuda =
+                NSubstitute.Substitute.For<MangaIngestWithUpscaling.Shared.Services.Inference.IOnnxSessionFactory>();
+            mockFactoryCuda.GetEffectiveBackend().Returns(GpuBackend.CUDA);
+
+            var mockFactoryWebGpu =
+                NSubstitute.Substitute.For<MangaIngestWithUpscaling.Shared.Services.Inference.IOnnxSessionFactory>();
+            mockFactoryWebGpu.GetEffectiveBackend().Returns(GpuBackend.WebGPU);
+
+            var options = Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = directory,
+                    PreferredGpuBackend = GpuBackend.Auto,
+                }
             );
 
-            File.WriteAllText(configPath, "{\"workflow\":\"a\"}");
-            string before = provider.Upscaler;
+            var providerCuda = new EngineIdentityProvider(options, mockFactoryCuda);
+            var providerWebGpu = new EngineIdentityProvider(options, mockFactoryWebGpu);
 
-            // Change the content length, so the fingerprint differs even if the filesystem's write
-            // timestamp granularity would not have moved.
-            File.WriteAllText(configPath, "{\"workflow\":\"bb\"}");
-            string after = provider.Upscaler;
+            string identityCuda = providerCuda.Upscaler;
+            string identityWebGpu = providerWebGpu.Upscaler;
 
-            Assert.NotEqual(before, after);
-            // The recomputed identity is cached again for the new fingerprint.
-            Assert.Equal(after, provider.Upscaler);
+            Assert.NotEqual(identityCuda, identityWebGpu);
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
-            if (original is null)
-            {
-                File.Delete(configPath);
-            }
-            else
-            {
-                File.WriteAllBytes(configPath, original);
-            }
         }
     }
 }

@@ -1,14 +1,29 @@
+using MangaIngestWithUpscaling.Shared.Services.GPU;
+
 namespace MangaIngestWithUpscaling.Shared.Configuration;
 
 public enum GpuBackend
 {
     Auto,
+    WebGPU,
     CUDA,
-    CUDA_12_8,
-    ROCm,
-    ROCm_GFX120X,
-    XPU,
+    DirectML,
+    OpenVINO,
+    MIGraphX,
     CPU,
+
+    // Legacy PyTorch aliases retained for backwards compatibility with existing configuration files
+    [Obsolete("Use WebGPU or Auto instead")]
+    ROCm = 100,
+
+    [Obsolete("Use WebGPU or Auto instead")]
+    ROCm_GFX120X = 101,
+
+    [Obsolete("Use CUDA or Auto instead")]
+    CUDA_12_8 = 102,
+
+    [Obsolete("Use WebGPU or OpenVINO instead")]
+    XPU = 103,
 }
 
 public record UpscalerConfig
@@ -25,23 +40,114 @@ public record UpscalerConfig
 
     /// <summary>
     ///     When enabled, the upscaler will only run on the remote worker. No local consumption will be attempted.
-    ///     As a side effect, this will also disable automatic attempts to install necessary Python packages.
+    ///     As a side effect, this will also disable automatic attempts to download models locally.
     /// </summary>
     public bool RemoteOnly { get; set; } = false;
 
     /// <summary>
-    ///     Specifies which GPU backend to use for PyTorch. Auto will attempt to detect the best available option.
+    ///     Specifies which GPU backend / execution provider to use for ONNX Runtime. Auto will attempt to detect the best available option.
     /// </summary>
     public GpuBackend PreferredGpuBackend { get; set; } = GpuBackend.Auto;
 
     /// <summary>
-    ///     When enabled, forces acceptance of existing Python environments without version or backend checks.
-    ///     This is useful when using a manually managed Python environment that should not be recreated automatically.
+    ///     When true, uses 16-bit floating point (FP16) half-precision models.
+    ///     When false, uses 32-bit floating point (FP32) single-precision models.
+    ///     When null (default), automatically detects whether FP16 inference is supported
+    ///     by the active hardware/GPU backend.
     /// </summary>
-    public bool ForceAcceptExistingEnvironment { get; set; } = false;
+    public bool? UseFp16 { get; set; } = null;
 
-    public bool UseFp16 { get; set; } = true;
+    /// <summary>
+    ///     Gets the effective FP16 setting, auto-detecting hardware support if <see cref="UseFp16"/> is null.
+    ///     <para>
+    ///     Use <see cref="ResolveUseFp16"/> where the resolved execution provider is at hand: the
+    ///     probe below then answers for the provider that will actually run, instead of for whichever
+    ///     one the preference happens to name.
+    ///     </para>
+    /// </summary>
+    public bool ResolvedUseFp16 => ResolveUseFp16(PreferredGpuBackend);
+
+    /// <summary>
+    ///     <see cref="ResolvedUseFp16"/> for an execution provider that has already been resolved.
+    /// </summary>
+    /// <param name="resolvedBackend">
+    ///     The provider in use, e.g. from <c>IOnnxSessionFactory.GetEffectiveBackend()</c>. Pass it
+    ///     unresolved (<see cref="GpuBackend.Auto"/>) only when it has not been probed yet.
+    /// </param>
+    public bool ResolveUseFp16(GpuBackend resolvedBackend) =>
+        UseFp16
+        ?? Fp16CapabilityDetector.IsFp16Supported(
+            resolvedBackend,
+            Math.Max(0, SelectedDeviceIndex - 1),
+            UseCPU || SelectedDeviceIndex <= 0
+        );
+
     public bool UseCPU { get; set; } = false;
+
+    /// <summary>
+    ///     Tile size for ONNX upscaling in pixels.
+    ///     0 = Auto-estimate from the model's activation footprint and available VRAM (default).
+    ///     &gt; 0 = Explicit maximum tile size (e.g. 512, 768, 1024).
+    ///     -1 = Force single pass (no tiling).
+    ///     The automatic value is derived, not clamped: see docs/UPSCALING_MEMORY_MODEL.md.
+    /// </summary>
+    public int TileSize { get; set; } = 0;
+
+    /// <summary>
+    ///     Memory budget for automatic tile size estimation, as a byte count or a size string
+    ///     (<c>1GiB</c>, <c>12 GiB</c>, <c>12288MiB</c>). Unset, empty or unparseable means 0
+    ///     (<see cref="ResolvedMemoryBudgetBytes"/>).
+    /// </summary>
+    public string? MemoryBudgetBytes { get; set; }
+
+    /// <summary>
+    ///     Gets the parsed memory budget. 0 when nothing usable is configured, which is the signal
+    ///     for tile sizing to detect the budget from the device instead.
+    /// </summary>
+    public long ResolvedMemoryBudgetBytes =>
+        ByteSize.TryParse(MemoryBudgetBytes, out ByteSize parsed) ? parsed.Bytes : 0;
+
+    /// <summary>
+    ///     Optional fraction of free GPU VRAM to utilize for automatic tile budgeting (0.0 to 1.0).
+    ///     Defaults to null (automatic adaptive budgeting: ~97% when headless/NAS, ~95% with 512MB-1GB safety margin on desktop).
+    ///     Set to 1.0 on dedicated machines (like a NAS) to utilize 100% of free VRAM.
+    /// </summary>
+    public double? VramUtilizationFraction { get; set; } = null;
+
+    /// <summary>
+    ///     Forces the one-off device memory benchmark to run again on the next upscale, replacing the
+    ///     stored calibration for this device. The benchmark itself is automatic: it runs the first
+    ///     time a device is seen and is cached per device in <c>device-memory-profile.json</c> next to
+    ///     the models. Only set this to re-measure, e.g. after a driver or model-set change.
+    /// </summary>
+    public bool RecalibrateDeviceMemory { get; set; } = false;
+
+    /// <summary>
+    ///     Optional safety margin subtracted from free VRAM when estimating tile budget, as a byte
+    ///     count or a size string (<c>512MiB</c>, <c>1.5 GiB</c>). Unset means the margin is chosen
+    ///     automatically (256 MiB headless, 1.5-3.0 GiB with a desktop attached).
+    /// </summary>
+    public string? VramSafetyMarginBytes { get; set; }
+
+    public long? ResolvedVramSafetyMarginBytes =>
+        ByteSize.TryParse(VramSafetyMarginBytes, out ByteSize parsed) ? parsed.Bytes : null;
+
+    /// <summary>
+    ///     VRAM usage below which the GPU is treated as quasi-exclusive to the upscaler, as a byte
+    ///     count or a size string (<c>700MiB</c>, <c>1 GiB</c>). Unset means 350 MiB (driver plus a
+    ///     display server or a couple of light helpers).
+    ///     <para>
+    ///     At or below it the budget keeps only a minimal reserve (256 MiB); above it the budget keeps
+    ///     a desktop-sized safety margin (15% of total VRAM, clamped to 1.5-3.0 GiB), because drivers
+    ///     start evicting into GTT near 85-90% utilisation. Raise this when another process reliably
+    ///     shares the card but stays bounded — e.g. a video transcoder holding 700 MiB: at
+    ///     <c>1GiB</c> the upscaler budgets the card as if exclusive again.
+    ///     </para>
+    /// </summary>
+    public string? VramExclusiveThresholdBytes { get; set; }
+
+    public long? ResolvedVramExclusiveThresholdBytes =>
+        ByteSize.TryParse(VramExclusiveThresholdBytes, out ByteSize parsed) ? parsed.Bytes : null;
 
     public string ModelsDirectory { get; set; } =
         Path.Combine(
@@ -51,8 +157,7 @@ public record UpscalerConfig
         );
 
     /// <summary>
-    /// The models directory as an absolute path. A relative configured value is resolved against the
-    /// process CWD so the engine identity and the spawned Python worker agree on one directory.
+    /// The models directory as an absolute path. A relative configured value is resolved against the process CWD.
     /// </summary>
     public string ResolvedModelsDirectory
     {
@@ -69,13 +174,6 @@ public record UpscalerConfig
         }
     }
 
-    public string PythonEnvironmentDirectory { get; set; } =
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MangaIngestWithUpscaling",
-            "Python-Env"
-        );
-
     /// <summary>
     /// Dedicated, app-owned directory the page-streaming spool is written to. The app creates its own
     /// <c>{process id}-{guid}</c> roots under it and sweeps only those, so do not point it at a
@@ -90,7 +188,12 @@ public record UpscalerConfig
     /// disk. Defaults to 8 GiB. There is no process-wide cap; see
     /// <c>docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md</c>.
     /// </summary>
-    public long MaxSpoolBytesPerTask { get; set; } = 8L * 1024 * 1024 * 1024;
+    public string? MaxSpoolBytesPerTask { get; set; } = "8 GiB";
+
+    public long ResolvedMaxSpoolBytesPerTask =>
+        ByteSize.TryParse(MaxSpoolBytesPerTask, out ByteSize parsed)
+            ? parsed.Bytes
+            : 8L * 1024 * 1024 * 1024;
 
     /// <summary>
     /// How long a worker waits for a page manifest. The manifest normally returns immediately, but
@@ -145,8 +248,9 @@ public record UpscalerConfig
     ///     detected via a Laplacian-variance sharpness check and downscaled back toward their likely
     ///     native resolution before AI upscaling. This prevents double-upscaling artefacts and lets
     ///     the model see clean, high-contrast edges.
+    ///     Default: true.
     /// </summary>
-    public bool EnableSmartDownscale { get; set; } = false;
+    public bool EnableSmartDownscale { get; set; } = true;
 
     /// <summary>
     ///     Sharpness threshold used by the smart downscale check. A standard deviation of the
@@ -162,62 +266,4 @@ public record UpscalerConfig
     ///     Must be in the range (0, 1).
     /// </summary>
     public double SmartDownscaleFactor { get; set; } = 0.75;
-
-    /// <summary>
-    ///     How long the persistent upscale worker process may sit idle (no in-flight or queued
-    ///     job) before it is shut down to release GPU/VRAM resources. The process is respawned
-    ///     lazily on the next job, so this only affects idle resource usage.
-    /// </summary>
-    public TimeSpan WorkerIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>
-    ///     Maximum time a single request to the resident detection server may run before the request
-    ///     is cancelled and the server process killed; the caller then falls back to the per-image
-    ///     CLI, so a wedged detector cannot hang a task forever. Zero disables the guard.
-    /// </summary>
-    public TimeSpan DetectServerRequestTimeout { get; set; } = TimeSpan.FromMinutes(10);
-
-    /// <summary>
-    ///     Maximum number of jobs the persistent upscale worker may have in flight plus queued
-    ///     at once. Upscaling is processed sequentially, so this is normally 1.
-    /// </summary>
-    public int WorkerQueueCapacity { get; set; } = 1;
-
-    /// <summary>
-    ///     When enabled, the worker preloads all chain models before accepting its first job
-    ///     (worker.py --warmup). Disabled by default: models are loaded lazily on first use and
-    ///     cached in the engine, so consecutive jobs stay warm without paying the cold-start cost
-    ///     of loading every model up front.
-    /// </summary>
-    public bool WorkerWarmup { get; set; } = false;
-
-    /// <summary>
-    ///     When enabled, every line the worker writes to stderr is mirrored to the host's stderr
-    ///     regardless of the configured log level. Defaults to on in Development and off elsewhere;
-    ///     either can be overridden explicitly via configuration.
-    /// </summary>
-    public bool WorkerLogToStderr { get; set; } =
-        string.Equals(
-            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
-            "Development",
-            StringComparison.OrdinalIgnoreCase
-        );
-
-    /// <summary>
-    ///     How long the persistent upscale worker must sit idle (no in-flight job) before it
-    ///     returns its cached allocator blocks (VRAM) to the driver, so co-tenant GPU processes
-    ///     (e.g. split detection) can run while the worker stays warm. Zero disables the release.
-    ///     The worker can also be asked to release immediately via
-    ///     <see cref="IMangaJaNaiWorkerClient.ReleaseGpuCacheAsync"/>.
-    /// </summary>
-    public TimeSpan WorkerIdleCacheReleaseTimeout { get; set; } = TimeSpan.FromSeconds(10);
-
-    /// <summary>
-    ///     When true, split detection shuts the persistent upscaling worker down entirely before
-    ///     running, guaranteeing maximum free VRAM. Intended for very VRAM-limited GPUs where even
-    ///     an idle worker (model weights + CUDA context) would starve detection. When false (the
-    ///     default), detection only asks the worker to release its cached VRAM and both processes
-    ///     coexist.
-    /// </summary>
-    public bool ShutdownWorkerBeforeSplitDetection { get; set; } = false;
 }

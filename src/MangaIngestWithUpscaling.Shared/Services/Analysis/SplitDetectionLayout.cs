@@ -1,18 +1,11 @@
 namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 
 /// <summary>
-/// Filesystem layout of the bundled page-break detector, relative to the application base
-/// directory. Shared by the CLI fallback and the long-running detection server so both resolve
-/// the same script and model files.
+/// Filesystem layout of the page-break detector model.
 /// </summary>
 public static class SplitDetectionLayout
 {
-    public const string SubmodulePath = "backend/src/manga-vert-split-nn";
-    public const string ScriptName = "detect_breaks.py";
-    public const string ServerScriptName = "detect_server.py";
-    public const string ModelRelativePath = "models/BCE Only (v8)/final_deployment/best_model.pth";
-    public const string ConfigRelativePath =
-        "models/BCE Only (v8)/final_deployment/model_config.json";
+    public const string OnnxModelRelativePath = "models/page_break_detector.onnx";
 
     /// <summary>
     /// Root the bundled detector files resolve under. Defaults to the application base directory; a
@@ -20,11 +13,71 @@ public static class SplitDetectionLayout
     /// </summary>
     public static string Root { get; set; } = AppContext.BaseDirectory;
 
-    public static string ScriptPath => Path.Combine(Root, SubmodulePath, ScriptName);
+    public static string OnnxModelPath => Path.Combine(Root, OnnxModelRelativePath);
 
-    public static string ServerScriptPath => Path.Combine(Root, SubmodulePath, ServerScriptName);
+    /// <summary>
+    /// Resolves the absolute path to the ONNX page break detector model, searching the configured
+    /// models directory, application base, and repository relative locations.
+    /// </summary>
+    public static string ResolveModelPath(string? modelsDirectory = null)
+    {
+        if (!string.IsNullOrEmpty(modelsDirectory))
+        {
+            string inModels = Path.Combine(modelsDirectory, "page_break_detector.onnx");
+            if (File.Exists(inModels))
+            {
+                return inModels;
+            }
+        }
 
-    public static string CheckpointPath => Path.Combine(Root, SubmodulePath, ModelRelativePath);
+        if (File.Exists(OnnxModelPath))
+        {
+            return OnnxModelPath;
+        }
 
-    public static string ConfigPath => Path.Combine(Root, SubmodulePath, ConfigRelativePath);
+        // Only search host/repository fallback locations when running under the default root.
+        if (Root == AppContext.BaseDirectory)
+        {
+            string directModelsPath = Path.Combine(
+                AppContext.BaseDirectory,
+                "models",
+                "page_break_detector.onnx"
+            );
+            if (File.Exists(directModelsPath))
+            {
+                return directModelsPath;
+            }
+
+            string currentTestData = Path.Combine(
+                Directory.GetCurrentDirectory(),
+                "test_data",
+                "models",
+                "page_break_detector.onnx"
+            );
+            if (File.Exists(currentTestData))
+            {
+                return currentTestData;
+            }
+
+            string upwardTestData = Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "..",
+                "test_data",
+                "models",
+                "page_break_detector.onnx"
+            );
+            if (File.Exists(upwardTestData))
+            {
+                return Path.GetFullPath(upwardTestData);
+            }
+        }
+
+        return !string.IsNullOrEmpty(modelsDirectory)
+            ? Path.Combine(modelsDirectory, "page_break_detector.onnx")
+            : OnnxModelPath;
+    }
 }

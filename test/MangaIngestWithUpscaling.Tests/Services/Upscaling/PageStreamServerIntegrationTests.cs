@@ -1,5 +1,6 @@
 extern alias remote;
 
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Claims;
 using System.Text;
@@ -60,7 +61,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.Upscaling;
 /// <summary>
 /// Exercises the page-streaming transport over a real gRPC channel against the real
 /// <see cref="UpscalingDistributionService"/>, a real <see cref="PageStreamSpool"/> and a real
-/// database, with only the local Python worker faked. This covers what the stubbed-client test
+/// database, with only the local worker faked. This covers what the stubbed-client test
 /// cannot: gRPC serialization, the real handlers, identity/spool persistence and the chapter
 /// completion path.
 ///
@@ -161,7 +162,9 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                     ImageFormatConversionRules = [],
                     MaxDimensionBeforeUpscaling = null,
                     EnableSmartDownscale = false,
-                    MaxSpoolBytesPerTask = maxSpoolBytesPerTask,
+                    MaxSpoolBytesPerTask = maxSpoolBytesPerTask.ToString(
+                        CultureInfo.InvariantCulture
+                    ),
                 }
             )
         );
@@ -884,8 +887,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .DetectSplitsAsync(
                 Arg.Any<string>(),
                 Arg.Any<IProgress<UpscaleProgress>?>(),
-                Arg.Any<CancellationToken>(),
-                Arg.Any<bool>()
+                Arg.Any<CancellationToken>()
             )
             .Returns(ci => new List<SplitDetectionResult>
             {
@@ -1083,8 +1085,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     [Trait("Category", "Integration")]
     public async Task UploadPage_EnforcesThePerTaskBudgetOverGrpc()
     {
-        // A dedicated server with a tiny budget, so the handler-level reservation/commit checks can be
-        // driven with a couple of bytes (the production default is 8 GiB).
+        // A dedicated server with a tiny budget, so the handler-level reservation/commit checks can
+        // be driven with a few bytes (the production default is 8 GiB).
         await using WebApplication budgetApp = await BuildAppAsync(maxSpoolBytesPerTask: 16);
         TestServer server = budgetApp.GetTestServer();
         using GrpcChannel channel = GrpcChannel.ForAddress(
@@ -1715,8 +1717,6 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             CancellationToken cancellationToken,
             TimeSpan? timeout
         ) => throw new NotSupportedException();
-
-        public Task ShutdownWorkerAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken) =>
             Task.FromResult(true);

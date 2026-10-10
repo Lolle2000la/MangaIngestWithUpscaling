@@ -22,10 +22,7 @@ on:
       - "MangaIngestWithUpscaling.sln"
       - "docker-compose.yml"
       - "Dockerfile"
-      - "rocm.Dockerfile"
-      - "remoteonly.Dockerfile"
-      - "cuda128.Dockerfile"
-      - "xpu.Dockerfile"
+      - "cuda.Dockerfile"
 
 jobs:
   build:
@@ -33,8 +30,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: recursive
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
         with:

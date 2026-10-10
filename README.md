@@ -18,7 +18,10 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 For information on how to set up and use a remote worker for upscaling, please see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md).
 
-For information about the remote-only server variant without ML dependencies, see the [Remote-Only Variant Documentation](./docs/REMOTE_ONLY_VARIANT.md).
+For information about running the server without local ML dependencies and delegating all
+upscaling to remote workers, see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md) and set
+`Ingest_Upscaler__RemoteOnly=true` — see [the remote-only configuration](./docs/REMOTE_ONLY_VARIANT.md),
+which is deprecated in favour of that environment variable.
 
 ## Usage
 
@@ -30,25 +33,33 @@ For information about the remote-only server variant without ML dependencies, se
 
 The preferred way to run the application is through Docker. The standard image supports all GPU backends — you select the backend via an environment variable.
 
-### Python Environment Storage
+### ONNX Runtime and Model Storage
 
-On first startup, the application automatically downloads and installs the GPU-specific Python/PyTorch environment into the `/data/pyenv` directory inside your data volume. This means:
+The application runs pure C# using ONNX Runtime for ML inference. There is no Python or PyTorch deployment needed:
 
-- **No large image downloads** for GPU backends — only a lightweight image is pulled
-- **Environment persists across image updates** — PyTorch is not re-downloaded unless the required version changes
-- **Configurable location** — if you want to store the Python environment on a separate volume (e.g. a larger disk), map it explicitly and override `Ingest_Upscaler__PythonEnvironmentDirectory`:
+- **Ultra-lightweight footprint** — no multi-gigabyte PyTorch/CUDA wheels downloaded
+- **Native Hardware Acceleration** — one image per vendor: WebGPU on AMD Radeon, Intel and Apple, CUDA on NVIDIA, DirectML on Windows, plus a CPU fallback
+- **Automatic Model Provisioning** — optimized ONNX models are downloaded on demand into the `/models` directory from GitHub releases
+- **Persistent models** — models are cached in `/models` across updates
 
-```yaml
-    volumes:
-      - /path/to/store/appdata:/data
-      - /path/to/store/pyenv:/pyenv   # separate volume for the Python environment
-    environment:
-      Ingest_Upscaler__PythonEnvironmentDirectory: /pyenv
-```
+### Docker Image Flavors & Hardware Acceleration
 
-### NVIDIA GPU (CUDA)
+Only two images are needed to cover all hardware:
 
-The default backend. Uses CUDA 11.8-compatible PyTorch wheels.
+| Image Tag | Hardware / Execution Provider | Target Hardware |
+|---|---|---|
+| `:latest` / `:latest-dev` | **Universal** (ONNX WebGPU EP via Vulkan + CPU fallback) | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback |
+| `:latest-cuda` / `:latest-dev-cuda` | **NVIDIA CUDA** & TensorRT Execution Providers | NVIDIA GeForce GTX/RTX, Quadro, Tesla (requires nvidia-container-toolkit) |
+
+Both flavor tags are available for both the main application (`manga-ingest-with-upscaling`) and the remote worker (`manga-ingest-with-upscaling-remote-worker`).
+
+---
+
+### Universal Image (AMD Radeon / Intel / CPU)
+
+Recommended for all non-NVIDIA systems. Uses ONNX Runtime WebGPU (backed by Mesa RADV for AMD and ANV for Intel via Vulkan). On systems without a GPU, it cleanly falls back to CPU inference.
+
+Simply pass `/dev/dri` to the container to give it access to your GPU:
 
 ```yaml
 services:
@@ -56,32 +67,43 @@ services:
     image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
     restart: unless-stopped
     environment:
-      TZ: #your timezone here
-      Ingest_Upscaler__PreferredGpuBackend: CUDA    # or CUDA_12_8 for CUDA 12.8 drivers
-      Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
-      Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
-      Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
-      # Kavita integration
-      #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
-      #Ingest_Kavita__ApiKey: #Your API key here
-      #Ingest_Kavita__Enabled: True # defaults to false
-      # OIDC Authentication (v0.12.0+)
-      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
-      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
-      #Ingest_OIDC__ClientId: # Your OIDC client ID
-      #Ingest_OIDC__ClientSecret: # Your OIDC client secret
-      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document (e.g., https://authentik.yourdomain.com/application/o/your-app/.well-known/openid-configuration)
-                                   # Usually not needed if Authority is set correctly.
+      TZ: Europe/Berlin
+      Ingest_Upscaler__PreferredGpuBackend: Auto
+      Ingest_Upscaler__SelectedDeviceIndex: 1 # 1 = first GPU, 0 = CPU
+      Ingest_Upscaler__UseFp16: true
     volumes:
-      - /path/to/store/appdata:/data # for storing the database, logs, and Python environment
-      - /path/to/store/models:/models # for storing the upscaling models.
-      # ... other folders you want to be able to access from the container
+      - /path/to/store/appdata:/data
+      - /path/to/store/models:/models
       - /path/to/ingest:/ingest
       - /path/to/target:/target
     ports:
-      - 8080:8080 # the web interface will be available on this port
-    #user: '1000:1000' # change the user/group for improved security. Note: The user must be part of the 'video' group and have the correct permissions for its mount points.
-    # Make sure you have the nvidia-container-toolkit installed on your host.
+      - 8080:8080
+      - 8081:8081
+    devices:
+      - /dev/dri # GPU access for Vulkan (Mesa RADV / ANV)
+```
+
+### NVIDIA GPU (CUDA)
+
+For NVIDIA GPUs (e.g. RTX 3060, RTX 40-series), use the `:latest-cuda` image for maximum performance with TensorRT and CUDA:
+
+```yaml
+services:
+  mangaingestwithupscaling:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-cuda
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Berlin # your timezone
+      Ingest_Upscaler__PreferredGpuBackend: CUDA
+      Ingest_Upscaler__SelectedDeviceIndex: 1 # 1 = first GPU, 0 = CPU
+      Ingest_Upscaler__UseFp16: true
+    volumes:
+      - /path/to/store/appdata:/data
+      - /path/to/store/models:/models
+      - /path/to/ingest:/ingest
+      - /path/to/target:/target
+    ports:
+      - 8080:8080
     deploy:
       resources:
         reservations:
@@ -91,112 +113,35 @@ services:
               capabilities: [gpu]
 ```
 
-### AMD GPU (ROCm)
-
-Use the same image and set `Ingest_Upscaler__PreferredGpuBackend: ROCm`:
-
-```yaml
-services:
-  mangaingestwithupscaling:
-    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
-    restart: unless-stopped
-    environment:
-      TZ: #your timezone here
-      Ingest_Upscaler__PreferredGpuBackend: ROCm    # installs ROCm PyTorch on first startup
-      Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
-      Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
-      # Kavita integration
-      #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
-      #Ingest_Kavita__ApiKey: #Your API key here
-      #Ingest_Kavita__Enabled: True # defaults to false
-    volumes:
-      - /path/to/store/appdata:/data # for storing the database, logs, and Python environment
-      - /path/to/store/models:/models # for storing the upscaling models.
-      # ... other folders you want to be able to access from the container
-      - /path/to/ingest:/ingest
-      - /path/to/target:/target
-    ports:
-      - 8080:8080 # the web interface will be available on this port
-      - 8081:8081 # the gRPC interface will be available on this port (necessary for the remote worker)
-    #user: '1000:1000' # change the user/group for improved security. Note: The user must be part of the 'video' group and have the correct permissions for its mount points.
-    # The following lines are necessary to run the container with a ROCm-compatible AMD GPU.
-    # See https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html for more information.
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    security_opt:
-      - seccomp:unconfined
-```
-
-> **Note:** The ROCm PyTorch build is large. On first startup, it will be downloaded and installed into your data volume. This may take several minutes.
-
-I do not have an AMD GPU, so I cannot test this. If you have any issues, please open an issue.
-
-### Intel Arc GPU (XPU)
-
-Use the same image and set `Ingest_Upscaler__PreferredGpuBackend: XPU`:
-
-```yaml
-services:
-  mangaingestwithupscaling:
-    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
-    restart: unless-stopped
-    environment:
-      TZ: #your timezone here
-      Ingest_Upscaler__PreferredGpuBackend: XPU    # installs Intel XPU PyTorch on first startup
-      Ingest_Upscaler__SelectedDeviceIndex: 0
-      # ... other configuration
-    volumes:
-      - /path/to/store/appdata:/data
-      - /path/to/store/models:/models
-      - /path/to/ingest:/ingest
-      - /path/to/target:/target
-    ports:
-      - 8080:8080
-```
-
-### Switching GPU Backends
-
-To switch backends (e.g. from CUDA to CUDA 12.8), change the `Ingest_Upscaler__PreferredGpuBackend` environment variable and restart the container. The old Python environment will be replaced automatically.
-
-| Value | Backend |
-|---|---|
-| `CUDA` | NVIDIA (CUDA 11.8) — default |
-| `CUDA_12_8` | NVIDIA (CUDA 12.8) |
-| `ROCm` | AMD |
-| `XPU` | Intel Arc |
-| `CPU` | CPU-only fallback |
-
 See [GPU Backend Configuration](./docs/GPU_BACKEND_CONFIGURATION.md) for full details.
 
-### Deprecated Backend-Specific Images
+### Remote-Only Mode
 
-The variant image tags (`:latest-cuda-12.8`, `:latest-rocm`, `:latest-xpu`) are **deprecated** and will be removed in a future release. Migrate to the standard image with the appropriate `Ingest_Upscaler__PreferredGpuBackend` environment variable as shown above.
-
-### Remote-Only Variant
-
-For users who want to run the server component without any machine learning dependencies and handle upscaling exclusively through remote workers, a special "remote-only" variant is available:
+If you already run a GPU machine for something else, you can keep the server itself free of any
+machine-learning work by pointing it at [remote workers](./docs/REMOTE_WORKER.md) instead. Use the
+standard image and switch local upscaling off:
 
 ```yaml
 version: '3.9'
 
 services:
   mangaingestwithupscaling:
-    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-remote-only
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
     restart: unless-stopped
     environment:
       TZ: #your timezone here
-      Ingest_Upscaler__RemoteOnly: true # This is set automatically in the remote-only image
+      # Enable remote-only mode - disables local upscaling
+      Ingest_Upscaler__RemoteOnly: true
       # Kavita integration
       #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
       #Ingest_Kavita__ApiKey: #Your API key here
       #Ingest_Kavita__Enabled: True # defaults to false
       # OIDC Authentication (v0.12.0+)
-      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
-      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
-      #Ingest_OIDC__ClientId: # Your OIDC client ID
-      #Ingest_OIDC__ClientSecret: # Your OIDC client secret
-      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document
+      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC
+      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/manga/)
+      #Ingest_OIDC__ClientId: # Your OIDC provider's client ID
+      #Ingest_OIDC__ClientSecret: # Your OIDC provider's client secret
+      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to your OIDC discovery document
     volumes:
       - /path/to/store/appdata:/data # for storing the database and logs
       # ... other folders you want to be able to access from the container
@@ -208,13 +153,10 @@ services:
     #user: '1000:1000' # change the user/group for improved security
 ```
 
-**Benefits of the Remote-Only Variant:**
-- **Smaller image size**: No PyTorch or ML dependencies included
-- **Lower resource requirements**: Perfect for running on resource-constrained servers
-- **Cleaner separation**: All upscaling is handled by dedicated remote worker machines
-- **Automatic configuration**: `RemoteOnly` is pre-configured to `true`
-
-This variant requires you to set up one or more [remote workers](./docs/REMOTE_WORKER.md) on separate machines with GPU capabilities to handle the actual upscaling tasks.
+With this set, the server loads no model at all and needs no GPU access; the `/models` volume can
+be dropped. All upscaling is then handled by one or more
+[remote workers](./docs/REMOTE_WORKER.md) on separate machines with GPU capabilities. See
+[Remote-Only Configuration](./docs/REMOTE_ONLY_VARIANT.md) for the full option list.
 
 ### OIDC Configuration (v0.12.0+)
 

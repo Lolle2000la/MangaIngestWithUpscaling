@@ -13,7 +13,6 @@ services:
         required: false
     environment:
       - TZ=Etc/UTC
-      - Ingest_Upscaler__PythonEnvironmentDirectory=/data/pyenv
       - Ingest_Kavita__BaseUrl=http://kavita:5000
       - Ingest_Kavita__ApiKey=8d5f292a-a1ef-4557-8986-6319ccc80eb9 # Generate your own for your local testing
       - Ingest_Kavita__Enabled=True # Generate your own for your local testing
@@ -35,12 +34,14 @@ services:
               count: 1
               capabilities: [gpu]
 
-  # Remote-only variant without ML dependencies
+  # Remote-only variant without ML dependencies: the standard image with local upscaling switched
+  # off. There is no separate image since the PyTorch removal — the ML dependencies it used to
+  # carry are the same ones the standard image loads lazily, so RemoteOnly alone is the difference.
   mangaingestwithupscaling-remote-only:
-    image: ${DOCKER_REGISTRY-}mangaingestwithupscaling-remote-only
+    image: ${DOCKER_REGISTRY-}mangaingestwithupscaling
     build:
       context: .
-      dockerfile: remoteonly.Dockerfile
+      dockerfile: src/MangaIngestWithUpscaling/Dockerfile
     environment:
       - TZ=Etc/UTC
       - Ingest_Kavita__BaseUrl=http://kavita:5000

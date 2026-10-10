@@ -1,217 +1,179 @@
-# GPU Backend Configuration
+# GPU Backend Configuration & Docker Flavors
 
 > For a complete overview of all upscaler settings in one place, see
 > [Upscaler Configuration](UPSCALER_CONFIGURATION.md).
 
-## Docker Images
+MangaIngestWithUpscaling uses a pure C# machine learning inference engine powered by **Microsoft.ML.OnnxRuntime**. There is no Python environment, no PyTorch virtual environment, and no runtime pip wheel downloads required.
 
-### Standard Image (Recommended)
+Hardware acceleration is achieved through native ONNX **Execution Providers (EP)** packaged inside two dedicated Docker images:
 
-The standard image supports all GPU backends via a single environment variable. Use it for all deployments:
+---
+
+## Docker Image Flavors
+
+| Image Tag | Execution Provider | Target Hardware | Requirements | Pre-configured `PreferredGpuBackend` |
+|---|---|---|---|---|
+| `:latest` / `:latest-dev` | **WebGPU** (Vulkan via Mesa RADV / ANV) + CPU fallback | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback | Host GPU device access (`/dev/dri`) | `WebGPU` *(built-in default)* |
+| `:latest-cuda` / `:latest-dev-cuda` | **CUDA** & **TensorRT** | NVIDIA GeForce GTX/RTX, Quadro, Tesla | NVIDIA driver + `nvidia-container-toolkit` | `CUDA` *(built-in default)* |
+
+Both flavor tags are published for both the main web application (`manga-ingest-with-upscaling`) and the standalone remote worker (`manga-ingest-with-upscaling-remote-worker`). Each container image already has `Ingest_Upscaler__PreferredGpuBackend` pre-set to its matching provider, so you do not need to configure it in Docker Compose unless overriding it.
+
+---
+
+## Configuration
+
+Upscaler hardware settings can be configured via environment variables or `appsettings.json`:
+
+### `PreferredGpuBackend`
+
+Controls which execution provider is attempted:
+
+| Value | Description |
+|---|---|
+| `Auto` *(default)* | Automatically selects the best available accelerator for your image and platform (CUDA → WebGPU → CPU on Linux, WebGPU → DirectML → CUDA on Windows) |
+| `WebGPU` | Universal GPU accelerator — Mesa RADV/ANV on Linux, Metal on macOS, Direct3D 12 on Windows (the primary path on `:latest`) |
+| `CUDA` | NVIDIA — CUDA & TensorRT (in `:latest-cuda`) |
+| `DirectML` | Windows — DirectX 12 machine learning execution provider |
+| `OpenVINO` | Intel — OpenVINO execution provider |
+| `MIGraphX` | AMD — MIGraphX execution provider (needs a build that ships the EP) |
+| `CPU` | CPU-only fallback |
+
+`MIGraphX` and `CUDA` are only selectable when the ONNX Runtime build ships them; the default
+`:latest` image does not, and selecting one there falls back to CPU. `ROCm` and `ROCm_GFX120X`
+are accepted as legacy aliases and are treated as `WebGPU` — on AMD cards the ROCm EP could not
+compile the transformer models at all, so WebGPU is the path that works.
+
+Environment variable:
+```bash
+export Ingest_Upscaler__PreferredGpuBackend=Auto
+```
+
+### `SelectedDeviceIndex`
+
+Index of the device to use:
+- `0`: CPU
+- `1`: First GPU (default)
+- `2`: Second GPU (for multi-GPU systems)
+
+Environment variable:
+```bash
+export Ingest_Upscaler__SelectedDeviceIndex=1
+```
+
+### `UseFp16`
+
+Enables half-precision (FP16) inference:
+- *(unset / null, default)*: Automatically detects hardware capability (enabled for modern GPUs, disabled on CPU or unsupported hardware)
+- `true`: Forces half-precision FP16 models
+- `false`: Forces single-precision FP32 models
+
+Environment variable:
+```bash
+export Ingest_Upscaler__UseFp16=true
+```
+
+### `UseCPU`
+
+Forces CPU execution regardless of hardware:
+- `false` *(default)*
+- `true`: Skips all GPU execution providers and uses CPU
+
+Environment variable:
+```bash
+export Ingest_Upscaler__UseCPU=false
+```
+
+---
+
+## Docker Compose Examples
+
+### Universal Image (AMD Radeon / Intel / CPU)
+
+The standard `:latest` image accelerates inference via WebGPU / Vulkan on AMD Radeon and Intel GPUs, with clean CPU fallback if no GPU is available. `PreferredGpuBackend` defaults to `WebGPU` inside this container:
 
 ```yaml
 services:
-  manga-ingest:
+  mangaingestwithupscaling:
     image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
+    restart: unless-stopped
     environment:
-      - Ingest_Upscaler__PreferredGpuBackend=CUDA      # NVIDIA (CUDA 11.8)
-      # - Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8  # NVIDIA (CUDA 12.8)
-      # - Ingest_Upscaler__PreferredGpuBackend=ROCm       # AMD
-      # - Ingest_Upscaler__PreferredGpuBackend=ROCm_GFX120X # AMD 9000-series nightly
-      # - Ingest_Upscaler__PreferredGpuBackend=XPU        # Intel Arc
-      # - Ingest_Upscaler__PreferredGpuBackend=CPU        # CPU fallback
+      TZ: Europe/Berlin
+      Ingest_Upscaler__SelectedDeviceIndex: 1
+      Ingest_Upscaler__UseFp16: true
+    volumes:
+      - /path/to/store/appdata:/data
+      - /path/to/store/models:/models
+      - /path/to/ingest:/ingest
+      - /path/to/target:/target
+    ports:
+      - 8080:8080
+      - 8081:8081
+    devices:
+      - /dev/dri # GPU access for Vulkan (Mesa RADV / ANV)
 ```
 
-The Python environment (including the GPU-specific PyTorch build) is installed automatically into your data volume on first startup, according to the configured backend.
+### NVIDIA GPU (CUDA)
 
-### Deprecated Backend-Specific Images
+Use the `:latest-cuda` (or `:latest-dev-cuda`) image for native NVIDIA CUDA & TensorRT acceleration. `PreferredGpuBackend` defaults to `CUDA` inside this container:
 
-The backend-specific image tags (`:latest-cuda-12.8`, `:latest-rocm`, `:latest-xpu`) are **deprecated** and will be removed in a future release. They now simply re-tag the standard image with a pre-set `Ingest_Upscaler__PreferredGpuBackend` value and carry no other differences.
-
-**To migrate**, replace the variant image with the standard image and set the backend via the environment variable:
-
-| Old image tag | Replacement |
-|---|---|
-| `:latest-cuda-12.8` | `:latest` + `Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8` |
-| `:latest-rocm` | `:latest` + `Ingest_Upscaler__PreferredGpuBackend=ROCm` |
-| `:latest-xpu` | `:latest` + `Ingest_Upscaler__PreferredGpuBackend=XPU` |
-
-A deprecation warning is logged on startup when using one of these variant images.
-
-## Backend Configuration Examples
-
-The enhanced Python environment management system now supports automatic detection and manual configuration of GPU backends for PyTorch using OpenGL-based GPU detection.
-
-### Configuration Options
-
-#### Automatic Detection (Default)
-```json
-{
-  "Upscaler": {
-    "PreferredGpuBackend": "Auto"
-  }
-}
+```yaml
+services:
+  mangaingestwithupscaling:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-cuda
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Berlin
+      Ingest_Upscaler__SelectedDeviceIndex: 1
+      Ingest_Upscaler__UseFp16: true
+    volumes:
+      - /path/to/store/appdata:/data
+      - /path/to/store/models:/models
+      - /path/to/ingest:/ingest
+      - /path/to/target:/target
+    ports:
+      - 8080:8080
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 ```
 
-The system will automatically detect available hardware using **Silk.NET.OpenGL**:
-- If NVIDIA GPU is detected (via OpenGL vendor/renderer strings), CUDA backend will be used
-- If AMD GPU is detected (via OpenGL vendor/renderer strings), ROCm backend will be used, or ROCm_GFX120X for newer 9000-series / gfx120X cards
-- If Intel discrete GPU is detected (Arc series), XPU backend will be used
-- If Intel integrated GPU is detected, CPU backend will be used (integrated GPUs not optimally supported for ML)
-- If no compatible GPU is found, CPU backend will be used
+---
 
-**GPU Detection Method:**
-- Creates an offscreen OpenGL context using Silk.NET.Windowing
-- Queries GPU vendor and renderer information via OpenGL
-- Matches vendor/renderer strings against known patterns:
-  - **NVIDIA**: `nvidia`, `geforce`, `quadro`, `tesla`
-  - **AMD**: `amd`, `ati`, `radeon` 
-  - **Intel discrete GPUs**: `arc`, `xe`, `dg`, `xe-hpg`, `xe-lpg`
-  - **Intel integrated GPUs**: `intel` (general Intel GPUs not matching discrete patterns)
+## Automatic Fallback & Troubleshooting
 
-### Manual Configuration
+If a configured execution provider cannot be initialized (for instance, if drivers are missing or incompatible), the application will:
+1. Log a descriptive warning explaining why the accelerator failed to initialize.
+2. Automatically fall back to CPU execution.
+3. Continue processing tasks without crashing or dropping jobs.
 
-#### Force CUDA Backend (11.8)
-```json
-{
-  "Upscaler": {
-    "PreferredGpuBackend": "CUDA"
-  }
-}
+### Black pages
+
+**Symptom:** a page that is coloured in the source comes out of the upscaler entirely black.
+
+**Cause:** every execution provider can run the conv models (all `*_ESRGAN_*`, `*_SPAN_*`), but the WebGPU EP has no kernels for the transformer architectures. Instead of reporting a missing kernel it returns a tensor of NaN for the whole page, and the fp16 output table turns each NaN into a `0` byte — a black page. Affected models: `4x_IllustrationJaNai_*FDAT_M*`, `*FDAT_XL*`, `*DAT2*` and `*HAT_L*`. The same files run correctly on CPU, on CUDA and on DirectML, so the symptom is backend-specific, not a corrupt download.
+A page reaches one of those models when `IsGrayscale` classifies it as colour. A manga page with a single coloured panel, or a cover, picks the `IllustrationJaNai_*` family; a fully grayscale page picks `MangaJaNai_*` and is unaffected.
+
+**What the app does:** before a page is upscaled, each candidate model in the preference order is given a 256×256 tile through the real tiling path. A model whose output is not finite is recorded as unusable for the device and the next candidate is tried, so a colour page is upscaled by an older ESRGAN model on a device that cannot run the transformer models at all. Each tile of the page is still checked, because a few models only fail above a certain tile size. If no candidate works, the page fails loudly instead of being written black.
+
+**The fix for this platform:** the same mechanism falls back to the *fp32 copy* of the same model. The 4x IllustrationJaNai transformer models ship twice, as an fp16 and an fp32 archive, and on WebGPU both are installed — the fp16 files keep their names, the fp32 ones gain a `_fp32` suffix (`4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx` → `…_40k_fp32.onnx`). The smaller fp16 file is preferred wherever it runs; on a device where it does not, the fp32 copy takes over at the same architecture, so a colour page is upscaled by `4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx` instead of falling back to an older ESRGAN. Everything the fp32 model costs is in the tile planner, which reads the precision off the session and halves the grid accordingly.
+
+Two consequences of the doubled install:
+
+- The models directory holds both precisions once WebGPU is the provider, roughly 0.8 GB plus 1.2 GB. Only the colour families need the fp32 copy in practice — all `MangaJaNai_*` models are conv nets and run in fp16 — but the rule is uniform so a future transformer in that set is covered too.
+- The naming is taken from the archive, so a file that the release left in fp16 keeps its `_fp16` name *inside* the fp32 package and therefore ends up as `…_fp32.onnx` while still being fp16 (`2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp32.onnx` is the known one). It is never selected: the fp16 original of that model runs on WebGPU, so the fallback is not reached.
+
+**What you can do:**
+- Nothing, if the warning is acceptable — colour pages are still upscaled, just by an older model.
+- Set `Upscaler:PreferredGpuBackend` to a provider that has the kernels (`CPU` for correctness regardless of speed, or `CUDA` on an NVIDIA card).
+- Run the upscaling on the [remote worker](./REMOTE_WORKER.md) on a machine whose accelerator can run those models, and set `Upscaler:RemoteOnly`.
+
+The warning that names the rejected model looks like this:
+
+```
+Model 4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx produced non-finite output on device 0 with the WebGPU execution provider, so it would have written a black page. Trying the next model.
 ```
 
-#### Force CUDA 12.8 Backend
-```json
-{
-  "Upscaler": {
-    "PreferredGpuBackend": "CUDA_12_8"
-  }
-}
-```
-
-#### Force ROCm Backend
-```json
-{
-  "Upscaler": {
-    "PreferredGpuBackend": "ROCm"
-  }
-}
-```
-
-#### Force ROCm GFX120X Backend
-```json
-{
-  "Upscaler": {
-    "PreferredGpuBackend": "ROCm_GFX120X"
-  }
-}
-```
-
-#### Force Intel XPU Backend
-```json
-{
-  "Upscaler": {
-    "PreferredGpuBackend": "XPU"
-  }
-}
-```
-
-#### Force CPU Backend
-```json
-{
-  "Upscaler": {
-    "PreferredGpuBackend": "CPU"
-  }
-}
-```
-
-#### Force Accept Existing Environment
-```json
-{
-  "Upscaler": {
-    "ForceAcceptExistingEnvironment": true
-  }
-}
-```
-
-This option forces the system to accept any existing Python environment without version or backend checks. This is useful for:
-- **Pre-configured systems** where dependencies should not be modified
-- **Offline environments** where package downloads are not possible
-
-Note that even if the environment is broken, no attempt at fixing it will be made. The system will continue to use the existing environment as-is. Use with caution.
-
-## Environment Tracking
-
-The system now tracks the installed backend in each Python virtual environment using a `environment_state.json` file. This includes:
-
-- **InstalledBackend**: The GPU backend that was installed (CUDA, ROCm, XPU, or CPU)
-- **CreatedAt**: When the environment was created
-- **PythonVersion**: Version of Python used
-- **InstalledPackages**: List of installed packages
-- **EnvironmentVersion**: Version of the environment configuration
-
-If the desired backend changes or the environment version is updated (indicating dependency changes), the system will automatically recreate the environment with the correct PyTorch installation.
-
-### Automatic Environment Recreation
-
-The environment will be automatically recreated when:
-1. **Backend change**: The preferred GPU backend has changed
-2. **Version update**: The environment version has been incremented (indicating dependency updates)
-3. **Missing files**: Python executable or state file is missing
-4. **State corruption**: Environment state file is corrupted or unreadable
-
-## PyTorch Installation Details
-
-### CUDA Backend (11.8)
-- Installs: `torch==2.7.1 torchvision==0.22.1` from CUDA 11.8 index
-- Compatible with NVIDIA GPUs
-
-### CUDA 12.8 Backend
-- Installs: `torch==2.11.0 torchvision==0.26.0` from CUDA 12.8 index  
-- Compatible with NVIDIA GPUs (requires CUDA 12.8+ drivers)
-- Must be manually configured (not auto-detected)
-
-### ROCm Backend  
-- Installs: `torch==2.11.0 torchvision==0.26.0` from ROCm 7.1 index
-- Compatible with AMD GPUs
-
-### ROCm GFX120X Backend
-- Installs: prerelease `torch` and `torchvision` from the AMD gfx120X nightly index
-- Compatible with AMD 9000-series / gfx120X GPUs
-
-### Intel XPU Backend
-- Installs: `torch==2.11.0 torchvision==0.26.0` from Intel XPU index
-- Compatible with Intel Arc discrete GPUs and Intel Xe GPUs
-
-### CPU Backend
-- Installs: `torch==2.11.0 torchvision==0.26.0` from CPU-only index
-- Compatible with any system
-
-## Environment Variables
-
-You can also set the backend via environment variables:
-```bash
-export Ingest_Upscaler__PreferredGpuBackend=CUDA
-export Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8
-export Ingest_Upscaler__PreferredGpuBackend=ROCm
-export Ingest_Upscaler__PreferredGpuBackend=ROCm_GFX120X
-export Ingest_Upscaler__PreferredGpuBackend=XPU
-export Ingest_Upscaler__PreferredGpuBackend=CPU
-```
-
-## Advantages of OpenGL-based Detection
-
-1. **Cross-platform**: Works on Windows, Linux, and macOS
-2. **No external dependencies**: Doesn't require command-line tools like `nvidia-smi` or `rocm-smi`
-3. **Reliable**: Uses established OpenGL APIs to query GPU information
-4. **Lightweight**: Creates minimal overhead with offscreen context
-5. **Comprehensive**: Can detect GPU information even on headless systems
-
-## Troubleshooting
-
-If GPU detection fails, the system will:
-1. Log a warning with the error details
-2. Fall back to CPU backend automatically
-3. Continue operation without interruption
-
-You can always override automatic detection by setting a specific backend in configuration.

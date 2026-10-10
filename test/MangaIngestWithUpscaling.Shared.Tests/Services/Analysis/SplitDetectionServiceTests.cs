@@ -1,21 +1,16 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
-using MangaIngestWithUpscaling.Shared.Services.Python;
-using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Analysis;
 
-/// <summary>
-/// The CLI fallback must not swallow cancellation as a per-image detection failure: the streamed
-/// detection loop uploads whatever result it is handed, so a cancelled page would be persisted as
-/// "detection failed" instead of stopping the chapter.
-/// </summary>
-[Collection("DetectServerClientLayout")]
+[Collection("SplitDetectionLayout")]
 public class SplitDetectionServiceTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("split_detect_cli").FullName;
@@ -24,11 +19,6 @@ public class SplitDetectionServiceTests : IDisposable
     public SplitDetectionServiceTests()
     {
         SplitDetectionLayout.Root = _root;
-        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.ScriptPath)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.CheckpointPath)!);
-        File.WriteAllText(SplitDetectionLayout.ScriptPath, "print('{}')");
-        File.WriteAllText(SplitDetectionLayout.CheckpointPath, "model");
-        File.WriteAllText(SplitDetectionLayout.ConfigPath, "{}");
     }
 
     public void Dispose()
@@ -43,38 +33,72 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task DetectSplitsAsync_WhenTheCliIsCancelled_RethrowsInsteadOfReturningAnErrorResult()
+    public async Task DetectSplitsAsync_WhenCancellationTokenCancelled_ThrowsOperationCanceledException()
     {
-        var detectServer = Substitute.For<IDetectServerClient>();
-        detectServer
-            .DetectAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns<Task<SplitDetectionResult>>(_ =>
-                throw new DetectServerUnavailableException("resident server down")
-            );
-
-        var python = Substitute.For<IPythonService>();
-        python
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<CancellationToken?>(),
-                Arg.Any<TimeSpan?>()
-            )
-            .Returns<Task<string>>(_ => throw new OperationCanceledException());
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        var localizer = Substitute.For<IStringLocalizer<SplitDetectionService>>();
 
         var service = new SplitDetectionService(
-            python,
-            Substitute.For<IMangaJaNaiWorkerClient>(),
-            detectServer,
-            Options.Create(new UpscalerConfig()),
+            factory,
             NullLogger<SplitDetectionService>.Instance,
-            Substitute.For<IStringLocalizer<SplitDetectionService>>()
+            localizer
         );
 
         string image = Path.Combine(_root, "page.png");
         await File.WriteAllBytesAsync(image, [1, 2, 3], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.DetectSplitsAsync(image, cancellationToken: cts.Token)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WhenFileDoesNotExist_ThrowsFileNotFoundException()
+    {
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        var localizer = Substitute.For<IStringLocalizer<SplitDetectionService>>();
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            localizer
+        );
+
+        string image = Path.Combine(_root, "non_existent.png");
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            service.DetectSplitsAsync(
+                image,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WhenModelDoesNotExist_ThrowsFileNotFoundException()
+    {
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        var localizer = Substitute.For<IStringLocalizer<SplitDetectionService>>();
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = Path.Combine(_root, "empty_models") }
+        );
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            localizer,
+            config
+        );
+
+        string image = Path.Combine(_root, "sample.png");
+        await File.WriteAllBytesAsync(image, [1, 2, 3], TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
             service.DetectSplitsAsync(
                 image,
                 cancellationToken: TestContext.Current.CancellationToken
@@ -82,3 +106,9 @@ public class SplitDetectionServiceTests : IDisposable
         );
     }
 }
+
+/// <summary>
+/// Serializes tests that mutate the process-wide <see cref="SplitDetectionLayout.Root" />.
+/// </summary>
+[CollectionDefinition("SplitDetectionLayout", DisableParallelization = true)]
+public class SplitDetectionLayoutCollection;

@@ -496,7 +496,6 @@ public sealed class PageStreamClient(
             );
 
             int current = completed.Count;
-            bool releasedUpscalerGpu = false;
             // One long-lived GetPages stream for the whole chapter (the server opens the source archive
             // once), yielding each page as it completes; detection reads the page as fetched, so no
             // preprocessing is applied.
@@ -522,10 +521,8 @@ public sealed class PageStreamClient(
                 List<SplitDetectionResult> results = await detection.DetectSplitsAsync(
                     path,
                     progressReporter.Progress,
-                    stoppingToken,
-                    releaseUpscalerGpu: !releasedUpscalerGpu
+                    stoppingToken
                 );
-                releasedUpscalerGpu = true;
 
                 // The detector echoes the temp file path it was given; report the chapter's own page
                 // name instead, or the server keys the finding to the temp name and the split can

@@ -41,7 +41,7 @@ services:
       - "8081:8081"  # gRPC for remote workers (required!)
 ```
 
-> **Note:** The standard image includes `python3` and basic OS libraries, but the heavy ML dependencies (PyTorch, etc.) are downloaded and installed at runtime into the data volume on first startup. When running in remote-only mode, this runtime venv setup is skipped entirely, so the standard image is a good fit for remote-only deployments without any size concerns.
+> **Note:** The application uses pure C# with ONNX Runtime without any Python dependencies. Setting `Ingest_Upscaler__RemoteOnly: true` disables local ML model initialization and processing entirely, routing all upscaling jobs exclusively to connected remote workers.
 
 ## Overview
 

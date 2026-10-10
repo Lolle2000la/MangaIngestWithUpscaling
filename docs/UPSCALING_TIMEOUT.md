@@ -5,8 +5,8 @@
 
 ## Overview
 
-The upscaling timeout controls how long the upscaler waits without receiving any output from the
-underlying Python process before considering the run stuck and aborting it.
+The upscaling timeout controls how long the upscaler waits without receiving progress from an
+upscale job before considering the run stuck and aborting it.
 
 The timeout is **scaled by the largest image in the archive**: the pixel count of the biggest
 image determines the inactivity budget for the entire upscaling run, ensuring that large images

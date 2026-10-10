@@ -36,10 +36,7 @@ README.md
 test_data/
 
 # Local-only artifacts that a clean CI checkout never has. Excluding them keeps local image builds
-# representative of CI and prevents baking a developer environment (e.g. a multi-GB Python venv)
-# into the image.
-#
-# Do NOT exclude *.pth/*.onnx: the submodules/manga-vert-split-nn models are tracked and needed.
+# representative of CI and prevents baking a developer environment (e.g. local venvs) into images.
 **/.venv
 **/venv
 **/__pycache__

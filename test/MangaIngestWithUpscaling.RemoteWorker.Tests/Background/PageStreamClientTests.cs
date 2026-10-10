@@ -26,7 +26,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
 /// <summary>
 /// Drives the real <see cref="PageStreamClient"/> against a stubbed gRPC server (a substituted
 /// generated client) and a fake local worker, so the fetch/upload/resume wiring is exercised
-/// without a real server, database or Python environment.
+/// without a real server, database or upscaler.
 /// </summary>
 public class PageStreamClientTests
 {
@@ -576,8 +576,7 @@ public class PageStreamClientTests
                 .DetectSplitsAsync(
                     Arg.Any<string>(),
                     Arg.Any<IProgress<UpscaleProgress>?>(),
-                    Arg.Any<CancellationToken>(),
-                    Arg.Any<bool>()
+                    Arg.Any<CancellationToken>()
                 )
                 .Returns(ci =>
                 {

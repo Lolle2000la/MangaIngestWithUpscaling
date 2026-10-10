@@ -3,7 +3,6 @@ using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.RemoteWorker.Services;
 using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -121,20 +120,6 @@ builder.Services.RegisterRemoteWorkerServices();
 
 var app = builder.Build();
 
-// Warn users who are running a deprecated backend-specific image variant
-if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
-{
-    var deprecationLogger = app.Services.GetRequiredService<ILogger<Program>>();
-    deprecationLogger.LogWarning(
-        "DEPRECATION WARNING: You are using a backend-specific Docker image variant. "
-            + "These images are deprecated and will be removed in a future release. "
-            + "Please switch to the standard image (ghcr.io/lolle2000la/manga-ingest-with-upscaling-remote-worker:latest-cuda) "
-            + "and configure your GPU backend by setting the Ingest_Upscaler__PreferredGpuBackend "
-            + "environment variable (e.g. CUDA, CUDA_12_8, ROCm, ROCm_GFX120X, XPU). "
-            + "See docs/GPU_BACKEND_CONFIGURATION.md for full migration details."
-    );
-}
-
 // Uncomment if the remote worker should at some point expose an API for configuration or status.
 // // Configure the HTTP request pipeline.
 // app.MapGet("/",
@@ -210,32 +195,6 @@ using (var scope = app.Services.CreateScope())
     }
 
     logger.LogDebug("Connection test response: {Response}", connection);
-
-    var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
-    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
-    if (!pythonService.IsPythonInstalled())
-    {
-        logger.LogError(
-            "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH."
-        );
-    }
-    else
-    {
-        logger.LogDebug("Python is installed on the system.");
-
-        Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
-
-        PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
-            upscalerConfig.Value.PythonEnvironmentDirectory,
-            upscalerConfig.Value.PreferredGpuBackend,
-            upscalerConfig.Value.ForceAcceptExistingEnvironment
-        );
-        PythonService.Environment = environment;
-
-        logger.LogDebug(
-            $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
-        );
-    }
 
     var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
     await upscaler.DownloadModelsIfNecessary(CancellationToken.None);

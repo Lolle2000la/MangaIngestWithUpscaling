@@ -70,8 +70,6 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
         TimeSpan? timeout
     ) => throw new NotSupportedException();
 
-    public Task ShutdownWorkerAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
     public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken) =>
         Task.FromResult(true);
 }

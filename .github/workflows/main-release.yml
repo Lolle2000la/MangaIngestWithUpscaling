@@ -36,9 +36,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7 
-        with:
-          submodules: 'true'
-
       - name: Set owner to lowercase
         run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
@@ -52,21 +49,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Cuda Docker image (AMD64)
+      - name: Build and push CPU Docker image (AMD64)
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-amd64
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
 
-  build-and-push-cuda128-x86:
+  build-and-push-cuda-x86:
     permissions: 
       contents: read
       packages: write 
     runs-on: ubuntu-latest
-    needs: [generate-tag, build-and-push-x86]
+    needs: [generate-tag]
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
@@ -75,9 +71,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7 
-        with:
-          submodules: 'true'
-
       - name: Set owner to lowercase
         run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
@@ -91,156 +84,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Cuda 12.8 Docker image (AMD64)
+      - name: Build and push CUDA Docker image (AMD64)
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: cuda128.Dockerfile
-          build-args: BASE_IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64
+          file: cuda.Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-cuda-12.8-amd64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-cuda-12.8-amd64
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
-
-  build-and-push-rocm-x86:
-    permissions: 
-      contents: read
-      packages: write 
-    runs-on: ubuntu-latest
-    needs: [generate-tag, build-and-push-x86]
-    env:
-      IMAGE_NAME: manga-ingest-with-upscaling
-      REGISTRY: ghcr.io
-      OWNER: lolle2000la
-      TAG: ${{ needs.generate-tag.outputs.tag }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7 
-        with:
-          submodules: 'true'
-
-      - name: Set owner to lowercase
-        run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push ROCm Docker image (AMD64)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: rocm.Dockerfile
-          build-args: BASE_IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-rocm,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-rocm
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-  build-and-push-xpu-x86:
-    permissions: 
-      contents: read
-      packages: write 
-    runs-on: ubuntu-latest
-    needs: [generate-tag, build-and-push-x86]
-    env:
-      IMAGE_NAME: manga-ingest-with-upscaling
-      REGISTRY: ghcr.io
-      OWNER: lolle2000la
-      TAG: ${{ needs.generate-tag.outputs.tag }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7 
-        with:
-          submodules: 'true'
-
-      - name: Set owner to lowercase
-        run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Intel XPU Docker image (AMD64)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: xpu.Dockerfile
-          build-args: BASE_IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-xpu,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-xpu
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-  build-and-push-remote-only-x86:
-    permissions: 
-      contents: read
-      packages: write 
-    runs-on: ubuntu-latest
-    needs: [generate-tag, build-and-push-x86]
-    env:
-      IMAGE_NAME: manga-ingest-with-upscaling
-      REGISTRY: ghcr.io
-      OWNER: lolle2000la
-      TAG: ${{ needs.generate-tag.outputs.tag }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7 
-        with:
-          submodules: 'true'
-
-      - name: Set owner to lowercase
-        run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Remote-Only Docker image (AMD64)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: remoteonly.Dockerfile
-          build-args: BASE_IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-remote-only,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-remote-only
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-cuda-amd64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-cuda-amd64
 
   create-manifest:
     permissions: 
       contents: read
       packages: write 
     runs-on: ubuntu-latest
-    needs: [build-and-push-x86, build-and-push-cuda128-x86, build-and-push-rocm-x86, build-and-push-xpu-x86, build-and-push-remote-only-x86, generate-tag]
+    needs: [build-and-push-x86, build-and-push-cuda-x86, generate-tag]
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
-      OWNER: lolle2000la
+      OWNER: ${{ github.repository_owner }}
       TAG: ${{ needs.generate-tag.outputs.tag }}
     steps:
+      - name: Set owner to lowercase
+        run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -248,20 +114,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create and push multi-arch manifest for main image
+      - name: Create and push multi-arch manifest for main image (Universal default)
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}"
           docker buildx imagetools create -t "$IMAGE:${{ env.TAG }}" -t "$IMAGE:latest-dev" \
             "$IMAGE:${{ env.TAG }}-amd64"
 
-      - name: Create and push multi-arch manifest for CUDA 12.8 image
+      - name: Create and push multi-arch manifest for CUDA image
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}"
-          docker buildx imagetools create -t "$IMAGE:${{ env.TAG }}-cuda-12.8" -t "$IMAGE:latest-dev-cuda-12.8" \
-            "$IMAGE:${{ env.TAG }}-cuda-12.8-amd64"
+          docker buildx imagetools create -t "$IMAGE:${{ env.TAG }}-cuda" -t "$IMAGE:latest-dev-cuda" \
+            "$IMAGE:${{ env.TAG }}-cuda-amd64"
 
-      - name: Create and push multi-arch manifest for XPU image
-        run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}"
-          docker buildx imagetools create -t "$IMAGE:${{ env.TAG }}-xpu" -t "$IMAGE:latest-dev-xpu" \
-            "$IMAGE:${{ env.TAG }}-xpu"

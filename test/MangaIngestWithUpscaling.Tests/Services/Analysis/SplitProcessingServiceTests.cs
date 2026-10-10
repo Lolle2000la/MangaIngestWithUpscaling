@@ -438,7 +438,7 @@ public class SplitProcessingServiceTests : IAsyncDisposable
                 OriginalHeight = 400,
                 OriginalWidth = 800,
             },
-            new() { ImagePath = "page2.png", Error = "Python process crashed" },
+            new() { ImagePath = "page2.png", Error = "detection process crashed" },
         };
 
         // Act & Assert

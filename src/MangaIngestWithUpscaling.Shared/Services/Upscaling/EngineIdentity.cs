@@ -11,47 +11,33 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// Computes an opaque, worker-supplied identity for the engine that will produce a chapter's pages.
 /// The server records the first identity a chapter is spooled with and refuses pages produced by a
 /// different engine, so a chapter cannot be assembled from pages upscaled by different models, engine
-/// code or Python runtime (which would leave a visible seam). The server never interprets the value.
+/// code or backend (which would leave a visible seam). The server never interprets the value.
 /// </summary>
 public static class EngineIdentity
 {
     /// <summary>
-    /// Version of the Python upscaler engine scripts. Increment when those scripts change. It must be
-    /// hashed explicitly because the engine code is not part of the .NET assembly version: a Python
-    /// submodule bump with no .NET build change would otherwise hash identically and let two workers
-    /// with different engine code blend pages into one chapter.
+    /// Version of the upscaler engine. Increment when engine implementation changes. It must be
+    /// hashed explicitly so changes invalidate cached engine spools across workers.
     /// </summary>
     public const int CurrentEngineVersion = 1;
 
     /// <summary>
     /// Identity of the upscaler: the effective compute mode (CPU vs GPU) and accelerator backend, the
-    /// engine code version, the installed Python environment version, the app build, the resolved
-    /// workflow (appstate2.json) and the model files under
+    /// engine code version, the app build, and the model files under
     /// <see cref="UpscalerConfig.ModelsDirectory"/>. Preprocessing is deliberately excluded: the
     /// server owns it and folds the effective options into the content identity instead, so the worker
     /// hashes only what it controls. The specific GPU index is deliberately excluded so a hand-off
     /// between two GPUs of the same backend keeps the spool; that assumes the same models produce the
-    /// same pixels on every device of a backend. The installed environment version and the engine code
-    /// version are hashed, so a different torch/runtime or package set (for example a worker that
-    /// force-accepted an older environment) or a Python-submodule bump without a .NET build change is
-    /// a different engine. Models are fingerprinted by relative path, size and a 64 KiB sample from the
-    /// head, middle and tail of each file — stable across workers with identical models and far cheaper
-    /// than hashing the ~gigabytes of weights, while still distinguishing a same-size fine-tune that
-    /// diverges past the first window.
+    /// same pixels on every device of a backend. Models are fingerprinted by relative path, size and a
+    /// 64 KiB sample from the head, middle and tail of each file — stable across workers with identical
+    /// models and far cheaper than hashing the ~gigabytes of weights, while still distinguishing a
+    /// same-size fine-tune that diverges past the first window.
     /// </summary>
     /// <param name="resolvedBackend">
-    /// The backend the Python environment actually resolved to (e.g. <c>InstalledBackend</c> after
-    /// <c>PreparePythonEnvironment</c>). Hashed instead of <see cref="UpscalerConfig.PreferredGpuBackend"/>
-    /// because the preference defaults to <see cref="GpuBackend.Auto"/>: two default deployments on
-    /// different hardware would otherwise hash the same and be allowed to blend pages. Falls back to
-    /// the preference when the environment has not been prepared yet (tests, first startup).
-    /// </param>
-    /// <param name="environmentVersion">
-    /// The <see cref="PythonEnvironment.EnvironmentVersion"/> the worker's Python environment actually
-    /// installed (its torch/runtime and package set). Hashed so two workers with the same models but a
-    /// different runtime — for example one that force-accepted an older environment — do not blend
-    /// pages. When null (the environment has not been prepared yet, e.g. in tests) a fixed marker is
-    /// hashed instead.
+    /// The accelerator backend actually resolved and in use (e.g. from <c>IOnnxSessionFactory.GetEffectiveBackend()</c>).
+    /// Hashed instead of <see cref="UpscalerConfig.PreferredGpuBackend"/> because the preference defaults to
+    /// <see cref="GpuBackend.Auto"/>: two default deployments on different hardware would otherwise hash the same
+    /// and be allowed to blend pages. Falls back to the preference when the backend has not been probed yet.
     /// </param>
     /// <param name="engineVersion">
     /// Overrides <see cref="CurrentEngineVersion"/>; intended for tests. Production callers omit it so
@@ -60,7 +46,6 @@ public static class EngineIdentity
     public static string ForUpscaler(
         UpscalerConfig config,
         GpuBackend? resolvedBackend = null,
-        int? environmentVersion = null,
         int? engineVersion = null
     )
     {
@@ -71,7 +56,13 @@ public static class EngineIdentity
         // the spool there. Hashing the worker's local copy would be wrong in both directions: it would
         // miss a server-side change and spuriously reject a worker whose local config differs.
         material
-            .Append(config.UseFp16)
+            // The configured precision, not the detected one: an explicit setting is the only part
+            // of this the operator controls, and it is what the model download is driven by. Hashing
+            // the hardware probe instead would let a worker whose detection transiently fails
+            // produce a different identity for the same configuration and re-stream the chapter.
+            // With UseFp16 = null the precision genuinely follows the device, so the probe is part
+            // of the answer and there is nothing to fall back to.
+            .Append(config.UseFp16 ?? config.ResolvedUseFp16)
             .Append('|')
             // The effective compute mode, not just UseCPU: the worker maps
             // SelectedDeviceIndex = UseCPU ? 0 : SelectedDeviceIndex, and device 0 is the CPU switch.
@@ -79,64 +70,32 @@ public static class EngineIdentity
             // from a GPU run (SelectedDeviceIndex > 0).
             .Append(config.UseCPU || config.SelectedDeviceIndex == 0)
             .Append('|')
-            // The *resolved* accelerator backend, so a CUDA and a ROCm run never mix even when both
+            // The *resolved* accelerator backend, so a CUDA and a WebGPU run never mix even when both
             // are configured Auto. The GPU index itself is not hashed, so a same-backend hand-off
             // keeps the spool.
             .Append(resolvedBackend ?? config.PreferredGpuBackend)
             .Append('|')
-            // The engine code version: a Python-submodule bump changes no .NET assembly, so it needs
-            // its own component or two different engines would hash the same.
+            // The engine code version: changes to engine execution code can be bumped explicitly
+            // or two different engines would hash the same.
             .Append(engineVersion ?? CurrentEngineVersion)
-            .Append('|')
-            // The installed Python environment version (torch/runtime + package set): a worker that
-            // force-accepted an older environment, or otherwise has a different runtime, must not
-            // blend pages with a freshly installed one.
-            .Append(environmentVersion?.ToString(CultureInfo.InvariantCulture) ?? "none")
             .Append('|')
             .Append(BuildVersion())
             .Append('|');
-        AppendFileContentHash(material, Path.Combine(AppContext.BaseDirectory, "appstate2.json"));
-
-        material.Append('|');
         AppendDirectoryFingerprint(material, config.ResolvedModelsDirectory);
 
         return Hash(material.ToString());
     }
 
     /// <summary>
-    /// Identity of the page-break detector: its version plus a content hash of the bundled checkpoint
-    /// and config files (small enough to hash exactly).
+    /// Identity of the page-break detector: its version plus a content hash of the ONNX model file.
     /// </summary>
-    public static string ForDetector()
+    public static string ForDetector(string? modelsDirectory = null)
     {
         var material = new StringBuilder("detector|");
         material.Append(SplitDetectionService.CURRENT_DETECTOR_VERSION).Append('|');
-        AppendFileContentHash(material, SplitDetectionLayout.CheckpointPath);
-        AppendFileContentHash(material, SplitDetectionLayout.ConfigPath);
+        string modelPath = SplitDetectionLayout.ResolveModelPath(modelsDirectory);
+        AppendFileContentHash(material, modelPath);
         return Hash(material.ToString());
-    }
-
-    /// <summary>
-    /// Cheap fingerprint (length and last-write time) of the deployed workflow config
-    /// (<c>appstate2.json</c>) that <see cref="MangaJaNaiWorkerSettings.EnsureSettings"/> re-reads on
-    /// every worker spawn. <see cref="ForUpscaler"/> already hashes the file's content, but callers
-    /// that cache the identity must notice a workflow edit made while the process is alive, so a later
-    /// spawn does not run a different workflow under the old identity. The models-directory walk stays
-    /// cached; only this cheap check runs per access.
-    /// </summary>
-    public static string WorkflowConfigFingerprint()
-    {
-        string path = Path.Combine(AppContext.BaseDirectory, "appstate2.json");
-        if (!File.Exists(path))
-        {
-            return "missing";
-        }
-
-        FileInfo info = new(path);
-        return string.Create(
-            CultureInfo.InvariantCulture,
-            $"{info.Length}:{info.LastWriteTimeUtc.Ticks}"
-        );
     }
 
     private static void AppendDirectoryFingerprint(StringBuilder material, string directory)

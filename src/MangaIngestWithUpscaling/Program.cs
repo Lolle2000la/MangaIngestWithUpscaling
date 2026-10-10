@@ -8,7 +8,6 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -355,21 +354,6 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 
-// Warn users who are running a deprecated image variant
-if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
-{
-    var deprecationLogger = app.Services.GetRequiredService<ILogger<Program>>();
-    deprecationLogger.LogWarning(
-        "DEPRECATION WARNING: You are using a deprecated Docker image variant. "
-            + "These images are deprecated and will be removed in a future release. "
-            + "Please switch to the standard image (ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest) "
-            + "and apply your desired configuration via environment variables. "
-            + "For GPU backend selection set Ingest_Upscaler__PreferredGpuBackend (e.g. CUDA, CUDA_12_8, ROCm, ROCm_GFX120X, XPU). "
-            + "For remote-only mode set Ingest_Upscaler__RemoteOnly=true. "
-            + "See docs/GPU_BACKEND_CONFIGURATION.md and docs/REMOTE_ONLY_VARIANT.md for full migration details."
-    );
-}
-
 // Apply migrations on startup
 using (var scope = app.Services.CreateScope())
 {
@@ -382,41 +366,16 @@ using (var scope = app.Services.CreateScope())
         logger
     );
 
-    // Also initialize python environment
+    // Initialize upscaler models
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
     if (upscalerConfig.Value.RemoteOnly)
     {
         logger.LogInformation(
-            "Upscaler is configured to run only on the remote worker, skipping local environment preparation."
+            "Upscaler is configured to run only on the remote worker, skipping local model download."
         );
     }
     else
     {
-        var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
-        if (!pythonService.IsPythonInstalled())
-        {
-            logger.LogError(
-                "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH."
-            );
-        }
-        else
-        {
-            logger.LogInformation("Python is installed on the system.");
-
-            Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
-
-            PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
-                upscalerConfig.Value.PythonEnvironmentDirectory,
-                upscalerConfig.Value.PreferredGpuBackend,
-                upscalerConfig.Value.ForceAcceptExistingEnvironment
-            );
-            PythonService.Environment = environment;
-
-            logger.LogInformation(
-                $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
-            );
-        }
-
         // Download the models once at startup instead of on every usage
         var mangaJaNaiUpscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
         await mangaJaNaiUpscaler.DownloadModelsIfNecessary(CancellationToken.None);
