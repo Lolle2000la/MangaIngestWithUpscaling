@@ -142,4 +142,81 @@ public class TinyOnnxModelTests : IDisposable
             // A leftover temp directory is not worth failing a test over.
         }
     }
+
+    [Fact]
+    public void WritePeakMaskDetector_EmitsOneRowMeanPerInputRow()
+    {
+        string path = TinyOnnxModel.WriteNearestUpscaler(CreateDir(), 2, fileName: "unused.onnx");
+        path = TinyOnnxModel.WritePeakMaskDetector(CreateDir());
+        using var session = new InferenceSession(path);
+
+        const int height = 4;
+        const int width = 3;
+        float[] rowValues = [0.0f, 0.25f, 0.5f, 1.0f];
+        var data = new float[3 * height * width];
+        for (int channel = 0; channel < 3; channel++)
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            data[channel * height * width + y * width + x] = rowValues[y];
+        }
+
+        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([
+            NamedOnnxValue.CreateFromTensor(
+                TinyOnnxModel.InputName,
+                new DenseTensor<float>(data, [1, 3, height, width])
+            ),
+        ]);
+
+        // One entry per input row, not one per column: the axis it reduces on decides which.
+        Assert.Equal(
+            rowValues,
+            outputs
+                .First(o => o.Name == TinyOnnxModel.ProbabilitiesName)
+                .AsTensor<float>()
+                .ToArray()
+        );
+        Assert.Equal(
+            [false, false, false, true],
+            outputs.First(o => o.Name == TinyOnnxModel.PeakMaskName).AsTensor<bool>().ToArray()
+        );
+    }
+
+    [Fact]
+    public void WritePeakMaskDetector_AveragesTheChannelsSoOnlyAFullRowTriggers()
+    {
+        // The detector's channel layout is what this pins: the service feeds one plane per channel,
+        // so a red-only row must read as 0.2 and not trigger, while the same value in all three
+        // planes must read as 0.6 and trigger. A layout that interleaved the channels swaps the two.
+        string path = TinyOnnxModel.WritePeakMaskDetector(CreateDir());
+        using var session = new InferenceSession(path);
+
+        var data = new float[3];
+        data[0] = 0.6f; // red plane only
+
+        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> redOnly = session.Run([
+            NamedOnnxValue.CreateFromTensor(
+                TinyOnnxModel.InputName,
+                new DenseTensor<float>(data, [1, 3, 1, 1])
+            ),
+        ]);
+        Assert.False(
+            redOnly.First(o => o.Name == TinyOnnxModel.PeakMaskName).AsTensor<bool>()[0, 0]
+        );
+        Assert.Equal(
+            0.2f,
+            redOnly.First(o => o.Name == TinyOnnxModel.ProbabilitiesName).AsTensor<float>()[0, 0],
+            4
+        );
+
+        var allChannels = new float[3];
+        Array.Fill(allChannels, 0.6f);
+        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> full = session.Run([
+            NamedOnnxValue.CreateFromTensor(
+                TinyOnnxModel.InputName,
+                new DenseTensor<float>(allChannels, [1, 3, 1, 1])
+            ),
+        ]);
+        Assert.True(full.First(o => o.Name == TinyOnnxModel.PeakMaskName).AsTensor<bool>()[0, 0]);
+    }
 }

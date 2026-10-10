@@ -30,6 +30,14 @@ internal static class TinyOnnxModel
 
     private const int ElementTypeFp32 = 1;
     private const int ElementTypeFp16 = 10;
+    private const int ElementTypeInt64 = 7;
+    private const int ElementTypeBool = 9;
+
+    // AttributeProto
+    private const int AttributeInt64 = 3;
+    private const int AttributeInt64List = 8;
+    private const int AttributeTypeInt = 2;
+    private const int AttributeTypeInts = 7;
 
     // ModelProto
     private const int IrVersion = 1;
@@ -296,6 +304,68 @@ internal static class TinyOnnxModel
 
     private const string ScaleInputName = "scales";
     private const string ZeroInputName = "zero";
+    private const string ReshapeShapeName = "shape";
+    private const string ThresholdName = "threshold";
+
+    // The tensor is [1, 3, height, width], so width and channels are the axes these are indexed on.
+    private const int WidthAxis = 3;
+    private const int ChannelsAxis = 1;
+
+    private static void WriteInitializer(
+        MemoryStream graph,
+        string name,
+        int elementType,
+        int[] dims,
+        byte[] payload
+    ) =>
+        WriteMessage(
+            graph,
+            Initializer,
+            tensor =>
+            {
+                WriteString(tensor, TensorName, name);
+                WriteVarintField(tensor, TensorDataType, (ulong)elementType);
+                foreach (int dim in dims)
+                {
+                    WriteVarintField(tensor, TensorDims, (ulong)dim);
+                }
+
+                WriteBytes(tensor, TensorRawData, payload);
+            }
+        );
+
+    private static void WriteInt64Attribute(MemoryStream node, string name, long value) =>
+        WriteMessage(
+            node,
+            Attribute,
+            attr =>
+            {
+                WriteString(attr, AttributeName, name);
+                WriteVarintField(attr, AttributeInt64, (ulong)value);
+                // The ONNX checker requires the declared type of every attribute, not just its value.
+                WriteVarintField(attr, AttributeType, AttributeTypeInt);
+            }
+        );
+
+    /// <summary>
+    /// A repeated int64 attribute, which is how opset 13's ReduceMean takes its axes. Each value is
+    /// its own field entry rather than one packed blob.
+    /// </summary>
+    private static void WriteInt64ListAttribute(MemoryStream node, string name, int[] values) =>
+        WriteMessage(
+            node,
+            Attribute,
+            attr =>
+            {
+                WriteString(attr, AttributeName, name);
+                foreach (int value in values)
+                {
+                    WriteVarintField(attr, AttributeInt64List, (ulong)value);
+                }
+
+                WriteVarintField(attr, AttributeType, AttributeTypeInts);
+            }
+        );
 
     private static void WriteAttribute(MemoryStream node, string name, string value) =>
         WriteMessage(
@@ -309,7 +379,132 @@ internal static class TinyOnnxModel
             }
         );
 
-    private static void WriteValueInfo(MemoryStream graph, int field, string name, bool fp16) =>
+    /// <summary>The peak-mask output name, which is the name the detector looks its result up by.</summary>
+    public const string PeakMaskName = "peak_mask";
+
+    /// <summary>The per-row score the detector reads its confidence from.</summary>
+    public const string ProbabilitiesName = "probabilities";
+
+    /// <summary>
+    /// Writes a model that behaves like the page-break detector: for every input row it emits the
+    /// row's mean channel value as <c>probabilities</c>, and whether that mean exceeds 0.5 as
+    /// <c>peak_mask</c>. Both outputs have one entry per input row, so the detector's edge margin,
+    /// its coordinate mapping back to the original image and its channel layout can be exercised
+    /// against an image whose rows are known.
+    /// <para>
+    /// The mean is taken over width and then over channels, so it is the mean of the whole row. That
+    /// makes it sensitive to the channel layout: a red-only row has a row mean of 0.2 and must not
+    /// trigger, while the same value in all three channels has a mean of 0.6 and must. A layout that
+    /// interleaved the channels instead of keeping a plane per channel would answer the other way
+    /// round, so the pair of assertions pins the plane layout rather than just "it runs".
+    /// </para>
+    /// </summary>
+    public static string WritePeakMaskDetector(
+        string directory,
+        string fileName = "tiny-detector.onnx"
+    ) =>
+        Write(
+            directory,
+            fileName,
+            ms =>
+            {
+                WriteVarintField(ms, IrVersion, 8);
+                WriteMessage(
+                    ms,
+                    OpsetImport,
+                    opset =>
+                    {
+                        WriteString(opset, Domain, string.Empty);
+                        WriteVarintField(opset, OpSetVersion, (ulong)OpsetVersion);
+                    }
+                );
+                WriteMessage(
+                    ms,
+                    Graph,
+                    graph =>
+                    {
+                        // rowMean = mean over width, then mean over channels: [1, 3, H, W] -> [1, 1, H, 1].
+                        // Width is axis 3 in NCHW, not 2 — indexing height there reduces over rows and
+                        // silently produces one number per column instead of one per row.
+                        WriteMessage(
+                            graph,
+                            Node,
+                            node =>
+                            {
+                                WriteString(node, NodeInput, InputName);
+                                WriteString(node, NodeOutput, "mean_over_width");
+                                WriteString(node, NodeOpType, "ReduceMean");
+                                WriteInt64ListAttribute(node, "axes", [WidthAxis]);
+                                WriteInt64Attribute(node, "keepdims", 1);
+                            }
+                        );
+                        WriteMessage(
+                            graph,
+                            Node,
+                            node =>
+                            {
+                                WriteString(node, NodeInput, "mean_over_width");
+                                WriteString(node, NodeOutput, "row_mean");
+                                WriteString(node, NodeOpType, "ReduceMean");
+                                WriteInt64ListAttribute(node, "axes", [ChannelsAxis]);
+                                WriteInt64Attribute(node, "keepdims", 1);
+                            }
+                        );
+
+                        // Reshape drops the singleton dimensions so the row mean is [1, H].
+                        WriteMessage(
+                            graph,
+                            Node,
+                            node =>
+                            {
+                                WriteString(node, NodeInput, "row_mean");
+                                WriteString(node, NodeInput, ReshapeShapeName);
+                                WriteString(node, NodeOutput, ProbabilitiesName);
+                                WriteString(node, NodeOpType, "Reshape");
+                            }
+                        );
+                        WriteMessage(
+                            graph,
+                            Node,
+                            node =>
+                            {
+                                WriteString(node, NodeInput, ProbabilitiesName);
+                                WriteString(node, NodeInput, ThresholdName);
+                                WriteString(node, NodeOutput, PeakMaskName);
+                                WriteString(node, NodeOpType, "Greater");
+                            }
+                        );
+
+                        WriteInitializer(
+                            graph,
+                            ReshapeShapeName,
+                            ElementTypeInt64,
+                            [2],
+                            BitConverter.GetBytes(1L).Concat(BitConverter.GetBytes(-1L)).ToArray()
+                        );
+                        WriteInitializer(
+                            graph,
+                            ThresholdName,
+                            ElementTypeFp32,
+                            [1],
+                            BitConverter.GetBytes(0.5f)
+                        );
+
+                        WriteValueInfo(graph, GraphInput, InputName, fp16: false);
+                        WriteValueInfo(graph, GraphOutput, PeakMaskName, fp16: false, asBool: true);
+                        WriteValueInfo(graph, GraphOutput, ProbabilitiesName, fp16: false);
+                    }
+                );
+            }
+        );
+
+    private static void WriteValueInfo(
+        MemoryStream graph,
+        int field,
+        string name,
+        bool fp16,
+        bool asBool = false
+    ) =>
         WriteMessage(
             graph,
             field,
@@ -325,11 +520,15 @@ internal static class TinyOnnxModel
                             type,
                             TensorType,
                             tensor =>
-                                WriteVarintField(
-                                    tensor,
-                                    TensorElemType,
-                                    (ulong)(fp16 ? ElementTypeFp16 : ElementTypeFp32)
-                                )
+                            {
+                                // A comparison op emits bool, and the declared type has to agree or
+                                // the graph does not load.
+                                int elementType =
+                                    asBool ? ElementTypeBool
+                                    : fp16 ? ElementTypeFp16
+                                    : ElementTypeFp32;
+                                WriteVarintField(tensor, TensorElemType, (ulong)elementType);
+                            }
                         );
                     }
                 );
