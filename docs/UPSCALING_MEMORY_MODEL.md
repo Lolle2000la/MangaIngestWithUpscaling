@@ -403,8 +403,8 @@ profile**:
 
 ```json
 {
-  "webgpu|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2": {
-    "fingerprint": "webgpu|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2",
+  "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2": {
+    "fingerprint": "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2",
     "provider": 2,
     "deviceName": "AMD Radeon RX 9070 XT (RADV GFX1201)",
     "totalDeviceMemoryBytes": 17095983104,

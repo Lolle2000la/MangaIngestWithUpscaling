@@ -59,12 +59,26 @@ public record UpscalerConfig
 
     /// <summary>
     ///     Gets the effective FP16 setting, auto-detecting hardware support if <see cref="UseFp16"/> is null.
+    ///     <para>
+    ///     Use <see cref="ResolveUseFp16"/> where the resolved execution provider is at hand: the
+    ///     probe below then answers for the provider that will actually run, instead of for whichever
+    ///     one the preference happens to name.
+    ///     </para>
     /// </summary>
-    public bool ResolvedUseFp16 =>
+    public bool ResolvedUseFp16 => ResolveUseFp16(PreferredGpuBackend);
+
+    /// <summary>
+    ///     <see cref="ResolvedUseFp16"/> for an execution provider that has already been resolved.
+    /// </summary>
+    /// <param name="resolvedBackend">
+    ///     The provider in use, e.g. from <c>IOnnxSessionFactory.GetEffectiveBackend()</c>. Pass it
+    ///     unresolved (<see cref="GpuBackend.Auto"/>) only when it has not been probed yet.
+    /// </param>
+    public bool ResolveUseFp16(GpuBackend resolvedBackend) =>
         UseFp16
         ?? Fp16CapabilityDetector.IsFp16Supported(
+            resolvedBackend,
             Math.Max(0, SelectedDeviceIndex - 1),
-            PreferredGpuBackend,
             UseCPU || SelectedDeviceIndex <= 0
         );
 

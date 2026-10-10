@@ -318,11 +318,6 @@ public class MangaJaNaiWorkerClient(
         return new UpscaleJobResult(request.Id, "success", files, sw.Elapsed.TotalSeconds);
     }
 
-    public Task ShutdownWorkerAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    public Task ShutdownWorkerAsync(bool force, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
-
     public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken)
     {
         try

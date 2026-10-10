@@ -18,7 +18,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
 /// Drives the full <see cref="RemoteTaskProcessor.ExecuteAsync"/> claim → stream loop against a
 /// stubbed server, so the consecutive-soft-failure counter and its cap are exercised end to end (not
 /// just the extracted classifier). The streaming client's manifest call is the failure point, which
-/// keeps the test independent of Python and the page protocol.
+/// keeps the test independent of the upscaler and the page protocol.
 /// </summary>
 public class RemoteTaskProcessorLoopTests
 {

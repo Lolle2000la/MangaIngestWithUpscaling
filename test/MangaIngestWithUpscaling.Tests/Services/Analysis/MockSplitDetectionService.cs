@@ -9,8 +9,7 @@ public class MockSplitDetectionService : ISplitDetectionService
     public Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
         IProgress<UpscaleProgress>? progress = null,
-        CancellationToken cancellationToken = default,
-        bool releaseUpscalerGpu = true
+        CancellationToken cancellationToken = default
     )
     {
         // Simulate some work

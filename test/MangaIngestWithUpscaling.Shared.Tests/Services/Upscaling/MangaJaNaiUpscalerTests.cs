@@ -52,6 +52,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
             );
         }
 
+        // TestCaseDisplayName is not usable in a path: xUnit renders the theory arguments in it and
+        // the quotes are an invalid character on Windows. A guid is unique per instance instead,
+        // which is all the isolation here needs.
         var config = new UpscalerConfig
         {
             UseFp16 = true,
@@ -59,20 +62,17 @@ public class MangaJaNaiUpscalerTests : IDisposable
             SelectedDeviceIndex = 0,
             RemoteOnly = false,
             PreferredGpuBackend = GpuBackend.Auto,
-            ModelsDirectory = Path.Combine(
-                Path.GetTempPath(),
-                $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
-            ),
+            ModelsDirectory = Path.Combine(Path.GetTempPath(), $"upscaler_test_{Guid.NewGuid():N}"),
             ImageFormatConversionRules = [],
             EnableSmartDownscale = false,
         };
         _mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
         _mockConfig.Value.Returns(config);
 
-        _tempDir = Path.Combine(
-            Path.GetTempPath(),
-            $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
-        );
+        // A separate directory from ModelsDirectory on purpose: the download tests seed model
+        // placeholders into this one, and sharing it with the configured models directory would let
+        // a test's own files answer for the models it is supposed to be missing.
+        _tempDir = Path.Combine(Path.GetTempPath(), $"upscaler_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
 
         _upscaler = new MangaJaNaiUpscaler(
@@ -179,7 +179,24 @@ public class MangaJaNaiUpscalerTests : IDisposable
         };
 
         var progressReports = new List<UpscaleProgress>();
-        var progress = new Progress<UpscaleProgress>(p => progressReports.Add(p));
+
+        // Progress<T> posts to the captured SynchronizationContext, so its handler does not
+        // necessarily run before Upscale returns. The handler completes the gate on the last report
+        // the mock below emits, so the await is a real signal rather than a fixed sleep that either
+        // races on a loaded machine or wastes 200 ms on a quiet one.
+        var reported = new TaskCompletionSource();
+        var progress = new Progress<UpscaleProgress>(p =>
+        {
+            lock (progressReports)
+            {
+                progressReports.Add(p);
+            }
+
+            if (p is { Total: 5, Current: 3 })
+            {
+                reported.TrySetResult();
+            }
+        });
 
         // Mock the worker client to simulate progress events
         _mockImageResize
@@ -213,19 +230,29 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Act
         await _upscaler.Upscale(inputPath, outputPath, profile, progress, cancellationToken);
 
-        // NOTE: If this test continues to fail, take into account timing issues
-        await Task.Delay(200, TestContext.Current.CancellationToken);
+        await reported.Task.WaitAsync(
+            TimeSpan.FromSeconds(30),
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.NotEmpty(progressReports);
 
         // Verify total was set
-        var totalReport = progressReports.FirstOrDefault(p => p.Total.HasValue);
+        UpscaleProgress? totalReport;
+        lock (progressReports)
+        {
+            totalReport = progressReports.FirstOrDefault(p => p.Total.HasValue);
+        }
         Assert.NotNull(totalReport);
         Assert.Equal(5, totalReport.Total!.Value);
 
         // Verify progress increments were reported
-        var progressIncrements = progressReports.Where(p => p.Current > 0).ToList();
+        List<UpscaleProgress> progressIncrements;
+        lock (progressReports)
+        {
+            progressIncrements = progressReports.Where(p => p.Current > 0).ToList();
+        }
         Assert.NotEmpty(progressIncrements);
     }
 
@@ -399,7 +426,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 cancellationToken
             );
 
-        // Verify Python service was called
+        // Verify the worker was asked to run the job
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -496,7 +523,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 cancellationToken
             );
 
-        // Verify Python service was called
+        // Verify the worker was asked to run the job
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -597,7 +624,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 cancellationToken
             );
 
-        // Verify Python service was called with the preprocessed file
+        // Verify the worker was asked to run the preprocessed file
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -661,7 +688,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 Arg.Any<CancellationToken>()
             );
 
-        // Verify Python service was called directly with the original input
+        // Verify the worker was asked to run the original input directly
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -832,45 +859,17 @@ public class MangaJaNaiUpscalerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task DownloadModelsIfNecessary_WhenModelMissing_DownloadsAndRestoresModel()
     {
-        string modelsSource = Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-            "test_data",
-            "models"
-        );
-        if (!Directory.Exists(modelsSource))
-        {
-            modelsSource = Path.GetFullPath(
-                Path.Combine(Directory.GetCurrentDirectory(), "test_data", "models")
-            );
-        }
+        // Seed every expected model except one target with a placeholder. The download path looks at
+        // names and sizes and never at contents, so a placeholder stands in for the real 3.3 GB of
+        // models that test_data/ holds — this test used to copy gigabytes across to get the same
+        // effect, which is why it could not run on a machine without that directory.
+        SeedEveryExpectedModelExcept("2x_IllustrationJaNai_V1_ESRGAN_120k.onnx");
 
-        if (!Directory.Exists(modelsSource))
-        {
-            return; // Skip if test_data not present in runtime environment
-        }
-
-        // Copy all models except one target file
         string missingModelFile = "2x_IllustrationJaNai_V1_ESRGAN_120k.onnx";
-        foreach (string file in Directory.EnumerateFiles(modelsSource))
-        {
-            if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            string fileName = Path.GetFileName(file);
-            if (!string.Equals(fileName, missingModelFile, StringComparison.OrdinalIgnoreCase))
-            {
-                File.Copy(file, Path.Combine(_tempDir, fileName), overwrite: true);
-            }
-        }
-
-        string targetMissingPath = Path.Combine(_tempDir, missingModelFile);
+        string targetMissingPath = Path.Combine(
+            _mockConfig.Value.ResolvedModelsDirectory,
+            missingModelFile
+        );
         Assert.False(File.Exists(targetMissingPath));
 
         // Act: Run download if necessary
@@ -886,44 +885,12 @@ public class MangaJaNaiUpscalerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task DownloadModelsIfNecessary_WhenPageBreakDetectorMissing_DownloadsAndRestoresModel()
     {
-        string modelsSource = Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-            "test_data",
-            "models"
+        SeedEveryExpectedModelExcept("page_break_detector.onnx");
+
+        string targetOnnxPath = Path.Combine(
+            _mockConfig.Value.ResolvedModelsDirectory,
+            "page_break_detector.onnx"
         );
-        if (!Directory.Exists(modelsSource))
-        {
-            modelsSource = Path.GetFullPath(
-                Path.Combine(Directory.GetCurrentDirectory(), "test_data", "models")
-            );
-        }
-
-        if (!Directory.Exists(modelsSource))
-        {
-            return;
-        }
-
-        // Copy all models except page_break_detector files
-        foreach (string file in Directory.EnumerateFiles(modelsSource))
-        {
-            if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            string fileName = Path.GetFileName(file);
-            if (!fileName.StartsWith("page_break_detector", StringComparison.OrdinalIgnoreCase))
-            {
-                File.Copy(file, Path.Combine(_tempDir, fileName), overwrite: true);
-            }
-        }
-
-        string targetOnnxPath = Path.Combine(_tempDir, "page_break_detector.onnx");
         Assert.False(File.Exists(targetOnnxPath));
 
         // Act: Run download
@@ -1099,5 +1066,80 @@ public class MangaJaNaiUpscalerTests : IDisposable
             .Cast<object>()
             .Select(p => (string?)p.GetType().GetProperty("PrecisionSuffix")!.GetValue(p))
             .ToList();
+    }
+
+    /// <summary>
+    /// Writes a placeholder for every model the suite expects except <paramref name="missing"/>,
+    /// including the name each package stores its files under (the fp32 packages are renamed on
+    /// extraction, see <see cref="ModelFileNames"/>). With those in place only the package that
+    /// holds the missing file is fetched, which is what the test is about; the other packages are
+    /// not, and without the placeholders the test would pull down every archive in the release.
+    /// </summary>
+    private void SeedEveryExpectedModelExcept(string missing)
+    {
+        // The configured models directory, not _tempDir: that is the directory the download step
+        // looks at, and the two are deliberately not the same.
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        foreach (
+            (List<string> Expected, string? PrecisionSuffix) package in ExpectedModelPackages()
+        )
+        {
+            foreach (string archiveName in package.Expected)
+            {
+                string onDisk = ModelFileNames.Resolve(archiveName, package.PrecisionSuffix);
+                if (
+                    !string.Equals(onDisk, missing, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(archiveName, missing, StringComparison.OrdinalIgnoreCase)
+                )
+                {
+                    File.WriteAllText(Path.Combine(modelsDirectory, onDisk), "placeholder");
+                }
+            }
+        }
+    }
+
+    private static List<(List<string> Expected, string? PrecisionSuffix)> ExpectedModelPackages()
+    {
+        var packages = new List<(List<string> Expected, string? PrecisionSuffix)>();
+        foreach (
+            var field in typeof(MangaJaNaiUpscaler)
+                .GetFields(BindingFlags.NonPublic | BindingFlags.Static)
+                .Where(f => f.Name.EndsWith("ModelPackages", StringComparison.Ordinal))
+        )
+        {
+            if (field.GetValue(null) is not System.Collections.IEnumerable packageList)
+            {
+                continue;
+            }
+
+            foreach (var package in packageList)
+            {
+                Type type = package.GetType();
+                if (
+                    type.GetProperty("ExpectedFileHashes")?.GetValue(package)
+                    is not System.Collections.IEnumerable hashes
+                )
+                {
+                    continue;
+                }
+
+                var expected = new List<string>();
+                foreach (var entry in hashes)
+                {
+                    object? key = entry.GetType().GetProperty("Key")?.GetValue(entry);
+                    if (key is string name)
+                    {
+                        expected.Add(name);
+                    }
+                }
+
+                packages.Add(
+                    (expected, type.GetProperty("PrecisionSuffix")?.GetValue(package) as string)
+                );
+            }
+        }
+
+        return packages;
     }
 }

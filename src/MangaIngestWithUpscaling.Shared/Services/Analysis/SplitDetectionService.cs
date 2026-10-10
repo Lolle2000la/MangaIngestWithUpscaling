@@ -25,8 +25,7 @@ public class SplitDetectionService(
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
         IProgress<UpscaleProgress>? progress = null,
-        CancellationToken cancellationToken = default,
-        bool releaseUpscalerGpu = true
+        CancellationToken cancellationToken = default
     )
     {
         var results = new List<SplitDetectionResult>();

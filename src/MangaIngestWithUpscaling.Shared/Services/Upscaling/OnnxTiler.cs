@@ -936,14 +936,80 @@ public static class OnnxTiler
         return (0, 0);
     }
 
+    /// <summary>
+    /// The sysfs files one DRM card's memory accounting is read from. Which vendor's files a card
+    /// uses cannot change once the card is known, so they are resolved once instead of per read:
+    /// the calibration sampler reads them every millisecond while an inference is running, and
+    /// re-resolving them cost a directory enumeration plus half a dozen existence checks per sample.
+    /// </summary>
+    private readonly record struct DrmCardFiles(
+        string CardPath,
+        string Total,
+        string Used,
+        string GttUsed
+    );
+
+    private static List<DrmCardFiles>? _drmCardFiles;
+
     private static List<(string CardPath, long Total, long Used, long GttUsed)> QueryDrmGpus()
     {
         var result = new List<(string CardPath, long Total, long Used, long GttUsed)>();
+        foreach (DrmCardFiles card in ResolveDrmCardFiles())
+        {
+            long total = ReadSysfsLong(card.Total);
+            if (total <= 0)
+            {
+                continue;
+            }
+
+            result.Add(
+                (card.CardPath, total, ReadSysfsLong(card.Used), ReadSysfsLong(card.GttUsed))
+            );
+        }
+
+        return result;
+    }
+
+    private static long ReadSysfsLong(string path)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                return 0;
+            }
+
+            return long.TryParse(
+                File.ReadAllText(path).Trim(),
+                CultureInfo.InvariantCulture,
+                out long value
+            )
+                ? value
+                : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static List<DrmCardFiles> ResolveDrmCardFiles()
+    {
+        // Cached per process. A card that disappears becomes unreadable rather than wrongly listed,
+        // and a card that appears late is picked up because the list starts out empty on a host
+        // where nothing was found yet — which is the only transition that matters for a process
+        // that would be reading sysfs at all.
+        if (_drmCardFiles is { Count: > 0 })
+        {
+            return _drmCardFiles;
+        }
+
+        var files = new List<DrmCardFiles>();
         try
         {
             if (!Directory.Exists("/sys/class/drm"))
             {
-                return result;
+                return files;
             }
 
             var cardDirs = Directory
@@ -952,7 +1018,7 @@ public static class OnnxTiler
                 .OrderBy(d => d)
                 .ToList();
 
-            foreach (var card in cardDirs)
+            foreach (string card in cardDirs)
             {
                 string deviceDir = Path.Combine(card, "device");
                 if (!Directory.Exists(deviceDir))
@@ -960,118 +1026,31 @@ public static class OnnxTiler
                     continue;
                 }
 
-                long total = 0;
-                long used = 0;
-                long gtt = 0;
-
                 // AMD GPU sysfs paths
-                string amdTotalPath = Path.Combine(deviceDir, "mem_info_vram_total");
-                string amdUsedPath = Path.Combine(deviceDir, "mem_info_vram_used");
-                string amdGttPath = Path.Combine(deviceDir, "mem_info_gtt_used");
+                string amdTotal = Path.Combine(deviceDir, "mem_info_vram_total");
+                string amdUsed = Path.Combine(deviceDir, "mem_info_vram_used");
+                string amdGtt = Path.Combine(deviceDir, "mem_info_gtt_used");
 
-                if (
-                    File.Exists(amdTotalPath)
-                    && long.TryParse(
-                        File.ReadAllText(amdTotalPath).Trim(),
-                        CultureInfo.InvariantCulture,
-                        out long amdTotal
-                    )
-                    && amdTotal > 0
-                )
+                if (File.Exists(amdTotal))
                 {
-                    total = amdTotal;
-                    if (
-                        File.Exists(amdUsedPath)
-                        && long.TryParse(
-                            File.ReadAllText(amdUsedPath).Trim(),
-                            CultureInfo.InvariantCulture,
-                            out long amdUsed
-                        )
-                    )
-                    {
-                        used = amdUsed;
-                    }
-                    if (
-                        File.Exists(amdGttPath)
-                        && long.TryParse(
-                            File.ReadAllText(amdGttPath).Trim(),
-                            CultureInfo.InvariantCulture,
-                            out long amdGtt
-                        )
-                    )
-                    {
-                        gtt = amdGtt;
-                    }
-                }
-                else
-                {
-                    // Intel Xe / i915 sysfs paths
-                    string intelTile0Total = Path.Combine(
-                        deviceDir,
-                        "tile0",
-                        "memory0",
-                        "total_bytes"
-                    );
-                    string intelTile0Alloc = Path.Combine(
-                        deviceDir,
-                        "tile0",
-                        "memory0",
-                        "alloc_bytes"
-                    );
-                    string intelLmemTotal = Path.Combine(deviceDir, "lmem_total_bytes");
-                    string intelLmemAlloc = Path.Combine(deviceDir, "lmem_alloc_bytes");
-
-                    if (
-                        File.Exists(intelTile0Total)
-                        && long.TryParse(
-                            File.ReadAllText(intelTile0Total).Trim(),
-                            CultureInfo.InvariantCulture,
-                            out long itTotal
-                        )
-                        && itTotal > 0
-                    )
-                    {
-                        total = itTotal;
-                        if (
-                            File.Exists(intelTile0Alloc)
-                            && long.TryParse(
-                                File.ReadAllText(intelTile0Alloc).Trim(),
-                                CultureInfo.InvariantCulture,
-                                out long itAlloc
-                            )
-                        )
-                        {
-                            used = itAlloc;
-                        }
-                    }
-                    else if (
-                        File.Exists(intelLmemTotal)
-                        && long.TryParse(
-                            File.ReadAllText(intelLmemTotal).Trim(),
-                            CultureInfo.InvariantCulture,
-                            out long ilTotal
-                        )
-                        && ilTotal > 0
-                    )
-                    {
-                        total = ilTotal;
-                        if (
-                            File.Exists(intelLmemAlloc)
-                            && long.TryParse(
-                                File.ReadAllText(intelLmemAlloc).Trim(),
-                                CultureInfo.InvariantCulture,
-                                out long ilAlloc
-                            )
-                        )
-                        {
-                            used = ilAlloc;
-                        }
-                    }
+                    files.Add(new DrmCardFiles(card, amdTotal, amdUsed, amdGtt));
+                    continue;
                 }
 
-                if (total > 0)
+                // Intel Xe / i915 sysfs paths. Either family can be present; the first one that
+                // reports a total is the one this card uses.
+                string intelTile0Total = Path.Combine(deviceDir, "tile0", "memory0", "total_bytes");
+                string intelTile0Alloc = Path.Combine(deviceDir, "tile0", "memory0", "alloc_bytes");
+                string intelLmemTotal = Path.Combine(deviceDir, "lmem_total_bytes");
+                string intelLmemAlloc = Path.Combine(deviceDir, "lmem_alloc_bytes");
+
+                if (File.Exists(intelTile0Total))
                 {
-                    result.Add((card, total, used, gtt));
+                    files.Add(new DrmCardFiles(card, intelTile0Total, intelTile0Alloc, ""));
+                }
+                else if (File.Exists(intelLmemTotal))
+                {
+                    files.Add(new DrmCardFiles(card, intelLmemTotal, intelLmemAlloc, ""));
                 }
             }
         }
@@ -1080,7 +1059,12 @@ public static class OnnxTiler
             // Ignore DRM sysfs read errors
         }
 
-        return result;
+        if (files.Count > 0)
+        {
+            _drmCardFiles = files;
+        }
+
+        return files;
     }
 
     private static (long Total, long Used)? TryGetNvidiaGpuMemory(int deviceId)
@@ -1320,115 +1304,55 @@ public static class OnnxTiler
         Task<byte[]>? prevDecodeTask = null;
         TileJob prevJob = default;
 
-        try
+        for (int i = 0; i < tileJobs.Count; i++)
         {
-            for (int i = 0; i < tileJobs.Count; i++)
+            cancellationToken.ThrowIfCancellationRequested();
+            var currentJob = tileJobs[i];
+
+            var (inVal, effPaddedW, effPaddedH) = nextInputTask.GetAwaiter().GetResult();
+
+            if (i + 1 < tileJobs.Count)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var currentJob = tileJobs[i];
-
-                var (inVal, effPaddedW, effPaddedH) = nextInputTask.GetAwaiter().GetResult();
-
-                if (i + 1 < tileJobs.Count)
-                {
-                    var nextJob = tileJobs[i + 1];
-                    nextInputTask = Task.Run(
-                        () =>
-                        {
-                            byte[] nextCrop = ExtractCrop(
-                                rgbBytes,
-                                width,
-                                nextJob.PaddedX,
-                                nextJob.PaddedY,
-                                nextJob.PaddedW,
-                                nextJob.PaddedH
-                            );
-                            return PrepareInputTensor(
-                                nextCrop,
-                                nextJob.PaddedW,
-                                nextJob.PaddedH,
-                                uniformTargetW,
-                                uniformTargetH,
-                                elementType,
-                                cancellationToken
-                            );
-                        },
-                        cancellationToken
-                    );
-                }
-
-                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([
-                    inVal,
-                ]);
-
-                if (prevDecodeTask != null)
-                {
-                    byte[] prevBytes = prevDecodeTask.GetAwaiter().GetResult();
-                    var prevOverlap = new TileOverlap(
-                        prevJob.PadLeft * scale,
-                        prevJob.PadRight * scale
-                    );
-                    currentRowBlender!.AddTile(
-                        prevBytes,
-                        prevJob.PaddedW * scale,
-                        prevJob.PaddedH * scale,
-                        prevOverlap
-                    );
-
-                    if (prevJob.IsLastInRow)
-                    {
-                        imageBlender.AddTile(
-                            currentRowBlender.GetResult(),
-                            outWidth,
-                            prevJob.PaddedH * scale,
-                            currentRowOverlap
-                        );
-                        currentRowBlender = null;
-                    }
-                }
-
-                if (currentRowBlender == null)
-                {
-                    currentRowBlender = new TileBlender(
-                        outWidth,
-                        currentJob.PaddedH * scale,
-                        3,
-                        BlendDirection.Horizontal
-                    );
-                    currentRowOverlap = new TileOverlap(
-                        currentJob.PadTop * scale,
-                        currentJob.PadBottom * scale
-                    );
-                }
-
-                prevJob = currentJob;
-                prevDecodeTask = Task.Run(
+                var nextJob = tileJobs[i + 1];
+                nextInputTask = Task.Run(
                     () =>
-                        DecodeOutputTensor(
-                            outputs,
-                            currentJob.PaddedW,
-                            currentJob.PaddedH,
-                            effPaddedW,
-                            effPaddedH,
-                            scale,
+                    {
+                        byte[] nextCrop = ExtractCrop(
+                            rgbBytes,
+                            width,
+                            nextJob.PaddedX,
+                            nextJob.PaddedY,
+                            nextJob.PaddedW,
+                            nextJob.PaddedH
+                        );
+                        return PrepareInputTensor(
+                            nextCrop,
+                            nextJob.PaddedW,
+                            nextJob.PaddedH,
+                            uniformTargetW,
+                            uniformTargetH,
+                            elementType,
                             cancellationToken
-                        ),
+                        );
+                    },
                     cancellationToken
                 );
             }
 
+            IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([inVal]);
+
             if (prevDecodeTask != null)
             {
-                byte[] lastBytes = prevDecodeTask.GetAwaiter().GetResult();
-                var lastOverlap = new TileOverlap(
+                byte[] prevBytes = prevDecodeTask.GetAwaiter().GetResult();
+                var prevOverlap = new TileOverlap(
                     prevJob.PadLeft * scale,
                     prevJob.PadRight * scale
                 );
                 currentRowBlender!.AddTile(
-                    lastBytes,
+                    prevBytes,
                     prevJob.PaddedW * scale,
                     prevJob.PaddedH * scale,
-                    lastOverlap
+                    prevOverlap
                 );
 
                 if (prevJob.IsLastInRow)
@@ -1439,12 +1363,60 @@ public static class OnnxTiler
                         prevJob.PaddedH * scale,
                         currentRowOverlap
                     );
+                    currentRowBlender = null;
                 }
             }
+
+            if (currentRowBlender == null)
+            {
+                currentRowBlender = new TileBlender(
+                    outWidth,
+                    currentJob.PaddedH * scale,
+                    3,
+                    BlendDirection.Horizontal
+                );
+                currentRowOverlap = new TileOverlap(
+                    currentJob.PadTop * scale,
+                    currentJob.PadBottom * scale
+                );
+            }
+
+            prevJob = currentJob;
+            prevDecodeTask = Task.Run(
+                () =>
+                    DecodeOutputTensor(
+                        outputs,
+                        currentJob.PaddedW,
+                        currentJob.PaddedH,
+                        effPaddedW,
+                        effPaddedH,
+                        scale,
+                        cancellationToken
+                    ),
+                cancellationToken
+            );
         }
-        catch
+
+        if (prevDecodeTask != null)
         {
-            throw;
+            byte[] lastBytes = prevDecodeTask.GetAwaiter().GetResult();
+            var lastOverlap = new TileOverlap(prevJob.PadLeft * scale, prevJob.PadRight * scale);
+            currentRowBlender!.AddTile(
+                lastBytes,
+                prevJob.PaddedW * scale,
+                prevJob.PaddedH * scale,
+                lastOverlap
+            );
+
+            if (prevJob.IsLastInRow)
+            {
+                imageBlender.AddTile(
+                    currentRowBlender.GetResult(),
+                    outWidth,
+                    prevJob.PaddedH * scale,
+                    currentRowOverlap
+                );
+            }
         }
 
         return imageBlender.GetResult();

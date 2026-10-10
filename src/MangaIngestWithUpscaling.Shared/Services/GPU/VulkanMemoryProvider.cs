@@ -52,6 +52,7 @@ public static class VulkanMemoryProvider
     private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES = 1000083000;
     private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT = 1000237000;
     private const uint VK_MEMORY_HEAP_DEVICE_LOCAL_BIT = 0x00000001;
+    private const uint VK_PHYSICAL_DEVICE_TYPE_CPU = 4;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct VkApplicationInfo
@@ -255,19 +256,37 @@ public static class VulkanMemoryProvider
     }
 
     /// <summary>
-    /// Gets the count of discovered Vulkan physical devices.
+    /// Gets the number of accelerators — the physical devices minus the software rasterizers, so
+    /// this is what <see cref="QueryDevice"/> indexes and what an out-of-range accelerator index is
+    /// compared against.
     /// </summary>
     public static int DeviceCount
     {
         get
         {
             EnsureInitialized();
-            return _physicalDevices?.Length ?? 0;
+            if (!IsAvailable || _physicalDevices == null || _deviceTypes == null)
+            {
+                return 0;
+            }
+
+            int accelerators = 0;
+            for (int i = 0; i < _physicalDevices.Length; i++)
+            {
+                if (_deviceTypes[i] != VK_PHYSICAL_DEVICE_TYPE_CPU)
+                {
+                    accelerators++;
+                }
+            }
+
+            return accelerators;
         }
     }
 
     /// <summary>
-    /// Queries memory metrics for all discovered Vulkan devices.
+    /// Queries memory metrics for every accelerator, indexed by accelerator index so that
+    /// <c>QueryAllDevices()[i]</c> is <c>QueryDevice(i)</c>. Software rasterizers are not listed:
+    /// they are not accelerators and are not selectable as a device.
     /// </summary>
     public static IReadOnlyList<VulkanGpuMemory> QueryAllDevices()
     {
@@ -277,11 +296,10 @@ public static class VulkanMemoryProvider
             return Array.Empty<VulkanGpuMemory>();
         }
 
-        var list = new List<VulkanGpuMemory>(_physicalDevices.Length);
-        for (int i = 0; i < _physicalDevices.Length; i++)
+        var list = new List<VulkanGpuMemory>(DeviceCount);
+        for (int accelerator = 0; accelerator < DeviceCount; accelerator++)
         {
-            var mem = QueryDeviceInternal(i);
-            if (mem != null)
+            if (QueryDevice(accelerator) is VulkanGpuMemory mem)
             {
                 list.Add(mem);
             }
@@ -291,62 +309,106 @@ public static class VulkanMemoryProvider
     }
 
     /// <summary>
-    /// Queries memory metrics (total VRAM, driver budget, used VRAM) for the specified Vulkan device.
-    /// Returns null if Vulkan is unavailable or the device index is out of range.
+    /// Queries memory metrics (total VRAM, driver budget, used VRAM) for the specified accelerator.
+    /// Returns null if Vulkan is unavailable or no accelerator exists at all.
     /// </summary>
     public static VulkanGpuMemory? QueryDevice(int deviceIndex = 0)
     {
         EnsureInitialized();
-        if (!IsAvailable || _physicalDevices == null)
-        {
-            return null;
-        }
 
-        int targetIndex =
-            (deviceIndex >= 0 && deviceIndex < _physicalDevices.Length) ? deviceIndex : 0;
-
-        return QueryDeviceInternal(targetIndex);
+        int targetIndex = ResolveGpuIndex(deviceIndex);
+        return targetIndex < 0 ? null : QueryDeviceInternal(targetIndex);
     }
 
     /// <summary>
-    /// Checks whether the specified Vulkan physical device is a software CPU device (e.g. llvmpipe, lavapipe).
+    /// Maps an accelerator device index to the Vulkan physical device it refers to, or -1 when the
+    /// host has no accelerator at all.
+    /// <para>
+    /// The two indices are not the same space. <c>vkEnumeratePhysicalDevices</c> lists every
+    /// physical device the driver exposes, including the software rasterizers (lavapipe, llvmpipe),
+    /// while an accelerator index counts the GPUs the inference runtime can select. Indexing the
+    /// Vulkan list with an accelerator index therefore depends on whether a software device happens
+    /// to sort first — with no software device installed the two agree, so the mistake is invisible
+    /// exactly on the machines that are easiest to test on.
+    /// </para>
+    /// <para>
+    /// An index past the last accelerator resolves to the first one, which is the clamp the rest of
+    /// this class already applied to an out-of-range index: a misconfigured device index should keep
+    /// working rather than silently falling off the list. What it must not do is land on a different
+    /// accelerator than the one that was asked for.
+    /// </para>
     /// </summary>
-    public static bool IsCpuDevice(int deviceIndex = 0)
+    public static int ResolveGpuIndex(int acceleratorIndex)
     {
         EnsureInitialized();
         if (!IsAvailable || _physicalDevices == null || _deviceTypes == null)
         {
-            return false;
+            return -1;
         }
 
-        int targetIndex =
-            (deviceIndex >= 0 && deviceIndex < _physicalDevices.Length) ? deviceIndex : 0;
+        if (acceleratorIndex < 0)
+        {
+            acceleratorIndex = 0;
+        }
 
-        return _deviceTypes[targetIndex] == 4; // VK_PHYSICAL_DEVICE_TYPE_CPU
+        int first = -1;
+        int seen = 0;
+        for (int i = 0; i < _physicalDevices.Length; i++)
+        {
+            if (_deviceTypes[i] == VK_PHYSICAL_DEVICE_TYPE_CPU)
+            {
+                continue;
+            }
+
+            if (seen == acceleratorIndex)
+            {
+                return i;
+            }
+
+            if (first < 0)
+            {
+                first = i;
+            }
+
+            seen++;
+        }
+
+        return first;
     }
 
     /// <summary>
-    /// Checks whether the specified Vulkan physical device supports native 16-bit floating point (FP16) arithmetic.
-    /// Returns false if Vulkan is unavailable, the device is a software CPU rasterizer, or FP16 is not supported.
+    /// Checks whether the specified accelerator is a software CPU device (e.g. llvmpipe, lavapipe).
     /// </summary>
-    public static bool SupportsFp16(int deviceIndex = 0)
+    public static bool IsCpuDevice(int acceleratorIndex = 0)
     {
-        EnsureInitialized();
-        if (!IsAvailable || _physicalDevices == null)
+        int targetIndex = ResolveGpuIndex(acceleratorIndex);
+        if (targetIndex < 0)
         {
             return false;
         }
 
-        int targetIndex =
-            (deviceIndex >= 0 && deviceIndex < _physicalDevices.Length) ? deviceIndex : 0;
+        return _deviceTypes![targetIndex] == VK_PHYSICAL_DEVICE_TYPE_CPU;
+    }
+
+    /// <summary>
+    /// Checks whether the specified accelerator supports native 16-bit floating point (FP16) arithmetic.
+    /// Returns false if Vulkan is unavailable, the accelerator is a software CPU rasterizer, or FP16 is not supported.
+    /// </summary>
+    public static bool SupportsFp16(int acceleratorIndex = 0)
+    {
+        int targetIndex = ResolveGpuIndex(acceleratorIndex);
+        if (targetIndex < 0)
+        {
+            return false;
+        }
 
         // Disqualify CPU software rasterizers
-        if (IsCpuDevice(targetIndex))
+        if (IsCpuDevice(acceleratorIndex))
         {
             return false;
         }
 
-        IntPtr dev = _physicalDevices[targetIndex];
+        IntPtr dev = _physicalDevices![targetIndex];
         if (dev == IntPtr.Zero)
         {
             return false;

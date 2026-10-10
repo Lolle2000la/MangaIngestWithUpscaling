@@ -57,6 +57,15 @@ public sealed class DeviceMemoryCalibrator(
     private static readonly Lock BenchmarkGate = new();
     private readonly SemaphoreSlim asyncGate = new(1, 1);
 
+    /// <summary>
+    /// Fingerprints the benchmark has already been attempted for and failed on, so it is not
+    /// retried for every page. Without this, a models directory the profile cannot be written to
+    /// (a read-only volume, a container running as an arbitrary uid) makes <see cref="GetOrCalibrateAsync"/>
+    /// return null forever — and every page pays three inferences plus a session teardown to reach it.
+    /// Scoped to the process: a worker that skips a chapter because of it re-benchmarks on the next.
+    /// </summary>
+    private readonly HashSet<string> _unsupported = new(StringComparer.Ordinal);
+
     public async Task<DeviceMemoryProfile?> GetOrCalibrateAsync(
         int deviceId,
         string modelsDirectory,
@@ -93,19 +102,46 @@ public sealed class DeviceMemoryCalibrator(
                 return null;
             }
 
-            return RunBenchmark(deviceId, modelsDirectory, fingerprint);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Calibration is an optimisation: never fail an upscale because the benchmark failed.
-            logger.LogWarning(ex, "Device memory benchmark failed; using built-in coefficients");
-            return null;
+            DeviceMemoryProfile? profile;
+            try
+            {
+                profile = RunBenchmark(deviceId, modelsDirectory, fingerprint);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (!config.Value.RecalibrateDeviceMemory)
+                {
+                    RecordUnusable(fingerprint);
+                }
+
+                logger.LogWarning(
+                    ex,
+                    "Device memory benchmark failed; using built-in coefficients"
+                );
+                return null;
+            }
+
+            if (profile is null && !config.Value.RecalibrateDeviceMemory)
+            {
+                RecordUnusable(fingerprint);
+            }
+
+            // A measured profile is deliberately not recorded here. Recording it would make the
+            // next page take the "already tried" short-cut and get null on a models directory the
+            // profile could not be written back to, throwing away a measurement that worked.
+            return profile;
         }
         finally
         {
             asyncGate.Release();
         }
     }
+
+    /// <summary>
+    /// Remembers that the benchmark produced nothing usable for this fingerprint, so it is not run
+    /// again for every page.
+    /// </summary>
+    private void RecordUnusable(string fingerprint) => _unsupported.Add(fingerprint);
 
     /// <summary>
     /// Identity of the measured configuration. The execution provider comes from the session factory

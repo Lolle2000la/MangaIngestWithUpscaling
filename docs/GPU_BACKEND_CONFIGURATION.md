@@ -30,10 +30,18 @@ Controls which execution provider is attempted:
 
 | Value | Description |
 |---|---|
-| `Auto` *(default)* | Automatically selects the best available accelerator for your image and platform (CUDA → WebGPU → CPU on Linux) |
-| `CUDA` | Forces NVIDIA CUDA / TensorRT execution provider (in `:latest-cuda`) |
-| `WebGPU` | Forces WebGPU execution provider (Mesa RADV Vulkan on Linux, Direct3D 12 on Windows) |
-| `CPU` | Forces CPU execution provider |
+| `Auto` *(default)* | Automatically selects the best available accelerator for your image and platform (CUDA → WebGPU → CPU on Linux, WebGPU → DirectML → CUDA on Windows) |
+| `WebGPU` | Universal GPU accelerator — Mesa RADV/ANV on Linux, Metal on macOS, Direct3D 12 on Windows (the primary path on `:latest`) |
+| `CUDA` | NVIDIA — CUDA & TensorRT (in `:latest-cuda`) |
+| `DirectML` | Windows — DirectX 12 machine learning execution provider |
+| `OpenVINO` | Intel — OpenVINO execution provider |
+| `MIGraphX` | AMD — MIGraphX execution provider (needs a build that ships the EP) |
+| `CPU` | CPU-only fallback |
+
+`MIGraphX` and `CUDA` are only selectable when the ONNX Runtime build ships them; the default
+`:latest` image does not, and selecting one there falls back to CPU. `ROCm` and `ROCm_GFX120X`
+are accepted as legacy aliases and are treated as `WebGPU` — on AMD cards the ROCm EP could not
+compile the transformer models at all, so WebGPU is the path that works.
 
 Environment variable:
 ```bash
@@ -147,7 +155,6 @@ If a configured execution provider cannot be initialized (for instance, if drive
 **Symptom:** a page that is coloured in the source comes out of the upscaler entirely black.
 
 **Cause:** every execution provider can run the conv models (all `*_ESRGAN_*`, `*_SPAN_*`), but the WebGPU EP has no kernels for the transformer architectures. Instead of reporting a missing kernel it returns a tensor of NaN for the whole page, and the fp16 output table turns each NaN into a `0` byte — a black page. Affected models: `4x_IllustrationJaNai_*FDAT_M*`, `*FDAT_XL*`, `*DAT2*` and `*HAT_L*`. The same files run correctly on CPU, on CUDA and on DirectML, so the symptom is backend-specific, not a corrupt download.
-
 A page reaches one of those models when `IsGrayscale` classifies it as colour. A manga page with a single coloured panel, or a cover, picks the `IllustrationJaNai_*` family; a fully grayscale page picks `MangaJaNai_*` and is unaffected.
 
 **What the app does:** before a page is upscaled, each candidate model in the preference order is given a 256×256 tile through the real tiling path. A model whose output is not finite is recorded as unusable for the device and the next candidate is tried, so a colour page is upscaled by an older ESRGAN model on a device that cannot run the transformer models at all. Each tile of the page is still checked, because a few models only fail above a certain tile size. If no candidate works, the page fails loudly instead of being written black.

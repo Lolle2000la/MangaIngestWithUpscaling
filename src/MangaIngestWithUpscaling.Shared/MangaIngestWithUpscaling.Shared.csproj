@@ -5,11 +5,13 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
-    <!-- ONNX Runtime Backend Selection: Cpu (default), Cuda, Managed -->
+    <!-- ONNX Runtime Backend Selection: Cpu (default), Cuda, Managed. The Managed flavor ships no
+         native execution providers beyond CPU and nothing in the repository selects it; it stays as
+         an escape hatch for callers that pass the property OnnxRuntimeFlavor=Managed, and shares the version default so the
+         flavors cannot drift into shipping different runtimes. The WebGPU EP is bundled into every
+         flavor but Managed on purpose: the CUDA image installs mesa-vulkan-drivers so a container
+         without GPU access can still fall back to WebGPU. -->
     <OnnxRuntimeFlavor Condition="'$(OnnxRuntimeFlavor)' == ''">Cpu</OnnxRuntimeFlavor>
-    <OnnxRuntimeVersion
-      Condition="'$(OnnxRuntimeFlavor)' == 'Managed' and '$(OnnxRuntimeVersion)' == ''"
-      >1.23.2</OnnxRuntimeVersion>
     <OnnxRuntimeVersion Condition="'$(OnnxRuntimeVersion)' == ''">1.29.0</OnnxRuntimeVersion>
   </PropertyGroup>
 

@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
@@ -240,19 +241,12 @@ public class OnnxTilerTests
     [Trait("Category", "Integration")]
     public void UpscaleRgb_ProducesConsistentOutputBetweenSinglePassAndTiled()
     {
-        string modelPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "../../../../../test_data/models/2x_IllustrationJaNai_V3denoise_SPAN_S_30k_fp16.onnx"
-        );
-        if (!File.Exists(modelPath))
-        {
-            modelPath = "test_data/models/2x_IllustrationJaNai_V3denoise_SPAN_S_30k_fp16.onnx";
-            if (!File.Exists(modelPath))
-            {
-                return;
-            }
-        }
-
+        // The overlap blending is the part of the tiler with no analytic test: whether a seam is
+        // visible is a property of the seam itself. A real model used to be needed for it, which
+        // made it the one test in this file that could not run anywhere but a developer machine —
+        // a nearest-neighbour upscaler reproduces the blending identically, since the blending is
+        // about geometry rather than weights.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(CreateDir(), scale: 2);
         using var session = new Microsoft.ML.OnnxRuntime.InferenceSession(modelPath);
         int w = 64;
         int h = 64;
@@ -963,4 +957,7 @@ public class OnnxTilerTests
             Assert.Equal(total - used, free);
         }
     }
+
+    private static string CreateDir() =>
+        Path.Combine(Path.GetTempPath(), $"tiler_tests_{Guid.NewGuid():N}");
 }

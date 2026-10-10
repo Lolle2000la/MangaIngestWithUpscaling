@@ -385,13 +385,13 @@ public class MangaJaNaiUpscaler(
 
     private IReadOnlyList<ModelPackage> GetModelPackages()
     {
-        var packages = new List<ModelPackage>();
+        // Resolve the provider once: it answers two questions here, and probing it per read would
+        // put a device discovery behind what looks like a plain property access.
+        GpuBackend backend = sessionFactory.GetEffectiveBackend();
+        bool useFp16 = sharedConfig.Value.ResolveUseFp16(backend);
 
-        // The precision that gets installed comes from the configuration, which defaults to
-        // whatever the configured accelerator is known to support.
-        packages.AddRange(
-            sharedConfig.Value.ResolvedUseFp16 ? Fp16ModelPackages : Fp32ModelPackages
-        );
+        var packages = new List<ModelPackage>();
+        packages.AddRange(useFp16 ? Fp16ModelPackages : Fp32ModelPackages);
 
         // The WebGPU EP has no kernels for the transformer architectures: it returns an all-NaN
         // tensor instead of reporting a missing kernel, and the page would be upscaled as black.
@@ -399,10 +399,7 @@ public class MangaJaNaiUpscaler(
         // ones, so the fp32 files are renamed on extraction (see ModelFileNames) and both
         // precisions stay installed. Selecting between them is the engine's job, because whether
         // a model runs is only known by running it. Providers with fp16 support get fp16 only.
-        if (
-            sharedConfig.Value.ResolvedUseFp16
-            && sessionFactory.GetEffectiveBackend() == GpuBackend.WebGPU
-        )
+        if (useFp16 && backend == GpuBackend.WebGPU)
         {
             packages.AddRange(Fp32ModelPackages);
         }

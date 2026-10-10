@@ -1,6 +1,8 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.Options;
+using NSubstitute;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.GPU;
@@ -11,9 +13,9 @@ public class Fp16CapabilityDetectorTests
     public void IsFp16Supported_WhenUseCpuIsTrue_ReturnsFalse()
     {
         bool result = Fp16CapabilityDetector.IsFp16Supported(
-            deviceId: 0,
-            preferredBackend: GpuBackend.Auto,
-            useCpu: true
+            resolvedBackend: GpuBackend.Auto,
+            acceleratorIndex: 0,
+            forceCpu: true
         );
         Assert.False(result);
     }
@@ -22,9 +24,9 @@ public class Fp16CapabilityDetectorTests
     public void IsFp16Supported_WhenPreferredBackendIsCpu_ReturnsFalse()
     {
         bool result = Fp16CapabilityDetector.IsFp16Supported(
-            deviceId: 0,
-            preferredBackend: GpuBackend.CPU,
-            useCpu: false
+            resolvedBackend: GpuBackend.CPU,
+            acceleratorIndex: 0,
+            forceCpu: false
         );
         Assert.False(result);
     }
@@ -65,7 +67,7 @@ public class Fp16CapabilityDetectorTests
             SelectedDeviceIndex = deviceIndex,
             PreferredGpuBackend = backend,
         };
-        Assert.False(config.ResolvedUseFp16);
+        Assert.False(config.ResolveUseFp16(backend));
     }
 
     [Fact]
@@ -80,12 +82,12 @@ public class Fp16CapabilityDetectorTests
         };
 
         bool expected = Fp16CapabilityDetector.IsFp16Supported(
-            deviceId: 0,
-            preferredBackend: GpuBackend.Auto,
-            useCpu: false
+            resolvedBackend: GpuBackend.Auto,
+            acceleratorIndex: 0,
+            forceCpu: false
         );
 
-        Assert.Equal(expected, config.ResolvedUseFp16);
+        Assert.Equal(expected, config.ResolveUseFp16(GpuBackend.Auto));
     }
 
     [Fact]

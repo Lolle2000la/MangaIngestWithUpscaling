@@ -56,7 +56,13 @@ public static class EngineIdentity
         // the spool there. Hashing the worker's local copy would be wrong in both directions: it would
         // miss a server-side change and spuriously reject a worker whose local config differs.
         material
-            .Append(config.ResolvedUseFp16)
+            // The configured precision, not the detected one: an explicit setting is the only part
+            // of this the operator controls, and it is what the model download is driven by. Hashing
+            // the hardware probe instead would let a worker whose detection transiently fails
+            // produce a different identity for the same configuration and re-stream the chapter.
+            // With UseFp16 = null the precision genuinely follows the device, so the probe is part
+            // of the answer and there is nothing to fall back to.
+            .Append(config.UseFp16 ?? config.ResolvedUseFp16)
             .Append('|')
             // The effective compute mode, not just UseCPU: the worker maps
             // SelectedDeviceIndex = UseCPU ? 0 : SelectedDeviceIndex, and device 0 is the CPU switch.

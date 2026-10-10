@@ -3,8 +3,13 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
 /// <summary>
-/// Drives upscale execution so that models and GPU sessions stay cached across
-/// consecutive upscale jobs instead of being reinitialized per job.
+/// Drives upscale execution. The worker is an in-process ONNX runtime rather than a separate
+/// process: a job and a chapter are the two shapes a caller can submit, and each keeps exactly one
+/// model session cached while it runs. The session cache is deliberately bounded
+/// (<see cref="OnnxSessionFactory.MaxCachedSessions"/>) and dropped after every chapter, so caching
+/// is per-job rather than across jobs — holding a second model resident would double the device
+/// memory budget for no gain, since consecutive chapters are the common case and reloading one
+/// session is a couple of seconds.
 /// </summary>
 public interface IMangaJaNaiWorkerClient
 {
@@ -13,8 +18,8 @@ public interface IMangaJaNaiWorkerClient
     /// </summary>
     /// <param name="request">The job to run.</param>
     /// <param name="progress">Optional sink for per-file progress events.</param>
-    /// <param name="cancellationToken">Cancels the in-flight job (sends a <c>cancel</c> request).</param>
-    /// <param name="timeout">Optional inactivity timeout; when exceeded the job is cancelled and the worker restarted.</param>
+    /// <param name="cancellationToken">Cancels the in-flight job. Cancellation is cooperative: the running tile finishes and no further tile is started.</param>
+    /// <param name="timeout">Optional inactivity timeout; when exceeded the job is cancelled. The clock resets on progress, so a slow model is not mistaken for a stuck one.</param>
     Task<UpscaleJobResult> RunJobAsync(
         UpscaleJobRequest request,
         IProgress<UpscaleProgress>? progress,
@@ -24,16 +29,15 @@ public interface IMangaJaNaiWorkerClient
 
     /// <summary>
     /// Runs a chapter as a stream of pages: <paramref name="pages"/> is consumed and sent to the
-    /// worker as it is produced, and <paramref name="onPageDone"/> is invoked (from the worker's
-    /// stdout reader thread) as each page finishes so the caller can stream it back immediately.
-    /// The call returns when the worker emits its final <c>done</c> event.
+    /// worker as it is produced, and <paramref name="onPageDone"/> is invoked as each page finishes
+    /// so the caller can stream it back immediately. The call returns when the last page is done.
     /// </summary>
     /// <param name="request">Chapter output settings.</param>
     /// <param name="pages">The pages to process, in order.</param>
     /// <param name="progress">Optional sink for progress events.</param>
     /// <param name="onPageDone">Invoked for every finished page (upscaled or failed).</param>
-    /// <param name="cancellationToken">Cancels the chapter (sends a <c>cancel</c> request).</param>
-    /// <param name="timeout">Optional inactivity timeout; when exceeded the chapter is cancelled and the worker restarted.</param>
+    /// <param name="cancellationToken">Cancels the chapter. Cooperative as for <see cref="RunJobAsync"/>: an in-flight tile finishes, then no further tile is started.</param>
+    /// <param name="timeout">Optional inactivity timeout; when exceeded the chapter is cancelled.</param>
     Task<UpscaleJobResult> RunChapterAsync(
         ChapterJobRequest request,
         IAsyncEnumerable<ChapterPage> pages,
@@ -44,23 +48,9 @@ public interface IMangaJaNaiWorkerClient
     );
 
     /// <summary>
-    /// Gracefully shuts the worker process down and releases GPU resources.
-    /// </summary>
-    Task ShutdownWorkerAsync(CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Shuts the worker process down, optionally tearing it down even while a job is in flight. A
-    /// forced shutdown is used to free VRAM before split detection on VRAM-limited setups; the
-    /// in-flight task is requeued. Defaults to the graceful path for clients that do not distinguish.
-    /// </summary>
-    Task ShutdownWorkerAsync(bool force, CancellationToken cancellationToken) =>
-        ShutdownWorkerAsync(cancellationToken);
-
-    /// <summary>
-    /// Asks the running worker to return its cached allocator blocks (VRAM) to the driver so
-    /// co-tenant GPU processes can run, while keeping the worker warm. Returns <c>true</c> when
-    /// the worker acknowledged the release, <c>false</c> when no worker is running, a job is in
-    /// flight, or the request failed/timed out.
+    /// Releases the device memory the worker holds. With the session bounded to one model and
+    /// dropped after every chapter there is no steady-state holding to free, so this is a no-op
+    /// kept for callers that used to have to tear a worker process down before split detection.
     /// </summary>
     Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken);
 }

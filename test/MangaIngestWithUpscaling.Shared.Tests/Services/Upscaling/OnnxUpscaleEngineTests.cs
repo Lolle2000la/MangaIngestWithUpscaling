@@ -2,6 +2,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NetVips;
@@ -387,19 +388,22 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
-    public async Task UpscaleFileAsync_RealOnnxModel_UpscalesImageSuccessfully()
+    [Trait("Category", "Integration")]
+    public async Task UpscaleFileAsync_UpscalesImageSuccessfully()
     {
-        string? repoRoot = FindRepoRoot();
-        Assert.NotNull(repoRoot);
-        string modelsDir = Path.Combine(repoRoot, "test_data", "models");
-        string testInput = Path.Combine(repoRoot, "test_data", "test_page.jpg");
-        if (!Directory.Exists(modelsDir) || !File.Exists(testInput))
-        {
-            return;
-        }
+        // The full path from a file on disk to an upscaled file on disk: vips decode, RGB flatten,
+        // the tiler and the encoder — the layers above the ones OnnxTilerTests covers individually.
+        // Both inputs used to come from the gitignored test_data/ directory, which is why this test
+        // never ran on a clean checkout. A generated model and a generated image exercise the same
+        // path, so the seam between the tiler and the image codecs stays covered.
+        const int width = 64;
+        const int height = 90;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(_tempDir, width, height);
 
         var config = Options.Create(
-            new UpscalerConfig { ModelsDirectory = modelsDir, UseCPU = true }
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
         );
         using var sessionFactory = new OnnxSessionFactory(
             config,
@@ -414,9 +418,9 @@ public class OnnxUpscaleEngineTests : IDisposable
 
         string outputPath = Path.Combine(_tempDir, "upscaled.webp");
         await engine.UpscaleFileAsync(
-            testInput,
+            inputPath,
             outputPath,
-            scale: 2,
+            scale,
             CompressionFormat.Webp,
             quality: 80,
             CancellationToken.None
@@ -424,21 +428,22 @@ public class OnnxUpscaleEngineTests : IDisposable
 
         Assert.True(File.Exists(outputPath));
         using var outImg = Image.NewFromFile(outputPath);
-        Assert.Equal(836 * 2, outImg.Width);
-        Assert.Equal(1187 * 2, outImg.Height);
+        Assert.Equal(width * scale, outImg.Width);
+        Assert.Equal(height * scale, outImg.Height);
     }
 
-    private static string? FindRepoRoot()
+    /// <summary>
+    /// Writes a non-uniform JPEG so the decoded bytes are not all identical: a constant image would
+    /// pass a scaling bug that produced a constant image.
+    /// </summary>
+    private static string CreateTestJpeg(string directory, int width, int height)
     {
-        string? dir = AppContext.BaseDirectory;
-        while (!string.IsNullOrEmpty(dir))
-        {
-            if (File.Exists(Path.Combine(dir, "MangaIngestWithUpscaling.sln")))
-            {
-                return dir;
-            }
-            dir = Path.GetDirectoryName(dir);
-        }
-        return null;
+        using var noise = Image
+            .Gaussnoise(width, height, mean: 128, sigma: 40)
+            .Cast(Enums.BandFormat.Uchar);
+        using var rgb = noise.Bandjoin(noise).Bandjoin(noise);
+        string path = Path.Combine(directory, "input.jpg");
+        rgb.WriteToFile(path);
+        return path;
     }
 }

@@ -1,6 +1,7 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
+using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
@@ -8,35 +9,33 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Inference;
 
-public class OnnxSessionFactoryTests
+/// <summary>
+/// These used to load a real detector model out of the gitignored <c>test_data/</c> directory, so
+/// on a clean checkout every one of them silently returned and the file looked like coverage. The
+/// model is now generated into a temp directory by <see cref="TinyOnnxModel"/>: nothing is skipped,
+/// and what is asserted — provider selection, caching, invalidation — is genuinely exercised by a
+/// session over a graph that ONNX Runtime accepts.
+/// </summary>
+public class OnnxSessionFactoryTests : IDisposable
 {
-    private static readonly string? TestModelPath = ResolveStableTestModelPath();
+    private readonly string _dir;
 
-    private static string? ResolveStableTestModelPath()
+    public OnnxSessionFactoryTests() =>
+        _dir = Path.Combine(Path.GetTempPath(), $"session_factory_{Guid.NewGuid():N}");
+
+    public void Dispose()
     {
-        string currentTestData = Path.Combine(
-            Directory.GetCurrentDirectory(),
-            "test_data",
-            "models",
-            "page_break_detector.onnx"
-        );
-        if (File.Exists(currentTestData))
+        if (Directory.Exists(_dir))
         {
-            return currentTestData;
+            Directory.Delete(_dir, recursive: true);
         }
-
-        string directModelsPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "models",
-            "page_break_detector.onnx"
-        );
-        if (File.Exists(directModelsPath))
-        {
-            return directModelsPath;
-        }
-
-        return null;
     }
+
+    /// <summary>
+    /// Writes a model once per test. Any of the generated variants would do — none of the tests below
+    /// care about weights, only about a session that loads, runs and is disposable.
+    /// </summary>
+    private string ModelPath() => TinyOnnxModel.WriteIdentity(_dir);
 
     [Fact]
     [Trait("Category", "Unit")]
@@ -54,35 +53,26 @@ public class OnnxSessionFactoryTests
     [Trait("Category", "Integration")]
     public void CreateSession_Cpu_LoadsExistingOnnxModelSuccessfully()
     {
-        if (!File.Exists(TestModelPath))
-        {
-            // Skip if model not deployed to output dir in this test run
-            return;
-        }
-
+        string modelPath = ModelPath();
         var config = Options.Create(new UpscalerConfig { UseCPU = true });
         using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
 
-        using InferenceSession session = factory.CreateSession(TestModelPath);
+        using InferenceSession session = factory.CreateSession(modelPath);
         Assert.NotNull(session);
         Assert.NotEmpty(session.InputMetadata);
-        Assert.True(session.InputMetadata.ContainsKey("input"));
+        Assert.True(session.InputMetadata.ContainsKey(TinyOnnxModel.InputName));
     }
 
     [Fact]
     [Trait("Category", "Integration")]
     public void GetOrCreateSession_ReturnsCachedInstance()
     {
-        if (!File.Exists(TestModelPath))
-        {
-            return;
-        }
-
+        string modelPath = ModelPath();
         var config = Options.Create(new UpscalerConfig { UseCPU = true });
         using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
 
-        InferenceSession session1 = factory.GetOrCreateSession(TestModelPath);
-        InferenceSession session2 = factory.GetOrCreateSession(TestModelPath);
+        InferenceSession session1 = factory.GetOrCreateSession(modelPath);
+        InferenceSession session2 = factory.GetOrCreateSession(modelPath);
 
         Assert.Same(session1, session2);
     }
@@ -91,17 +81,13 @@ public class OnnxSessionFactoryTests
     [Trait("Category", "Integration")]
     public void InvalidateAllSessions_RemovesAndDisposesCachedSessions()
     {
-        if (!File.Exists(TestModelPath))
-        {
-            return;
-        }
-
+        string modelPath = ModelPath();
         var config = Options.Create(new UpscalerConfig { UseCPU = true });
         using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
 
-        InferenceSession session1 = factory.GetOrCreateSession(TestModelPath);
+        InferenceSession session1 = factory.GetOrCreateSession(modelPath);
         factory.InvalidateAllSessions();
-        InferenceSession session2 = factory.GetOrCreateSession(TestModelPath);
+        InferenceSession session2 = factory.GetOrCreateSession(modelPath);
 
         Assert.NotSame(session1, session2);
     }
@@ -110,10 +96,7 @@ public class OnnxSessionFactoryTests
     [Trait("Category", "Integration")]
     public void CreateSession_OpenVinoBackend_FallsBackCleanlyToCpu()
     {
-        if (!File.Exists(TestModelPath))
-        {
-            return;
-        }
+        string modelPath = ModelPath();
 
         var config = Options.Create(
             new UpscalerConfig
@@ -126,7 +109,7 @@ public class OnnxSessionFactoryTests
         using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
 
         // When OpenVINO hardware is not available on this test host, it must cleanly fallback to CPU without throwing.
-        using InferenceSession session = factory.CreateSession(TestModelPath);
+        using InferenceSession session = factory.CreateSession(modelPath);
         Assert.NotNull(session);
         Assert.NotEmpty(session.InputMetadata);
     }
@@ -135,10 +118,7 @@ public class OnnxSessionFactoryTests
     [Trait("Category", "Integration")]
     public void CreateSession_MigraphxBackend_CreatesOrFallsBackSuccessfully()
     {
-        if (!File.Exists(TestModelPath))
-        {
-            return;
-        }
+        string modelPath = ModelPath();
 
         var config = Options.Create(
             new UpscalerConfig
@@ -150,7 +130,7 @@ public class OnnxSessionFactoryTests
         );
         using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
 
-        using InferenceSession session = factory.CreateSession(TestModelPath);
+        using InferenceSession session = factory.CreateSession(modelPath);
         Assert.NotNull(session);
         Assert.NotEmpty(session.InputMetadata);
     }
@@ -159,10 +139,7 @@ public class OnnxSessionFactoryTests
     [Trait("Category", "Integration")]
     public void CreateSession_WebGpuBackend_CreatesOrFallsBackSuccessfully()
     {
-        if (!File.Exists(TestModelPath))
-        {
-            return;
-        }
+        string modelPath = ModelPath();
 
         var config = Options.Create(
             new UpscalerConfig
@@ -174,7 +151,7 @@ public class OnnxSessionFactoryTests
         );
         using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
 
-        using InferenceSession session = factory.CreateSession(TestModelPath);
+        using InferenceSession session = factory.CreateSession(modelPath);
         Assert.NotNull(session);
         Assert.NotEmpty(session.InputMetadata);
     }
@@ -183,10 +160,7 @@ public class OnnxSessionFactoryTests
     [Trait("Category", "Integration")]
     public void CreateSession_AutoBackend_CreatesOrFallsBackSuccessfully()
     {
-        if (!File.Exists(TestModelPath))
-        {
-            return;
-        }
+        string modelPath = ModelPath();
 
         var config = Options.Create(
             new UpscalerConfig
@@ -198,8 +172,38 @@ public class OnnxSessionFactoryTests
         );
         using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
 
-        using InferenceSession session = factory.CreateSession(TestModelPath);
+        using InferenceSession session = factory.CreateSession(modelPath);
         Assert.NotNull(session);
         Assert.NotEmpty(session.InputMetadata);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void GetOrCreateSession_EvictsTheLeastRecentlyUsedSessionAtCapacity()
+    {
+        // MaxCachedSessions is 1, so the second model displaces the first instead of joining it.
+        // This is what keeps split detection and upscaling from holding two models on a
+        // VRAM-limited card at once, and the eviction disposes the outgoing session while holding
+        // the write lock — the part of the factory with the most moving parts to get wrong.
+        string first = TinyOnnxModel.WriteNearestUpscaler(_dir, 2, fileName: "first.onnx");
+        string second = TinyOnnxModel.WriteNearestUpscaler(_dir, 3, fileName: "second.onnx");
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        InferenceSession firstSession = factory.GetOrCreateSession(first);
+        InferenceSession secondSession = factory.GetOrCreateSession(second);
+
+        // Only the second one is resident, so the first model has to be loaded again.
+        Assert.NotSame(firstSession, secondSession);
+        InferenceSession reloaded = factory.GetOrCreateSession(first);
+        Assert.NotSame(firstSession, reloaded);
+
+        // The resident model is served from the cache rather than reloaded.
+        Assert.Same(reloaded, factory.GetOrCreateSession(first));
+
+        // Never assert on an instance the factory has evicted: xUnit formats the arguments of a
+        // failing assertion, and InferenceSession.ToString() dereferences the native session, so a
+        // disposed object turns a test failure into a crash instead of a message.
+        Assert.NotNull(secondSession);
     }
 }

@@ -61,7 +61,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.Upscaling;
 /// <summary>
 /// Exercises the page-streaming transport over a real gRPC channel against the real
 /// <see cref="UpscalingDistributionService"/>, a real <see cref="PageStreamSpool"/> and a real
-/// database, with only the local Python worker faked. This covers what the stubbed-client test
+/// database, with only the local worker faked. This covers what the stubbed-client test
 /// cannot: gRPC serialization, the real handlers, identity/spool persistence and the chapter
 /// completion path.
 ///
@@ -887,8 +887,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .DetectSplitsAsync(
                 Arg.Any<string>(),
                 Arg.Any<IProgress<UpscaleProgress>?>(),
-                Arg.Any<CancellationToken>(),
-                Arg.Any<bool>()
+                Arg.Any<CancellationToken>()
             )
             .Returns(ci => new List<SplitDetectionResult>
             {
@@ -1718,8 +1717,6 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             CancellationToken cancellationToken,
             TimeSpan? timeout
         ) => throw new NotSupportedException();
-
-        public Task ShutdownWorkerAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken) =>
             Task.FromResult(true);
