@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Localization;
@@ -21,6 +22,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     private readonly ILogger<MangaJaNaiUpscaler> _mockLogger;
     private readonly IMetadataHandlingService _mockMetadataHandling;
     private readonly IMangaJaNaiWorkerClient _mockWorkerClient;
+    private readonly IOnnxSessionFactory _mockSessionFactory;
     private readonly IStringLocalizer<MangaJaNaiUpscaler> _mockLocalizer;
     private readonly string _tempDir;
     private readonly MangaJaNaiUpscaler _upscaler;
@@ -28,6 +30,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     public MangaJaNaiUpscalerTests()
     {
         _mockWorkerClient = Substitute.For<IMangaJaNaiWorkerClient>();
+        _mockSessionFactory = Substitute.For<IOnnxSessionFactory>();
         _mockLogger = Substitute.For<ILogger<MangaJaNaiUpscaler>>();
         _mockFileSystem = Substitute.For<IFileSystem>();
         _mockMetadataHandling = Substitute.For<IMetadataHandlingService>();
@@ -74,6 +77,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         _upscaler = new MangaJaNaiUpscaler(
             _mockWorkerClient,
+            _mockSessionFactory,
             _mockLogger,
             _mockConfig,
             _mockFileSystem,
@@ -944,6 +948,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         var upscaler = new MangaJaNaiUpscaler(
             _mockWorkerClient,
+            _mockSessionFactory,
             _mockLogger,
             mockConfig,
             _mockFileSystem,
@@ -988,6 +993,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         var upscaler = new MangaJaNaiUpscaler(
             _mockWorkerClient,
+            _mockSessionFactory,
             _mockLogger,
             mockConfig,
             _mockFileSystem,
@@ -1014,5 +1020,84 @@ public class MangaJaNaiUpscalerTests : IDisposable
         string? url = urlProp.GetValue(firstPackage) as string;
         Assert.NotNull(url);
         Assert.Contains("MangaJaNai_V1_ONNX.zip", url);
+    }
+
+    [Theory]
+    [InlineData(GpuBackend.WebGPU, true)]
+    [InlineData(GpuBackend.CUDA, false)]
+    [InlineData(GpuBackend.DirectML, false)]
+    [InlineData(GpuBackend.CPU, false)]
+    public void GetModelPackages_OnWebGpu_AlsoDownloadsTheFp32Copies(
+        GpuBackend backend,
+        bool expectFp32Suite
+    )
+    {
+        // The WebGPU EP returns NaN for the transformer architectures in fp16 and upscales the
+        // page black, so the fp32 copies have to be present for the engine to fall back to. Every
+        // other provider gets the fp16 set only, which is half the download.
+        var config = new UpscalerConfig { UseFp16 = true, ModelsDirectory = _tempDir };
+        var mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
+        mockConfig.Value.Returns(config);
+        _mockSessionFactory.GetEffectiveBackend().Returns(backend);
+
+        var upscaler = new MangaJaNaiUpscaler(
+            _mockWorkerClient,
+            _mockSessionFactory,
+            _mockLogger,
+            mockConfig,
+            _mockFileSystem,
+            _mockMetadataHandling,
+            _mockJsonHandling,
+            _mockImageResize,
+            _mockLocalizer
+        );
+
+        var method = typeof(MangaJaNaiUpscaler).GetMethod(
+            "GetModelPackages",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
+        var packages = (method!.Invoke(upscaler, null) as System.Collections.IEnumerable)!
+            .Cast<object>()
+            .ToList();
+
+        var urls = packages
+            .Select(p => (string)p.GetType().GetProperty("ZipUrl")!.GetValue(p)!)
+            .ToList();
+
+        Assert.Contains(urls, u => u.EndsWith("_FP16_ONNX.zip", StringComparison.Ordinal));
+        Assert.Equal(
+            expectFp32Suite,
+            urls.Any(u =>
+                u.EndsWith("_ONNX.zip", StringComparison.Ordinal)
+                && !u.Contains("_FP16_ONNX", StringComparison.Ordinal)
+            )
+        );
+    }
+
+    [Fact]
+    public void ModelPackages_OnlyTheFp32SuiteRenamesItsFiles()
+    {
+        // The fp16 and fp32 archives ship identical file names: without a suffix on the fp32 side
+        // one precision overwrites the other and there is nothing to fall back to.
+        var fp32 = Packages("Fp32ModelPackages");
+        var fp16 = Packages("Fp16ModelPackages");
+
+        Assert.NotEmpty(fp32);
+        Assert.NotEmpty(fp16);
+        Assert.All(fp32, p => Assert.Equal(ModelFileNames.Fp32Suffix, p));
+        Assert.All(fp16, p => Assert.Null(p));
+    }
+
+    private static List<string?> Packages(string fieldName)
+    {
+        var packages =
+            typeof(MangaJaNaiUpscaler)
+                .GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static)!
+                .GetValue(null) as System.Collections.IEnumerable;
+        Assert.NotNull(packages);
+        return packages!
+            .Cast<object>()
+            .Select(p => (string?)p.GetType().GetProperty("PrecisionSuffix")!.GetValue(p))
+            .ToList();
     }
 }

@@ -154,6 +154,33 @@ public class OnnxUpscaleEngineTests : IDisposable
         Assert.Equal(Path.Combine(_tempDir, "2x_MangaJaNai_generic.onnx"), selected);
     }
 
+    [Theory]
+    [InlineData("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx")]
+    [InlineData("4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx")]
+    [InlineData("4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx")]
+    public void SelectModelCandidates_OrdersTheFp16CopyBeforeTheFp32One(string fp16Name)
+    {
+        // Both precisions are installed where WebGPU is the provider, because it cannot run the
+        // transformer architectures in fp16. The smaller file has to come first, so an accelerator
+        // that can run it never pays for the fp32 copy, and a device that cannot still has one.
+        string fp32Name = ModelFileNames.Resolve(fp16Name, ModelFileNames.Fp32Suffix);
+        File.WriteAllText(Path.Combine(_tempDir, fp16Name), "dummy");
+        File.WriteAllText(Path.Combine(_tempDir, fp32Name), "dummy");
+
+        IReadOnlyList<string> candidates = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: false,
+            height: 1600,
+            scale: 4
+        );
+
+        Assert.True(
+            candidates.ToList().IndexOf(Path.Combine(_tempDir, fp16Name))
+                < candidates.ToList().IndexOf(Path.Combine(_tempDir, fp32Name)),
+            "the fp16 copy should be preferred over the fp32 one"
+        );
+    }
+
     [Fact]
     public void SelectModel_IsTheFirstCandidate()
     {

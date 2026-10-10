@@ -513,6 +513,11 @@ public class OnnxUpscaleEngine(
     /// of the execution provider and the device, and is only known once that model has produced
     /// finite output there. <see cref="SelectModel"/> remains the first choice.
     /// </para>
+    /// <para>
+    /// The file set is ordered by name, which puts the fp16 copy of a model before its fp32 one:
+    /// the smaller file wins wherever it can run, and the fp32 copy is what the WebGPU EP falls
+    /// back to for the architectures it cannot run in fp16.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<string> SelectModelCandidates(
         string modelsDirectory,
@@ -526,7 +531,10 @@ public class OnnxUpscaleEngine(
             throw new DirectoryNotFoundException($"Models directory not found: {modelsDirectory}");
         }
 
-        string[] onnxFiles = Directory.GetFiles(modelsDirectory, "*.onnx");
+        string[] onnxFiles = Directory
+            .GetFiles(modelsDirectory, "*.onnx")
+            .OrderBy(Path.GetFileName, StringComparer.Ordinal)
+            .ToArray();
         if (onnxFiles.Length == 0)
         {
             throw new FileNotFoundException(
@@ -588,8 +596,17 @@ public class OnnxUpscaleEngine(
 
                 foreach (var arch in preferredArchs)
                 {
-                    AddContaining(candidates, versionCandidates, arch, NotBf16);
-                    AddContaining(candidates, versionCandidates, arch, _ => true);
+                    foreach (
+                        var file in versionCandidates
+                            .Where(f =>
+                                Path.GetFileName(f)
+                                    .Contains(arch, StringComparison.OrdinalIgnoreCase)
+                            )
+                            .OrderBy(ArchRank)
+                    )
+                    {
+                        AddCandidate(candidates, file);
+                    }
                 }
 
                 AddAll(candidates, versionCandidates);
@@ -615,6 +632,22 @@ public class OnnxUpscaleEngine(
 
     private static bool NotBf16(string path) =>
         !Path.GetFileName(path).Contains("bf16", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Order of two copies of the same architecture: the fp32 fallback comes last, because it is
+    /// the larger file and is only needed where fp16 does not run. Within one precision, a file
+    /// WebGPU cannot run natively comes after one it can — that is what the bf16 models need.
+    /// </summary>
+    private static int ArchRank(string path) =>
+        (ModelFileNames.IsFp32(path) ? 2 : 0) + (NotBf16(path) ? 0 : 1);
+
+    private static void AddCandidate(List<string> candidates, string file)
+    {
+        if (!candidates.Contains(file, StringComparer.OrdinalIgnoreCase))
+        {
+            candidates.Add(file);
+        }
+    }
 
     public static string SelectModel(
         string modelsDirectory,
@@ -649,34 +682,11 @@ public class OnnxUpscaleEngine(
         }
     }
 
-    private static void AddContaining(
-        List<string> candidates,
-        IEnumerable<string> files,
-        string token,
-        Func<string, bool> filter
-    )
-    {
-        foreach (var file in files)
-        {
-            if (
-                Path.GetFileName(file).Contains(token, StringComparison.OrdinalIgnoreCase)
-                && filter(file)
-                && !candidates.Contains(file, StringComparer.OrdinalIgnoreCase)
-            )
-            {
-                candidates.Add(file);
-            }
-        }
-    }
-
     private static void AddAll(List<string> candidates, IEnumerable<string> files)
     {
         foreach (var file in files)
         {
-            if (!candidates.Contains(file, StringComparer.OrdinalIgnoreCase))
-            {
-                candidates.Add(file);
-            }
+            AddCandidate(candidates, file);
         }
     }
 

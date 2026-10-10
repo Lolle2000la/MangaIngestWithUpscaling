@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,7 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 [RegisterScoped]
 public class MangaJaNaiUpscaler(
     IMangaJaNaiWorkerClient workerClient,
+    IOnnxSessionFactory sessionFactory,
     ILogger<MangaJaNaiUpscaler> logger,
     IOptions<UpscalerConfig> sharedConfig,
     IFileSystem fileSystem,
@@ -26,7 +28,8 @@ public class MangaJaNaiUpscaler(
     private record ModelPackage(
         string ZipUrl,
         string ZipHash,
-        Dictionary<string, string> ExpectedFileHashes
+        Dictionary<string, string> ExpectedFileHashes,
+        string? PrecisionSuffix = null
     );
 
     private static readonly ModelPackage PageBreakDetectorPackage = new(
@@ -271,7 +274,8 @@ public class MangaJaNaiUpscaler(
                     "4x_MangaJaNai_2048p_V1_ESRGAN_70k.onnx",
                     "6255e2fc797aa3662d2f8403772263ffea939ba3a6d828a0ffad14453f00d57b"
                 },
-            }
+            },
+            ModelFileNames.Fp32Suffix
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V1_ONNX.zip",
@@ -290,7 +294,8 @@ public class MangaJaNaiUpscaler(
                     "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx",
                     "ca27ada700d717d01492c7765c672bf6dc57df3395794ff152fdaeca9e9e082f"
                 },
-            }
+            },
+            ModelFileNames.Fp32Suffix
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/4x_IllustrationJaNai_V2standard_ONNX.zip",
@@ -313,7 +318,8 @@ public class MangaJaNaiUpscaler(
                     "4x_IllustrationJaNai_V2standard_FDAT_XL_18k.onnx",
                     "cc992a6615a2dba0ccaac348b489cbaf9f795e31aed142e30cd23ed289d39428"
                 },
-            }
+            },
+            ModelFileNames.Fp32Suffix
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3denoise_ONNX.zip",
@@ -340,7 +346,8 @@ public class MangaJaNaiUpscaler(
                     "4x_IllustrationJaNai_V3denoise_FDAT_XL_32k_bf16.onnx",
                     "ebaf02b4dfc54e44f620a978f3bc7643570347d42e5a6e95c5afaf22cc88c699"
                 },
-            }
+            },
+            ModelFileNames.Fp32Suffix
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3detail_ONNX.zip",
@@ -371,14 +378,37 @@ public class MangaJaNaiUpscaler(
                     "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx",
                     "ad25d22099d549fbd2dd62fc828420525c8cdda51df512ebedc5bbfa25eb2e10"
                 },
-            }
+            },
+            ModelFileNames.Fp32Suffix
         ),
     ];
 
     private IReadOnlyList<ModelPackage> GetModelPackages()
     {
-        var packages = sharedConfig.Value.ResolvedUseFp16 ? Fp16ModelPackages : Fp32ModelPackages;
-        return [.. packages, PageBreakDetectorPackage];
+        var packages = new List<ModelPackage>();
+
+        // The precision that gets installed comes from the configuration, which defaults to
+        // whatever the configured accelerator is known to support.
+        packages.AddRange(
+            sharedConfig.Value.ResolvedUseFp16 ? Fp16ModelPackages : Fp32ModelPackages
+        );
+
+        // The WebGPU EP has no kernels for the transformer architectures: it returns an all-NaN
+        // tensor instead of reporting a missing kernel, and the page would be upscaled as black.
+        // It needs the fp32 copies of those models, which ship under the same names as the fp16
+        // ones, so the fp32 files are renamed on extraction (see ModelFileNames) and both
+        // precisions stay installed. Selecting between them is the engine's job, because whether
+        // a model runs is only known by running it. Providers with fp16 support get fp16 only.
+        if (
+            sharedConfig.Value.ResolvedUseFp16
+            && sessionFactory.GetEffectiveBackend() == GpuBackend.WebGPU
+        )
+        {
+            packages.AddRange(Fp32ModelPackages);
+        }
+
+        packages.Add(PageBreakDetectorPackage);
+        return packages;
     }
 
     private string ModelPath => sharedConfig.Value.ResolvedModelsDirectory;
@@ -667,12 +697,15 @@ public class MangaJaNaiUpscaler(
     {
         foreach (var (fileName, _) in package.ExpectedFileHashes)
         {
-            string filePath = Path.Combine(ModelPath, fileName);
+            string filePath = Path.Combine(
+                ModelPath,
+                ModelFileNames.Resolve(fileName, package.PrecisionSuffix)
+            );
             if (!File.Exists(filePath))
             {
                 logger.LogInformation(
                     "Model file {fileName} not found, download required",
-                    fileName
+                    ModelFileNames.Resolve(fileName, package.PrecisionSuffix)
                 );
                 return true;
             }
@@ -680,7 +713,10 @@ public class MangaJaNaiUpscaler(
             var fileInfo = new FileInfo(filePath);
             if (fileInfo.Length == 0)
             {
-                logger.LogWarning("Model file {fileName} is empty, download required", fileName);
+                logger.LogWarning(
+                    "Model file {fileName} is empty, download required",
+                    ModelFileNames.Resolve(fileName, package.PrecisionSuffix)
+                );
                 return true;
             }
         }
@@ -759,8 +795,8 @@ public class MangaJaNaiUpscaler(
                 }
             }
 
-            // extract the zip file
-            ZipFile.ExtractToDirectory(tempZip, ModelPath, true);
+            ModelPackageExtractor.Extract(tempZip, ModelPath, package.PrecisionSuffix);
+
             logger.LogInformation("Successfully downloaded and extracted {zipUrl}", package.ZipUrl);
         }
         finally
@@ -785,11 +821,17 @@ public class MangaJaNaiUpscaler(
 
         foreach (var (fileName, expectedHash) in package.ExpectedFileHashes)
         {
-            string filePath = Path.Combine(ModelPath, fileName);
+            string filePath = Path.Combine(
+                ModelPath,
+                ModelFileNames.Resolve(fileName, package.PrecisionSuffix)
+            );
             if (!File.Exists(filePath))
             {
                 throw new FileNotFoundException(
-                    localizer["Error_ModelFileNotFound", fileName],
+                    localizer[
+                        "Error_ModelFileNotFound",
+                        ModelFileNames.Resolve(fileName, package.PrecisionSuffix)
+                    ],
                     filePath
                 );
             }

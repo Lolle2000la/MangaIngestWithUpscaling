@@ -150,7 +150,14 @@ If a configured execution provider cannot be initialized (for instance, if drive
 
 A page reaches one of those models when `IsGrayscale` classifies it as colour. A manga page with a single coloured panel, or a cover, picks the `IllustrationJaNai_*` family; a fully grayscale page picks `MangaJaNai_*` and is unaffected.
 
-**What the app does:** before a page is upscaled, each candidate model in the preference order is given a 256×256 tile through the real tiling path. A model whose output is not finite is recorded as unusable for the device and the next candidate is tried, so a colour page is upscaled by `…_V1_ESRGAN_135k.onnx` on a device that cannot run the transformer models. Each tile of the page is still checked, because a few models only fail above a certain tile size. If no candidate works, the page fails loudly instead of being written black.
+**What the app does:** before a page is upscaled, each candidate model in the preference order is given a 256×256 tile through the real tiling path. A model whose output is not finite is recorded as unusable for the device and the next candidate is tried, so a colour page is upscaled by an older ESRGAN model on a device that cannot run the transformer models at all. Each tile of the page is still checked, because a few models only fail above a certain tile size. If no candidate works, the page fails loudly instead of being written black.
+
+**The fix for this platform:** the same mechanism falls back to the *fp32 copy* of the same model. The 4x IllustrationJaNai transformer models ship twice, as an fp16 and an fp32 archive, and on WebGPU both are installed — the fp16 files keep their names, the fp32 ones gain a `_fp32` suffix (`4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx` → `…_40k_fp32.onnx`). The smaller fp16 file is preferred wherever it runs; on a device where it does not, the fp32 copy takes over at the same architecture, so a colour page is upscaled by `4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx` instead of falling back to an older ESRGAN. Everything the fp32 model costs is in the tile planner, which reads the precision off the session and halves the grid accordingly.
+
+Two consequences of the doubled install:
+
+- The models directory holds both precisions once WebGPU is the provider, roughly 0.8 GB plus 1.2 GB. Only the colour families need the fp32 copy in practice — all `MangaJaNai_*` models are conv nets and run in fp16 — but the rule is uniform so a future transformer in that set is covered too.
+- The naming is taken from the archive, so a file that the release left in fp16 keeps its `_fp16` name *inside* the fp32 package and therefore ends up as `…_fp32.onnx` while still being fp16 (`2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp32.onnx` is the known one). It is never selected: the fp16 original of that model runs on WebGPU, so the fallback is not reached.
 
 **What you can do:**
 - Nothing, if the warning is acceptable — colour pages are still upscaled, just by an older model.
