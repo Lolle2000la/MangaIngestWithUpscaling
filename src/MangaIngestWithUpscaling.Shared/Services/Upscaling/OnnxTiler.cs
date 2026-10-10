@@ -319,6 +319,18 @@ public static class OnnxTiler
     public const int MinimumTileSize = 256;
 
     /// <summary>
+    /// Tile side the models need on both dimensions for full quality, and the side
+    /// <see cref="PlanTileSplit"/> maximises the smaller dimension towards.
+    /// <para>
+    /// Below it a tile is genuinely worse: the model is missing context, and on manga screentones
+    /// that shows up as structure loss where a split falls. Above it a larger tile has nothing left
+    /// to look at, so extra size buys no quality — the planner therefore stops chasing it and spends
+    /// the remaining headroom on the cheapest grid, which means fewer tiles and less total work.
+    /// </para>
+    /// </summary>
+    public const int QualityTilePixels = 512;
+
+    /// <summary>
     /// Alignment (in pixels) the tiler snaps tile dimensions to, so every tile produces the same
     /// uniform tensor shape and the driver never has to re-allocate per tile.
     /// </summary>
@@ -703,18 +715,24 @@ public static class OnnxTiler
 
         TileSplit best = TileSplit.For(width, height, MinimumTileSize);
         long bestWork = long.MaxValue;
+        int bestContext = -1;
+
         for (int columns = 1; columns <= maxColumns; columns++)
         {
             int tileWidth = (width + columns - 1) / columns;
+
             for (int rows = 1; rows <= maxRows; rows++)
             {
-                var candidate = new TileSplit(columns, rows, tileWidth, (height + rows - 1) / rows);
+                int tileHeight = (height + rows - 1) / rows;
 
-                long work = candidate.TotalPaddedPixels;
-                if (work >= bestWork)
+                // A single tile covering the page is the single-pass decision, made above. Letting
+                // the loop pick it back here would undo the safety margin that decision applied.
+                if (columns == 1 && rows == 1)
                 {
                     continue;
                 }
+
+                var candidate = new TileSplit(columns, rows, tileWidth, tileHeight);
 
                 if (
                     weights + (long)(bytesPerPixel * candidate.PaddedTilePixels)
@@ -724,8 +742,19 @@ public static class OnnxTiler
                     continue;
                 }
 
-                best = candidate;
-                bestWork = work;
+                // Quality target: the smaller side as close to QualityTilePixels as the budget
+                // allows, and no further. Below it the model is missing receptive-field context on
+                // manga screentones; above it there is nothing left for a larger tile to see, so the
+                // size is free and is spent on the cheapest grid instead.
+                int context = Math.Min(Math.Min(tileWidth, tileHeight), QualityTilePixels);
+                long work = candidate.TotalPaddedPixels;
+
+                if (context > bestContext || (context == bestContext && work < bestWork))
+                {
+                    best = candidate;
+                    bestContext = context;
+                    bestWork = work;
+                }
             }
         }
 

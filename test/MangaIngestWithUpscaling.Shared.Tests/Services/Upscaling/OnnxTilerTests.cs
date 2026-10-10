@@ -727,11 +727,13 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
-    public void PlanTileSplit_PicksTheFeasibleGridWithTheLeastWork()
+    public void PlanTileSplit_GivesTheSmallerSideAllTheContextTheBudgetAllows()
     {
-        // The derivation's whole point: among all grids whose single tile fits the budget, take the
-        // one the page takes the fewest padded pixels at. Brute-forcing every grid proves no
-        // cheaper one was left on the table.
+        // The quality rule: a tile side below QualityTilePixels is worse, and above it there is
+        // nothing left to look at. So the planner must maximise the smaller side up to that target,
+        // and among the grids that tie on it take the cheapest. Brute-forcing every grid proves no
+        // better one was left on the table — both that no feasible grid has the smaller side longer,
+        // and that none of the ties is cheaper.
         (string Model, int Scale)[] cases = new (string Model, int Scale)[]
         {
             ("4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx", 4),
@@ -754,9 +756,13 @@ public class OnnxTilerTests : IDisposable
                 );
                 if (chosen.Columns == 1 && chosen.Rows == 1)
                 {
-                    continue; // the whole page in one pass, the cheapest grid there is
+                    continue; // the whole page in one pass, decided before any grid is considered
                 }
-                long chosenWork = chosen.TotalPaddedPixels;
+
+                int chosenContext = Math.Min(
+                    Math.Min(chosen.TileWidth, chosen.TileHeight),
+                    OnnxTiler.QualityTilePixels
+                );
                 double bytesPerPixel = OnnxTiler
                     .ActivationCoefficients.For(model)
                     .BytesPerPixel(scale, isFp16: true);
@@ -773,21 +779,123 @@ public class OnnxTilerTests : IDisposable
                             (1125 + columns - 1) / columns,
                             (1600 + rows - 1) / rows
                         );
-                        if (candidate.TotalPaddedPixels >= chosenWork)
+                        if (
+                            OnnxTiler.EstimateModelBytes(model)
+                                + (long)(bytesPerPixel * candidate.PaddedTilePixels)
+                            > budget
+                        )
                         {
-                            continue;
+                            continue; // not affordable at this budget
+                        }
+
+                        int context = Math.Min(
+                            Math.Min(candidate.TileWidth, candidate.TileHeight),
+                            OnnxTiler.QualityTilePixels
+                        );
+
+                        Assert.True(
+                            context <= chosenContext,
+                            $"{model} @ {budgetMb} MB: grid {columns}x{rows} gives the smaller side "
+                                + $"{context} px of context, more than the chosen "
+                                + $"{chosen.Columns}x{chosen.Rows} at {chosenContext}"
+                        );
+
+                        if (context < chosenContext)
+                        {
+                            continue; // worse context, so its cost is irrelevant
                         }
 
                         Assert.True(
-                            OnnxTiler.EstimateModelBytes(model)
-                                + (long)(bytesPerPixel * candidate.PaddedTilePixels)
-                                > budget,
-                            $"{model} @ {budgetMb} MB: grid {columns}x{rows} costs less work than the chosen {chosen.Columns}x{chosen.Rows} and still fits"
+                            candidate.TotalPaddedPixels >= chosen.TotalPaddedPixels,
+                            $"{model} @ {budgetMb} MB: grid {columns}x{rows} matches the chosen "
+                                + $"{chosen.Columns}x{chosen.Rows} on context and is cheaper"
                         );
                     }
                 }
             }
         }
+    }
+
+    [Theory]
+    // A budget that can afford a side at or past the quality target must not settle for less. The
+    // fp32 transformer model is the case this came from: it used to plan 282x800 tiles — the smaller
+    // side was 282, well under the target — while 563x534 was affordable all along.
+    [InlineData(13429, 534)]
+    // Below the target the smaller side is whatever the budget allows, and it must be the largest
+    // available rather than the one that minimises work.
+    [InlineData(7111, 375)]
+    public void PlanTileSplit_ReachesForTheQualityTargetBeforeSpendingOnSize(
+        int budgetMb,
+        int expectedSmallerSide
+    )
+    {
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx",
+            budgetMb * 1024L * 1024L,
+            isFp16: false
+        );
+
+        Assert.Equal(expectedSmallerSide, Math.Min(split.TileWidth, split.TileHeight));
+
+        // Whatever the budget allows, the smaller side must never be the quality floor's size.
+        Assert.True(Math.Min(split.TileWidth, split.TileHeight) >= OnnxTiler.MinimumTileSize);
+    }
+
+    [Fact]
+    public void PlanTileSplit_AboveTheQualityTarget_SpendsTheHeadroomOnLessWork()
+    {
+        // Once the smaller side reaches the target the size has bought all the quality it can, so
+        // the remaining headroom goes to the cheapest grid rather than to an even larger tile. Two
+        // columns of 563 px and one column of 1125 px both give the smaller side the full target;
+        // the cheaper one is the single column, and it is the one to take.
+        long generous = 32L * 1024 * 1024 * 1024;
+
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+            generous,
+            isFp16: true
+        );
+
+        Assert.Equal(1, split.Columns);
+        Assert.True(split.TileHeight >= OnnxTiler.QualityTilePixels);
+    }
+
+    [Fact]
+    public void PlanTileSplit_DoesNotRevisitTheSinglePassDecision()
+    {
+        // A page that fits the budget but not comfortably enough for a single pass must not get one
+        // back from the grid loop: one tile of the whole page is the cheapest grid there is, and
+        // taking it would undo the safety fraction the single-pass decision applied.
+        long budget = 2L * 1024 * 1024 * 1024;
+        string model = "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx";
+        double bytesPerPixel = OnnxTiler
+            .ActivationCoefficients.For(model)
+            .BytesPerPixel(4, isFp16: false);
+        long wholePage = OnnxTiler.EstimateModelBytes(model) + (long)(bytesPerPixel * 1125 * 1600);
+
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            model,
+            budget,
+            isFp16: false
+        );
+
+        Assert.False(
+            split.Columns == 1 && split.Rows == 1,
+            "a whole-page tile came back from the grid loop"
+        );
+        Assert.True(
+            wholePage > budget * OnnxTiler.SinglePassSafetyFraction,
+            "precondition: the page should be too large for a comfortable single pass"
+        );
     }
 
     [Fact]
@@ -956,7 +1064,13 @@ public class OnnxTilerTests : IDisposable
         if (total > 0)
         {
             Assert.True(total >= used);
-            Assert.Equal(total - used, free);
+
+            // free is the driver's budget when the driver reports one, and that budget is
+            // deliberately below total - used: it is what is left after the desktop's and any other
+            // tenant's reservation. The raw difference only matches on an idle card, so asserting
+            // equality here made this test fail whenever anything else on the machine was using the
+            // GPU, which is most of the time on a desktop.
+            Assert.InRange(free, 0, total - used);
         }
     }
 
