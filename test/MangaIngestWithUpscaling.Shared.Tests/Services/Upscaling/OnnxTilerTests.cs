@@ -4,8 +4,10 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
-public class OnnxTilerTests
+public class OnnxTilerTests : IDisposable
 {
+    private readonly List<string> _created = [];
+
     [Fact]
     public void ExtractCrop_ExtractsCorrectRegion()
     {
@@ -958,6 +960,28 @@ public class OnnxTilerTests
         }
     }
 
-    private static string CreateDir() =>
-        Path.Combine(Path.GetTempPath(), $"tiler_tests_{Guid.NewGuid():N}");
+    private string CreateDir()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"tiler_tests_{Guid.NewGuid():N}");
+        _created.Add(dir);
+        return dir;
+    }
+
+    public void Dispose()
+    {
+        foreach (string dir in _created)
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+            catch
+            {
+                // A leftover temp directory is not worth failing a test over.
+            }
+        }
+    }
 }

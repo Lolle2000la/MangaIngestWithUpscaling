@@ -25,7 +25,7 @@ public class MangaJaNaiUpscaler(
     IStringLocalizer<MangaJaNaiUpscaler> localizer
 ) : IUpscaler
 {
-    private record ModelPackage(
+    internal record ModelPackage(
         string ZipUrl,
         string ZipHash,
         Dictionary<string, string> ExpectedFileHashes,
@@ -44,7 +44,7 @@ public class MangaJaNaiUpscaler(
         }
     );
 
-    private static readonly List<ModelPackage> Fp16ModelPackages =
+    internal static readonly List<ModelPackage> Fp16ModelPackages =
     [
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/MangaJaNai_V1_FP16_ONNX.zip",
@@ -211,7 +211,7 @@ public class MangaJaNaiUpscaler(
         ),
     ];
 
-    private static readonly List<ModelPackage> Fp32ModelPackages =
+    internal static readonly List<ModelPackage> Fp32ModelPackages =
     [
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/MangaJaNai_V1_ONNX.zip",
@@ -383,7 +383,37 @@ public class MangaJaNaiUpscaler(
         ),
     ];
 
-    private IReadOnlyList<ModelPackage> GetModelPackages()
+    /// <summary>
+    /// Every model file any package expects, with the name it is stored under.
+    /// <para>
+    /// The resolution lives here rather than at the call sites because it is the same rule the
+    /// download path applies: the fp32 archives ship the same file names as the fp16 ones and are
+    /// renamed on extraction, so "is this model present" cannot be answered from the archive name
+    /// alone.
+    /// </para>
+    /// </summary>
+    internal static IEnumerable<string> ExpectedModelFiles()
+    {
+        foreach (List<ModelPackage> packages in new[] { Fp32ModelPackages, Fp16ModelPackages })
+        {
+            foreach (ModelPackage package in packages)
+            {
+                foreach (string archiveName in package.ExpectedFileHashes.Keys)
+                {
+                    yield return ModelFileNames.Resolve(archiveName, package.PrecisionSuffix);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The page-break detector's file name, which is not part of a precision pair and so is not
+    /// covered by <see cref="ExpectedModelFiles"/>.
+    /// </summary>
+    internal static string DetectorModelFileName =>
+        PageBreakDetectorPackage.ExpectedFileHashes.Keys.Single();
+
+    internal IReadOnlyList<ModelPackage> GetModelPackages()
     {
         // Resolve the provider once: it answers two questions here, and probing it per read would
         // put a device discovery behind what looks like a plain property access.

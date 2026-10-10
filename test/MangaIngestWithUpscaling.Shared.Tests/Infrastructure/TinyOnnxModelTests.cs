@@ -10,8 +10,10 @@ namespace MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 /// here rather than as a confusing failure in whichever test asked for a model. Everything it
 /// asserts is checked against the real ONNX Runtime, which is the whole point of the generator.
 /// </summary>
-public class TinyOnnxModelTests
+public class TinyOnnxModelTests : IDisposable
 {
+    private readonly List<string> _created = [];
+
     [Fact]
     public void WriteNearestUpscaler_LoadsInOnnxRuntime()
     {
@@ -111,6 +113,33 @@ public class TinyOnnxModelTests
         Assert.Equal(3, output.Dimensions[3]);
     }
 
-    private static string CreateDir() =>
-        Path.Combine(Path.GetTempPath(), $"tiny_onnx_{Guid.NewGuid():N}");
+    private string CreateDir()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"tiny_onnx_{Guid.NewGuid():N}");
+        _created.Add(dir);
+        return dir;
+    }
+
+    public void Dispose()
+    {
+        foreach (string dir in _created)
+        {
+            TryDelete(dir);
+        }
+    }
+
+    private static void TryDelete(string dir)
+    {
+        try
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+        catch
+        {
+            // A leftover temp directory is not worth failing a test over.
+        }
+    }
 }

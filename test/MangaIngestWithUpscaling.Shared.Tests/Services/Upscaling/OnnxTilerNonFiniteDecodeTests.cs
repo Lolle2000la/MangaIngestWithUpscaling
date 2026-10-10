@@ -14,8 +14,10 @@ namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 /// black again — so they are pinned here through a real session over a generated model that really
 /// does return NaN.
 /// </summary>
-public class OnnxTilerNonFiniteDecodeTests
+public class OnnxTilerNonFiniteDecodeTests : IDisposable
 {
+    private readonly List<string> _created = [];
+
     private const int TileW = 2;
     private const int TileH = 2;
     private const int Scale = 4;
@@ -77,7 +79,7 @@ public class OnnxTilerNonFiniteDecodeTests
     /// Runs one generated model through the real tiler decode path. The exception is returned rather
     /// than thrown so the theory can assert on it and on the bytes in one call.
     /// </summary>
-    private static (byte[] Input, byte[]? Decoded, Exception? Thrown) Run(bool nan, bool fp16)
+    private (byte[] Input, byte[]? Decoded, Exception? Thrown) Run(bool nan, bool fp16)
     {
         string modelPath = TinyOnnxModel.WriteNonFiniteOutput(CreateDir(), nan, fp16);
         using var session = new InferenceSession(modelPath);
@@ -122,6 +124,28 @@ public class OnnxTilerNonFiniteDecodeTests
         }
     }
 
-    private static string CreateDir() =>
-        Path.Combine(Path.GetTempPath(), $"nonfinite_decode_{Guid.NewGuid():N}");
+    private string CreateDir()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"nonfinite_decode_{Guid.NewGuid():N}");
+        _created.Add(dir);
+        return dir;
+    }
+
+    public void Dispose()
+    {
+        foreach (string dir in _created)
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+            catch
+            {
+                // A leftover temp directory is not worth failing a test over.
+            }
+        }
+    }
 }

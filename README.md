@@ -18,7 +18,10 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 For information on how to set up and use a remote worker for upscaling, please see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md).
 
-For information about the remote-only server variant without ML dependencies, see the [Remote-Only Variant Documentation](./docs/REMOTE_ONLY_VARIANT.md).
+For information about running the server without local ML dependencies and delegating all
+upscaling to remote workers, see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md) and set
+`Ingest_Upscaler__RemoteOnly=true` — see [the remote-only configuration](./docs/REMOTE_ONLY_VARIANT.md),
+which is deprecated in favour of that environment variable.
 
 ## Usage
 
@@ -35,7 +38,7 @@ The preferred way to run the application is through Docker. The standard image s
 The application runs pure C# using ONNX Runtime for ML inference. There is no Python or PyTorch deployment needed:
 
 - **Ultra-lightweight footprint** — no multi-gigabyte PyTorch/CUDA wheels downloaded
-- **Native Hardware Acceleration** — supports MIGraphX (AMD GPUs), CUDA (NVIDIA), DirectML (Windows), and CPU fallback
+- **Native Hardware Acceleration** — one image per vendor: WebGPU on AMD Radeon, Intel and Apple, CUDA on NVIDIA, DirectML on Windows, plus a CPU fallback
 - **Automatic Model Provisioning** — optimized ONNX models are downloaded on demand into the `/models` directory from GitHub releases
 - **Persistent models** — models are cached in `/models` across updates
 
@@ -112,30 +115,33 @@ services:
 
 See [GPU Backend Configuration](./docs/GPU_BACKEND_CONFIGURATION.md) for full details.
 
-### Remote-Only Variant
+### Remote-Only Mode
 
-For users who want to run the server component without any machine learning dependencies and handle upscaling exclusively through remote workers, a special "remote-only" variant is available:
+If you already run a GPU machine for something else, you can keep the server itself free of any
+machine-learning work by pointing it at [remote workers](./docs/REMOTE_WORKER.md) instead. Use the
+standard image and switch local upscaling off:
 
 ```yaml
 version: '3.9'
 
 services:
   mangaingestwithupscaling:
-    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-remote-only
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
     restart: unless-stopped
     environment:
       TZ: #your timezone here
-      Ingest_Upscaler__RemoteOnly: true # This is set automatically in the remote-only image
+      # Enable remote-only mode - disables local upscaling
+      Ingest_Upscaler__RemoteOnly: true
       # Kavita integration
       #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
       #Ingest_Kavita__ApiKey: #Your API key here
       #Ingest_Kavita__Enabled: True # defaults to false
       # OIDC Authentication (v0.12.0+)
-      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
-      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
-      #Ingest_OIDC__ClientId: # Your OIDC client ID
-      #Ingest_OIDC__ClientSecret: # Your OIDC client secret
-      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document
+      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC
+      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/manga/)
+      #Ingest_OIDC__ClientId: # Your OIDC provider's client ID
+      #Ingest_OIDC__ClientSecret: # Your OIDC provider's client secret
+      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to your OIDC discovery document
     volumes:
       - /path/to/store/appdata:/data # for storing the database and logs
       # ... other folders you want to be able to access from the container
@@ -147,13 +153,10 @@ services:
     #user: '1000:1000' # change the user/group for improved security
 ```
 
-**Benefits of the Remote-Only Variant:**
-- **Smaller image size**: No PyTorch or ML dependencies included
-- **Lower resource requirements**: Perfect for running on resource-constrained servers
-- **Cleaner separation**: All upscaling is handled by dedicated remote worker machines
-- **Automatic configuration**: `RemoteOnly` is pre-configured to `true`
-
-This variant requires you to set up one or more [remote workers](./docs/REMOTE_WORKER.md) on separate machines with GPU capabilities to handle the actual upscaling tasks.
+With this set, the server loads no model at all and needs no GPU access; the `/models` volume can
+be dropped. All upscaling is then handled by one or more
+[remote workers](./docs/REMOTE_WORKER.md) on separate machines with GPU capabilities. See
+[Remote-Only Configuration](./docs/REMOTE_ONLY_VARIANT.md) for the full option list.
 
 ### OIDC Configuration (v0.12.0+)
 

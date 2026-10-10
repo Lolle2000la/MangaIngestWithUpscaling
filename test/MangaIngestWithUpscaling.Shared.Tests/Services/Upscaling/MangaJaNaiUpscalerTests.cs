@@ -1,4 +1,3 @@
-using System.Reflection;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -90,14 +89,19 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
+        foreach (string dir in new[] { _tempDir, _mockConfig.Value.ResolvedModelsDirectory })
         {
-            Directory.Delete(_tempDir, true);
-        }
-
-        if (Directory.Exists(_mockConfig.Value.ModelsDirectory))
-        {
-            Directory.Delete(_mockConfig.Value.ModelsDirectory, true);
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+            catch
+            {
+                // A leftover temp directory is not worth failing a test over.
+            }
         }
     }
 
@@ -398,15 +402,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             )
             .Returns(callInfo =>
             {
-                // Use reflection to create the TempResizedCbz since constructor is internal
-                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
-                    BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    new[] { typeof(string), typeof(IImageResizeService) },
-                    null
-                );
-                return (TempResizedCbz)
-                    constructor!.Invoke(new object[] { tempResizedPath, _mockImageResize });
+                // The constructor is internal, but the assembly is a friend of the shared
+                // assembly, so it is callable directly. Constructing it through reflection only
+                // renames the constructor at runtime: a rename or signature change would show up
+                // as a NullReferenceException instead of a compile error.
+                return new TempResizedCbz(tempResizedPath, _mockImageResize);
             });
 
         var cancellationToken = CancellationToken.None;
@@ -491,15 +491,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             )
             .Returns(callInfo =>
             {
-                // Use reflection to create the TempResizedCbz since constructor is internal
-                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
-                    BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    new[] { typeof(string), typeof(IImageResizeService) },
-                    null
-                );
-                return (TempResizedCbz)
-                    constructor!.Invoke(new object[] { tempPreprocessedPath, _mockImageResize });
+                // The constructor is internal, but the assembly is a friend of the shared
+                // assembly, so it is callable directly. Constructing it through reflection only
+                // renames the constructor at runtime: a rename or signature change would show up
+                // as a NullReferenceException instead of a compile error.
+                return new TempResizedCbz(tempPreprocessedPath, _mockImageResize);
             });
 
         var cancellationToken = CancellationToken.None;
@@ -590,15 +586,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             )
             .Returns(callInfo =>
             {
-                // Use reflection to create the TempResizedCbz since constructor is internal
-                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
-                    BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    new[] { typeof(string), typeof(IImageResizeService) },
-                    null
-                );
-                return (TempResizedCbz)
-                    constructor!.Invoke(new object[] { tempPreprocessedPath, _mockImageResize });
+                // The constructor is internal, but the assembly is a friend of the shared
+                // assembly, so it is callable directly. Constructing it through reflection only
+                // renames the constructor at runtime: a rename or signature change would show up
+                // as a NullReferenceException instead of a compile error.
+                return new TempResizedCbz(tempPreprocessedPath, _mockImageResize);
             });
 
         var cancellationToken = CancellationToken.None;
@@ -925,23 +917,12 @@ public class MangaJaNaiUpscalerTests : IDisposable
             _mockLocalizer
         );
 
-        var method = typeof(MangaJaNaiUpscaler).GetMethod(
-            "GetModelPackages",
-            BindingFlags.NonPublic | BindingFlags.Instance
-        );
-        Assert.NotNull(method);
-
-        var packages = method.Invoke(upscaler, null) as System.Collections.IEnumerable;
-        Assert.NotNull(packages);
-
-        var list = packages.Cast<object>().ToList();
+        var list = (
+            (IEnumerable<MangaJaNaiUpscaler.ModelPackage>)upscaler.GetModelPackages()
+        ).ToList();
         Assert.True(list.Count >= 6);
 
-        var firstPackage = list[0];
-        var urlProp = firstPackage.GetType().GetProperty("ZipUrl");
-        Assert.NotNull(urlProp);
-
-        string? url = urlProp.GetValue(firstPackage) as string;
+        string? url = list[0].ZipUrl;
         Assert.NotNull(url);
         Assert.Contains(expectedMainZip, url);
     }
@@ -970,16 +951,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
             _mockLocalizer
         );
 
-        var method = typeof(MangaJaNaiUpscaler).GetMethod(
-            "GetModelPackages",
-            BindingFlags.NonPublic | BindingFlags.Instance
-        );
-        Assert.NotNull(method);
-
-        var packages = method.Invoke(upscaler, null) as System.Collections.IEnumerable;
-        Assert.NotNull(packages);
-
-        var list = packages.Cast<object>().ToList();
+        var list = (
+            (IEnumerable<MangaJaNaiUpscaler.ModelPackage>)upscaler.GetModelPackages()
+        ).ToList();
         var firstPackage = list[0];
         var urlProp = firstPackage.GetType().GetProperty("ZipUrl");
         Assert.NotNull(urlProp);
@@ -1019,17 +993,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
             _mockLocalizer
         );
 
-        var method = typeof(MangaJaNaiUpscaler).GetMethod(
-            "GetModelPackages",
-            BindingFlags.NonPublic | BindingFlags.Instance
-        );
-        var packages = (method!.Invoke(upscaler, null) as System.Collections.IEnumerable)!
-            .Cast<object>()
-            .ToList();
-
-        var urls = packages
-            .Select(p => (string)p.GetType().GetProperty("ZipUrl")!.GetValue(p)!)
-            .ToList();
+        var urls = upscaler.GetModelPackages().Select(p => p.ZipUrl).ToList();
 
         Assert.Contains(urls, u => u.EndsWith("_FP16_ONNX.zip", StringComparison.Ordinal));
         Assert.Equal(
@@ -1046,100 +1010,55 @@ public class MangaJaNaiUpscalerTests : IDisposable
     {
         // The fp16 and fp32 archives ship identical file names: without a suffix on the fp32 side
         // one precision overwrites the other and there is nothing to fall back to.
-        var fp32 = Packages("Fp32ModelPackages");
-        var fp16 = Packages("Fp16ModelPackages");
-
-        Assert.NotEmpty(fp32);
-        Assert.NotEmpty(fp16);
-        Assert.All(fp32, p => Assert.Equal(ModelFileNames.Fp32Suffix, p));
-        Assert.All(fp16, p => Assert.Null(p));
+        Assert.NotEmpty(MangaJaNaiUpscaler.Fp32ModelPackages);
+        Assert.NotEmpty(MangaJaNaiUpscaler.Fp16ModelPackages);
+        Assert.All(
+            MangaJaNaiUpscaler.Fp32ModelPackages,
+            p => Assert.Equal(ModelFileNames.Fp32Suffix, p.PrecisionSuffix)
+        );
+        Assert.All(MangaJaNaiUpscaler.Fp16ModelPackages, p => Assert.Null(p.PrecisionSuffix));
     }
 
-    private static List<string?> Packages(string fieldName)
+    [Fact]
+    public void ExpectedModelFiles_CoversBothPrecisionsUnderDistinctNames()
     {
-        var packages =
-            typeof(MangaJaNaiUpscaler)
-                .GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static)!
-                .GetValue(null) as System.Collections.IEnumerable;
-        Assert.NotNull(packages);
-        return packages!
-            .Cast<object>()
-            .Select(p => (string?)p.GetType().GetProperty("PrecisionSuffix")!.GetValue(p))
-            .ToList();
+        // The rule the download path depends on: every archive name resolves to a name on disk, and
+        // the two precisions of one family never collide.
+        List<string> files = MangaJaNaiUpscaler.ExpectedModelFiles().ToList();
+
+        Assert.NotEmpty(files);
+        Assert.Equal(files.Count, files.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx", files);
+        Assert.Contains("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx", files);
     }
 
     /// <summary>
     /// Writes a placeholder for every model the suite expects except <paramref name="missing"/>,
-    /// including the name each package stores its files under (the fp32 packages are renamed on
-    /// extraction, see <see cref="ModelFileNames"/>). With those in place only the package that
+    /// under the name each package stores its files under. With those in place only the package that
     /// holds the missing file is fetched, which is what the test is about; the other packages are
     /// not, and without the placeholders the test would pull down every archive in the release.
     /// </summary>
-    private void SeedEveryExpectedModelExcept(string missing)
+    private void SeedEveryExpectedModelExcept(string missing) =>
+        SeedEveryExpectedModelExcept(missing, MangaJaNaiUpscaler.ExpectedModelFiles());
+
+    private void SeedEveryExpectedModelExcept(string missing, IEnumerable<string> expectedFiles)
     {
         // The configured models directory, not _tempDir: that is the directory the download step
         // looks at, and the two are deliberately not the same.
         string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
         Directory.CreateDirectory(modelsDirectory);
-        foreach (
-            (List<string> Expected, string? PrecisionSuffix) package in ExpectedModelPackages()
-        )
+
+        foreach (string onDisk in expectedFiles)
         {
-            foreach (string archiveName in package.Expected)
+            // The detector is compared by its archive name, the precision pairs by their stored
+            // name, because that is the name the existence check looks for.
+            if (
+                !string.Equals(onDisk, missing, StringComparison.OrdinalIgnoreCase)
+                && !Path.GetFileName(onDisk).Equals(missing, StringComparison.OrdinalIgnoreCase)
+            )
             {
-                string onDisk = ModelFileNames.Resolve(archiveName, package.PrecisionSuffix);
-                if (
-                    !string.Equals(onDisk, missing, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(archiveName, missing, StringComparison.OrdinalIgnoreCase)
-                )
-                {
-                    File.WriteAllText(Path.Combine(modelsDirectory, onDisk), "placeholder");
-                }
+                File.WriteAllText(Path.Combine(modelsDirectory, onDisk), "placeholder");
             }
         }
-    }
-
-    private static List<(List<string> Expected, string? PrecisionSuffix)> ExpectedModelPackages()
-    {
-        var packages = new List<(List<string> Expected, string? PrecisionSuffix)>();
-        foreach (
-            var field in typeof(MangaJaNaiUpscaler)
-                .GetFields(BindingFlags.NonPublic | BindingFlags.Static)
-                .Where(f => f.Name.EndsWith("ModelPackages", StringComparison.Ordinal))
-        )
-        {
-            if (field.GetValue(null) is not System.Collections.IEnumerable packageList)
-            {
-                continue;
-            }
-
-            foreach (var package in packageList)
-            {
-                Type type = package.GetType();
-                if (
-                    type.GetProperty("ExpectedFileHashes")?.GetValue(package)
-                    is not System.Collections.IEnumerable hashes
-                )
-                {
-                    continue;
-                }
-
-                var expected = new List<string>();
-                foreach (var entry in hashes)
-                {
-                    object? key = entry.GetType().GetProperty("Key")?.GetValue(entry);
-                    if (key is string name)
-                    {
-                        expected.Add(name);
-                    }
-                }
-
-                packages.Add(
-                    (expected, type.GetProperty("PrecisionSuffix")?.GetValue(package) as string)
-                );
-            }
-        }
-
-        return packages;
     }
 }
