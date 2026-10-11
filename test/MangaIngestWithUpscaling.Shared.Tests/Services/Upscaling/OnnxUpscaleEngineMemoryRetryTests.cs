@@ -1,0 +1,189 @@
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.ML.OnnxRuntime;
+using NetVips;
+using NSubstitute;
+using Xunit;
+
+namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
+
+public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
+{
+    private readonly string _tempDir;
+
+    public OnnxUpscaleEngineMemoryRetryTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"onnx_engine_retry_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_tempDir))
+            {
+                Directory.Delete(_tempDir, recursive: true);
+            }
+        }
+        catch { }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task MemoryPressureRetry_UsesASessionFetchedAfterTheInvalidation()
+    {
+        // The memory-pressure path invalidates the cached session to give the halved tile a clean
+        // device, and the real factory disposes the instance it removed. The session the loop is
+        // holding is that instance, so the next attempt has to fetch a new one: InferenceSession has
+        // no disposed guard, and a Run on the released handle throws a native error that is not a
+        // memory exception — it lands in the generic catch and loses the page instead of recovering.
+        // Reusing it is what made the whole recovery path dead.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = new MemoryPressureSessionFactory(modelPath);
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new OnnxUpscaleEngine(
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        string outputPath = Path.Combine(_tempDir, "upscaled.webp");
+        await engine.UpscaleFileAsync(
+            inputPath,
+            outputPath,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            TestContext.Current.CancellationToken
+        );
+
+        // It recovered rather than failing: the halved tile produced the whole page.
+        Assert.True(File.Exists(outputPath));
+        using var outImg = Image.NewFromFile(outputPath);
+        Assert.Equal(width * scale, outImg.Width);
+        Assert.Equal(height * scale, outImg.Height);
+
+        // The retry asked the factory for a session after invalidating the one it held. Without the
+        // re-fetch this is zero, and the attempt above runs on a disposed session.
+        Assert.True(
+            factory.SessionsRequestedAfterInvalidation > 0,
+            "the retry did not fetch a new session after the invalidation"
+        );
+        Assert.Equal(2, factory.InferenceScopeCalls);
+    }
+
+    private static string CreateTestJpeg(int width, int height)
+    {
+        byte[] rgb = new byte[width * height * 3];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int i = (y * width + x) * 3;
+                rgb[i] = (byte)(x % 256);
+                rgb[i + 1] = (byte)(y % 256);
+                rgb[i + 2] = (byte)((x + y) % 256);
+            }
+        }
+
+        using var image = Image.NewFromMemory(rgb, width, height, 3, Enums.BandFormat.Uchar);
+        string path = Path.Combine(Path.GetTempPath(), $"engine_retry_{Guid.NewGuid():N}.jpg");
+        image.WriteToFile(path, new VOption());
+        return path;
+    }
+
+    /// <summary>
+    /// Hands out real sessions and disposes the one its cache held on
+    /// <see cref="InvalidateSession"/>, exactly as <see cref="OnnxSessionFactory"/> does, so the
+    /// consequence of reusing the session variable across the invalidate is the same here.
+    /// <para>
+    /// The memory pressure is injected through <see cref="EnterInferenceScope"/> rather than by
+    /// exhausting the device: that is the only call the upscale path makes inside the retry loop, so
+    /// the first one is the first tile attempt and the exception lands on exactly the path a real
+    /// out-of-memory would. Throwing from there needs no GPU and no unreproducible size pressure.
+    /// </para>
+    /// </summary>
+    private sealed class MemoryPressureSessionFactory(string modelPath) : IOnnxSessionFactory
+    {
+        private readonly Lock _lock = new();
+        private InferenceSession? _session;
+        private int _invalidations;
+        private int _requestedAfterInvalidation;
+        private int _scopeCalls;
+
+        /// <summary>Sessions asked for after the first invalidation; 1 means the retry re-fetched.</summary>
+        public int SessionsRequestedAfterInvalidation
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _requestedAfterInvalidation;
+                }
+            }
+        }
+
+        public int InferenceScopeCalls => Volatile.Read(ref _scopeCalls);
+
+        public InferenceSession GetOrCreateSession(string modelPath)
+        {
+            lock (_lock)
+            {
+                if (_invalidations > 0)
+                {
+                    _requestedAfterInvalidation++;
+                }
+
+                return _session ??= new InferenceSession(modelPath);
+            }
+        }
+
+        public InferenceSession CreateSession(string modelPath) => new(modelPath);
+
+        public void InvalidateSession(string modelPath)
+        {
+            lock (_lock)
+            {
+                _invalidations++;
+                _session?.Dispose();
+                _session = null;
+            }
+        }
+
+        public void InvalidateAllSessions() => InvalidateSession(modelPath);
+
+        public Shared.Configuration.GpuBackend GetEffectiveBackend() =>
+            Shared.Configuration.GpuBackend.CPU;
+
+        public IDisposable EnterInferenceScope()
+        {
+            if (Interlocked.Increment(ref _scopeCalls) == 1)
+            {
+                throw new OutOfMemoryException("simulated device memory pressure");
+            }
+
+            return new NoOpScope();
+        }
+
+        public void Dispose() => InvalidateSession(modelPath);
+
+        private sealed class NoOpScope : IDisposable
+        {
+            public void Dispose() { }
+        }
+    }
+}

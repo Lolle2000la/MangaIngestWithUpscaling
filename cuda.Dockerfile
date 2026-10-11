@@ -14,7 +14,7 @@ COPY ["src/MangaIngestWithUpscaling.Data.Sqlite/MangaIngestWithUpscaling.Data.Sq
 COPY ["src/MangaIngestWithUpscaling.Data.Postgres/MangaIngestWithUpscaling.Data.Postgres.csproj", "src/MangaIngestWithUpscaling.Data.Postgres/"]
 COPY ["tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj", "tools/MangaIngestWithUpscaling.DbMigrator/"]
 RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj" -p:OnnxRuntimeFlavor=Cuda
-RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj"
+RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -p:OnnxRuntimeFlavor=Cuda
 COPY . .
 WORKDIR "/src/src/MangaIngestWithUpscaling"
 RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c Release -o /app/build -p:OnnxRuntimeFlavor=Cuda
@@ -22,7 +22,7 @@ RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c Release -o /app/build -p
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c Release -a $TARGETARCH -o /app/publish /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cuda
-RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c Release -a $TARGETARCH -o /app/migrator /p:UseAppHost=false
+RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c Release -a $TARGETARCH -o /app/migrator /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cuda
 RUN cp -rn /app/migrator/. /app/publish/
 
 FROM ${BASE_IMAGE} AS final

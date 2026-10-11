@@ -38,7 +38,7 @@ The preferred way to run the application is through Docker. The standard image s
 The application runs pure C# using ONNX Runtime for ML inference. There is no Python or PyTorch deployment needed:
 
 - **Ultra-lightweight footprint** — no multi-gigabyte PyTorch/CUDA wheels downloaded
-- **Native Hardware Acceleration** — one image per vendor: WebGPU on AMD Radeon, Intel and Apple, CUDA on NVIDIA, DirectML on Windows, plus a CPU fallback
+- **Native Hardware Acceleration** — two shipped images: a universal image using the WebGPU execution provider (Vulkan on AMD Radeon and Intel GPUs) with CPU fallback, and a CUDA image for NVIDIA GPUs; other execution providers (DirectML, MIGraphX, OpenVINO) are selectable in configuration, but only where the shipped runtime build includes them
 - **Automatic Model Provisioning** — optimized ONNX models are downloaded on demand into the `/models` directory from GitHub releases
 - **Persistent models** — models are cached in `/models` across updates
 

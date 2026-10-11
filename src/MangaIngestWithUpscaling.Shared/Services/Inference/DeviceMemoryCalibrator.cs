@@ -66,6 +66,16 @@ public sealed class DeviceMemoryCalibrator(
     /// </summary>
     private readonly HashSet<string> _unsupported = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Whether the forced recalibration has already been honoured in this process.
+    /// <see cref="UpscalerConfig.RecalibrateDeviceMemory"/> means "on the next upscale", but
+    /// configuration is only ever read — nothing writes <see cref="UpscalerConfig"/> back — so the
+    /// flag cannot be cleared at the source. Remembering the one-shot here is what stops it from
+    /// re-benchmarking on every page of every chapter: three inferences plus a session teardown
+    /// each time, to re-derive the profile it has just saved.
+    /// </summary>
+    private bool _forcedRecalibrationDone;
+
     public async Task<DeviceMemoryProfile?> GetOrCalibrateAsync(
         int deviceId,
         string modelsDirectory,
@@ -86,7 +96,9 @@ public sealed class DeviceMemoryCalibrator(
         await asyncGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!config.Value.RecalibrateDeviceMemory)
+            bool force = config.Value.RecalibrateDeviceMemory && !_forcedRecalibrationDone;
+
+            if (!force)
             {
                 DeviceMemoryProfile? cached = store.Load(modelsDirectory, fingerprint);
                 if (cached is not null)
@@ -107,7 +119,7 @@ public sealed class DeviceMemoryCalibrator(
             // to would otherwise pay three inferences plus a session teardown on every page. A
             // measurement that worked is deliberately not in here (see below), so a fingerprint in
             // this set always skipped the benchmark, never a successful one.
-            if (!config.Value.RecalibrateDeviceMemory && _unsupported.Contains(fingerprint))
+            if (!force && _unsupported.Contains(fingerprint))
             {
                 return null;
             }
@@ -116,13 +128,17 @@ public sealed class DeviceMemoryCalibrator(
             try
             {
                 profile = RunBenchmark(deviceId, modelsDirectory, fingerprint);
+                // Once the forced benchmark has actually run, the forced calibration is spent:
+                // whether it produced a profile or not, every later call takes the normal path.
+                _forcedRecalibrationDone = true;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                if (!config.Value.RecalibrateDeviceMemory)
-                {
-                    RecordUnusable(fingerprint);
-                }
+                // The forced benchmark ran and threw, so the calibration is still spent. The failure
+                // is remembered unconditionally: a forced attempt has to be as sticky as a normal
+                // one, otherwise the next page falls straight through to a second benchmark.
+                _forcedRecalibrationDone = true;
+                RecordUnusable(fingerprint);
 
                 logger.LogWarning(
                     ex,
@@ -131,7 +147,7 @@ public sealed class DeviceMemoryCalibrator(
                 return null;
             }
 
-            if (profile is null && !config.Value.RecalibrateDeviceMemory)
+            if (profile is null)
             {
                 RecordUnusable(fingerprint);
             }

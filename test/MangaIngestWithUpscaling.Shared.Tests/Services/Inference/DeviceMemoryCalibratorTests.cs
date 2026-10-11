@@ -186,7 +186,7 @@ public class DeviceMemoryCalibratorTests
     }
 
     [Fact]
-    public async Task GetOrCalibrate_WithRecalibrateForced_RetriesAFailedBenchmark()
+    public async Task GetOrCalibrate_WithRecalibrateForced_BenchmarksOnceForTheWholeProcess()
     {
         string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
@@ -211,12 +211,96 @@ public class DeviceMemoryCalibratorTests
                 fileName: "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"
             );
 
-            await calibrator.GetOrCalibrateAsync(0, dir, TestContext.Current.CancellationToken);
-            await calibrator.GetOrCalibrateAsync(0, dir, TestContext.Current.CancellationToken);
+            // RecalibrateDeviceMemory means "on the next upscale", not "on every upscale": the first
+            // call re-measures, and the rest of the process takes the normal path (here: the now
+            // remembered failure), so the pages of one chapter do not each pay the benchmark again.
+            DeviceMemoryProfile? first = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+            sessionFactory.Received(1).GetOrCreateSession(Arg.Any<string>());
 
-            // Forcing recalibration means the "already tried" short-circuit must not apply, nor may
-            // the failure be remembered for it.
-            sessionFactory.Received(2).GetOrCreateSession(Arg.Any<string>());
+            DeviceMemoryProfile? second = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+            DeviceMemoryProfile? third = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Null(first);
+            Assert.Null(second);
+            Assert.Null(third);
+            sessionFactory.Received(1).GetOrCreateSession(Arg.Any<string>());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetOrCalibrate_WithRecalibrateForced_AfterTheOneShotUsesTheCachedProfile()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // A profile this device has already been measured with, plus a benchmark that cannot
+            // run: the forced first call must ignore the cached value and re-measure, and the call
+            // after it must read the cached value without touching the GPU again.
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+            sessionFactory.GetOrCreateSession(Arg.Any<string>()).Returns((InferenceSession)null!);
+
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig { RecalibrateDeviceMemory = true }),
+                store,
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            TinyOnnxModel.WriteNearestUpscaler(
+                dir,
+                scale: 4,
+                fileName: "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"
+            );
+
+            string fingerprint = calibrator.BuildFingerprint(0);
+            store.Save(
+                dir,
+                new DeviceMemoryProfile
+                {
+                    Fingerprint = fingerprint,
+                    ActivationScale = 4.5,
+                    SessionReservationBytes = 100L * 1024 * 1024,
+                    CalibratedAtUtc = DateTimeOffset.UnixEpoch,
+                }
+            );
+
+            DeviceMemoryProfile? forced = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+            sessionFactory.Received(1).GetOrCreateSession(Arg.Any<string>());
+
+            DeviceMemoryProfile? after = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+
+            // The one-shot was spent on the first call: the re-measurement did not replace the
+            // stored profile, and the next upscale got it from the store for free.
+            Assert.Null(forced);
+            Assert.NotNull(after);
+            Assert.Equal(4.5, after!.ActivationScale);
+            sessionFactory.Received(1).GetOrCreateSession(Arg.Any<string>());
         }
         finally
         {

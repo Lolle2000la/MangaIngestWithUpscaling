@@ -388,9 +388,9 @@ public class OnnxTilerTests : IDisposable
     [Fact]
     public void PlanTileSplit_Esrgan4x_DerivesGridFromBudget()
     {
-        // 5 GiB budget on a 1600x2400 4x ESRGAN page in FP32: 267x343 tiles in a 6x7 grid. The page
-        // is wider than tall, so the cheap direction is columns; the next coarser grid (6x6) needs
-        // more per inference than the budget holds.
+        // 5 GiB budget on a 1600x2400 4x ESRGAN page in FP32: 267x267 tiles in a 6x9 grid. The
+        // smaller side is 267 px, the largest any grid can give at this budget once the session
+        // reservation comes off it, and 6x9 is the cheapest of the grids that tie there.
         OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             1600,
             2400,
@@ -401,7 +401,7 @@ public class OnnxTilerTests : IDisposable
         );
 
         Assert.Equal(6, split.Columns);
-        Assert.Equal(7, split.Rows);
+        Assert.Equal(9, split.Rows);
         Assert.Equal(320, OnnxTiler.UniformTileTensorShape(split).Width);
     }
 
@@ -543,7 +543,11 @@ public class OnnxTilerTests : IDisposable
                         scale,
                         model,
                         isFp16: true
-                    );
+                    )
+                    // The session reservation is device memory the tile holds too, and the planner
+                    // now subtracts it from the budget. Asserting without it here would re-implement
+                    // the very omission being tested for, and pass either way.
+                    + OnnxTiler.SessionReservationBytes;
 
                 // A budget too small for even the quality floor is the one case where the grid may
                 // exceed the budget: the floor protects output quality and the engine halves the
@@ -648,13 +652,16 @@ public class OnnxTilerTests : IDisposable
             "a 1.6 MP 4x ESRGAN page cannot be one pass"
         );
 
-        // The 8000 px axis is the only one that can absorb the budget, so the split follows it:
-        // fewer columns than the quality floor alone would give.
         Assert.Equal(1, split.Rows);
-        OnnxTiler.TileSplit floor = OnnxTiler.TileSplit.For(8000, 200, OnnxTiler.MinimumTileSize);
-        Assert.True(
-            split.Columns < floor.Columns,
-            $"expected fewer columns than the floor, got {split.Columns}"
+
+        // With the session reservation off the 2 GB budget, not even a 256 px floor tile fits this
+        // page — that is the point of subtracting it: the budget genuinely does not hold the tile
+        // plus the session's arenas. So the planner falls back to the floor grid rather than to a
+        // grid it cannot honour, and the engine halves the tiles again when the driver refuses the
+        // allocation. What must hold either way is that it tiles and follows the long axis.
+        Assert.Equal(
+            OnnxTiler.TileSplit.For(8000, 200, OnnxTiler.MinimumTileSize).Columns,
+            split.Columns
         );
     }
 
@@ -782,7 +789,7 @@ public class OnnxTilerTests : IDisposable
                         if (
                             OnnxTiler.EstimateModelBytes(model)
                                 + (long)(bytesPerPixel * candidate.PaddedTilePixels)
-                            > budget
+                            > budget - OnnxTiler.SessionReservationBytes
                         )
                         {
                             continue; // not affordable at this budget

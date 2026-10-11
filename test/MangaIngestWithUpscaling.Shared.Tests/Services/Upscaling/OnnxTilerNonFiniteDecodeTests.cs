@@ -75,6 +75,59 @@ public class OnnxTilerNonFiniteDecodeTests : IDisposable
         Assert.Equal(TileW * Scale * TileH * Scale * 3, decoded.Length);
     }
 
+    [Fact]
+    public void DecodeOutputTensor_RejectsAModelAtADifferentScaleThanRequested()
+    {
+        // The decode geometry comes from the REQUESTED scale. Candidate selection can fall back to
+        // "any model at all" in a models directory that lacks this scale, and such a model indexes
+        // with the wrong stride: a lower real scale runs off the end of the tensor, a higher one stays
+        // in bounds and decodes finite values — assembling the page from the wrong-scale tensors at
+        // the requested size, which is the silent direction. The element count catches both.
+        Assert.Throws<InvalidOperationException>(() => DecodeAtRequestedScale(2, requested: Scale));
+        Assert.Throws<InvalidOperationException>(() => DecodeAtRequestedScale(Scale, requested: 2));
+
+        // The matched scale still decodes, so the check is not simply rejecting everything.
+        Assert.Equal(
+            TileW * Scale * TileH * Scale * 3,
+            DecodeAtRequestedScale(Scale, requested: Scale).Length
+        );
+    }
+
+    private static byte[] DecodeAtRequestedScale(int modelScale, int requested)
+    {
+        // A models directory of its own: the caller's would leave the model under a name that makes
+        // the fixture's next use pick the wrong file.
+        string dir = Path.Combine(Path.GetTempPath(), $"decode_scale_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string modelPath = TinyOnnxModel.WriteNearestUpscaler(dir, scale: modelScale);
+            using var session = new InferenceSession(modelPath);
+
+            var input = new DenseTensor<Float16>(
+                Enumerable.Repeat(Float16.One, 3 * PaddedW * PaddedH).ToArray(),
+                [1, 3, PaddedH, PaddedW]
+            );
+            using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([
+                NamedOnnxValue.CreateFromTensor(TinyOnnxModel.InputName, input),
+            ]);
+
+            return OnnxTiler.DecodeOutputTensor(
+                outputs,
+                TileW,
+                TileH,
+                PaddedW,
+                PaddedH,
+                requested,
+                CancellationToken.None
+            );
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     /// <summary>
     /// Runs one generated model through the real tiler decode path. The exception is returned rather
     /// than thrown so the theory can assert on it and on the bytes in one call.

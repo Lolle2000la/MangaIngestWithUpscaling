@@ -690,24 +690,31 @@ public static class OnnxTiler
             return TileSplit.For(Math.Max(width, 1), Math.Max(height, 1), MinimumTileSize);
         }
 
+        // The session reservation is device memory the tiled path holds just as surely as the
+        // single-pass one, so it comes off the budget before either decision is made. Both the
+        // constant's own documentation and the memory-model doc promise this; leaving it out of the
+        // grid fit test let a grid be planned that overran the budget by exactly this much, which is
+        // the case the 0.9 single-pass fraction exists to avoid — and it absorbed it only because the
+        // fraction happens to be larger than the reservation on a big budget.
+        long sessionBudget = memoryBudgetBytes - sessionReservation;
+        if (sessionBudget <= weights)
+        {
+            // Nothing left for activations even with the reservation accounted for. Splitting at the
+            // quality floor is the best that can be done: it protects the output, and the engine
+            // halves the tiles again if the driver then refuses the allocation.
+            return TileSplit.For(width, height, MinimumTileSize);
+        }
+
         // Whole page as one inference: only claim it when the padded footprint stays comfortably
         // inside the budget, because a single-pass overflow cannot be recovered without restarting
         // the page.
         TileSplit singlePass = TileSplit.For(width, height, 0);
         if (
             weights + (long)(bytesPerPixel * singlePass.PaddedTilePixels)
-            <= memoryBudgetBytes * SinglePassSafetyFraction
+            <= sessionBudget * SinglePassSafetyFraction
         )
         {
             return singlePass;
-        }
-
-        // Nothing left for activations even before the first tile is chosen. Splitting at the
-        // quality floor is the best that can be done: it protects the output, and the engine halves
-        // the tiles again if the driver then refuses the allocation.
-        if (memoryBudgetBytes - weights - sessionReservation <= 0)
-        {
-            return TileSplit.For(width, height, MinimumTileSize);
         }
 
         int maxColumns = (width + MinimumTileSize - 1) / MinimumTileSize;
@@ -734,10 +741,7 @@ public static class OnnxTiler
 
                 var candidate = new TileSplit(columns, rows, tileWidth, tileHeight);
 
-                if (
-                    weights + (long)(bytesPerPixel * candidate.PaddedTilePixels)
-                    > memoryBudgetBytes
-                )
+                if (weights + (long)(bytesPerPixel * candidate.PaddedTilePixels) > sessionBudget)
                 {
                     continue;
                 }
@@ -1662,12 +1666,39 @@ public static class OnnxTiler
             int outGOff = outPlane;
             int outBOff = outPlane * 2;
 
+            // The offsets used to index the tensor are derived from the REQUESTED scale, while the
+            // tensor is whatever the model actually produced. A model whose real scale differs is only
+            // reachable from the last-resort candidate selection in a mis-provisioned models
+            // directory, where any model at all can be picked for a page of another scale. Such a
+            // model indexes with the wrong stride: a lower real scale runs off the end of the buffer,
+            // and a higher one stays in bounds, decodes finite values and passes every other check —
+            // so the page is silently assembled from the wrong-scale tensors at the requested size.
+            // Element count catches both, because what follows assumes exactly three planes of
+            // outPaddedW x outPaddedH. It runs after the non-finite scan, which already walks the
+            // buffer safely and is the cheaper failure to report.
+            void EnsureOutputGeometry(long actualElements)
+            {
+                if (actualElements == 3L * outPaddedW * outPaddedH)
+                {
+                    return;
+                }
+
+                throw new InvalidOperationException(
+                    $"Model output is {actualElements} elements but {3L * outPaddedW * outPaddedH} "
+                        + $"were expected for a {paddedW}x{paddedH} tile at {scale}x. The loaded model "
+                        + "is at a different scale than the requested one; the models directory is "
+                        + "incomplete or inconsistent for this scale."
+                );
+            }
+
             if (outNamedValue.Value is DenseTensor<Float16> halfOutTensor)
             {
                 if (ContainsNonFinite(halfOutTensor.Buffer.Span))
                 {
                     throw new NonFiniteModelOutputException();
                 }
+
+                EnsureOutputGeometry(halfOutTensor.Length);
 
                 Memory<Float16> halfMem = halfOutTensor.Buffer;
                 Parallel.For(
@@ -1699,6 +1730,8 @@ public static class OnnxTiler
                 {
                     throw new NonFiniteModelOutputException();
                 }
+
+                EnsureOutputGeometry(floatOutTensor.Length);
 
                 Memory<float> floatMem = floatOutTensor.Buffer;
                 Parallel.For(

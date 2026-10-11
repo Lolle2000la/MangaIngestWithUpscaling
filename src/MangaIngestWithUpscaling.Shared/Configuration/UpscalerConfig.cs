@@ -31,13 +31,18 @@ public record UpscalerConfig
     public const string Position = "Upscaler";
 
     /// <summary>
-    ///     Index of the device to use for upscaling.
-    ///     The device list is ordered with CPU at index 0, followed by the accelerators the runtime
-    ///     discovers for the selected backend (see <see cref="PreferredGpuBackend"/>).
-    ///     Defaults to 1 (the first available GPU/accelerator).
-    ///     Set to 0 to force CPU mode (equivalent to <see cref="UseCPU"/>).
+    ///     Index of the device to use for upscaling, bound from
+    ///     <c>Upscaler:SelectedDeviceIndex</c> (or <c>Ingest_Upscaler__SelectedDeviceIndex</c>).
+    ///     <para>
+    ///     The index is relative to the accelerators the runtime discovers for
+    ///     <see cref="PreferredGpuBackend"/>: 0 is the CPU switch, 1 is the first accelerator,
+    ///     2 the second, and so on.
+    ///     </para>
+    ///     Defaults to 1 (the first available accelerator).
+    ///     Set to 0 to force CPU mode (equivalent to <see cref="UseCPU"/>); any value below 0
+    ///     is treated as 0.
     /// </summary>
-    public int SelectedDeviceIndex = 1;
+    public int SelectedDeviceIndex { get; set; } = 1;
 
     /// <summary>
     ///     When enabled, the upscaler will only run on the remote worker. No local consumption will be attempted.
@@ -96,8 +101,11 @@ public record UpscalerConfig
 
     /// <summary>
     ///     Memory budget for automatic tile size estimation, as a byte count or a size string
-    ///     (<c>1GiB</c>, <c>12 GiB</c>, <c>12288MiB</c>). Unset, empty or unparseable means 0
-    ///     (<see cref="ResolvedMemoryBudgetBytes"/>).
+    ///     (<c>1GiB</c>, <c>12 GiB</c>, <c>12288MiB</c>). Unset or empty means 0
+    ///     (<see cref="ResolvedMemoryBudgetBytes"/>), which tells tile sizing to detect the budget
+    ///     from the device instead. A configured value that cannot be parsed is rejected at startup
+    ///     by <see cref="UpscalerConfigValidator"/>, so it never reaches
+    ///     <see cref="ResolvedMemoryBudgetBytes"/>.
     /// </summary>
     public string? MemoryBudgetBytes { get; set; }
 
@@ -116,10 +124,16 @@ public record UpscalerConfig
     public double? VramUtilizationFraction { get; set; } = null;
 
     /// <summary>
-    ///     Forces the one-off device memory benchmark to run again on the next upscale, replacing the
-    ///     stored calibration for this device. The benchmark itself is automatic: it runs the first
-    ///     time a device is seen and is cached per device in <c>device-memory-profile.json</c> next to
-    ///     the models. Only set this to re-measure, e.g. after a driver or model-set change.
+    ///     Forces the one-off per-device memory benchmark to run again on the next upscale, replacing
+    ///     the stored calibration for this device. The benchmark itself is automatic: it runs the
+    ///     first time a device is seen and is cached per device in <c>device-memory-profile.json</c>
+    ///     next to the models. Only set this to re-measure, e.g. after a driver or model-set change.
+    ///     <para>
+    ///     The calibration is honoured once, not continuously: configuration is read-only and never
+    ///     written back, so the benchmark runs on the next upscale and then stays out of the way for
+    ///     the rest of the process — the flag does not need clearing, and clearing it while the app
+    ///     runs does not stop that one re-measurement.
+    ///     </para>
     /// </summary>
     public bool RecalibrateDeviceMemory { get; set; } = false;
 

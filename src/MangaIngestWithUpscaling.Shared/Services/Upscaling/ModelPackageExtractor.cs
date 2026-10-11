@@ -9,7 +9,8 @@ public static class ModelPackageExtractor
 {
     /// <summary>
     /// Extracts <paramref name="zipPath"/> into <paramref name="modelsDirectory"/>, storing each
-    /// file under <see cref="ModelFileNames.Resolve(string, string?)"/>.
+    /// file under <see cref="ModelFileNames.Resolve(string, string?)"/>. The models directory stays
+    /// flat, so a file the archive kept in a subdirectory is stored under its own name.
     /// <para>
     /// The fp16 and fp32 archives of a model family ship identical file names, so the rename is
     /// what lets both precisions be installed at once. Extraction goes through a scratch
@@ -29,7 +30,19 @@ public static class ModelPackageExtractor
         {
             ZipFile.ExtractToDirectory(zipPath, scratch, overwriteFiles: true);
 
-            foreach (string extracted in Directory.GetFiles(scratch))
+            // The models directory is deliberately flat, so a nested entry has to be flattened
+            // like a top-level one: walking the whole scratch tree (not just its top level) is
+            // what keeps an archive that keeps its files in a subdirectory from having them
+            // deleted with the scratch tree instead of installed. The packages shipped today are
+            // flat, so that guard is theoretical; if an archive ever nests two entries under the
+            // same file name, the overwriting move makes whichever is enumerated last win.
+            foreach (
+                string extracted in Directory.EnumerateFiles(
+                    scratch,
+                    "*",
+                    SearchOption.AllDirectories
+                )
+            )
             {
                 string target = Path.Combine(
                     modelsDirectory,

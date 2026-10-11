@@ -834,10 +834,13 @@ public class OnnxUpscaleEngine(
                 {
                     try
                     {
-                        // Not re-fetched from the factory: the one above is still the cached session
-                        // for this model, and a second lookup could only evict it for nothing — the
-                        // cache holds a single model, so anything evicting it here would be another
-                        // model's, and it would then be rebuilt on the retry below.
+                        // Fetched per iteration, not once outside the loop: the memory-pressure path
+                        // below invalidates the cached session, which disposes the very instance this
+                        // variable holds. InferenceSession has no disposed guard, so a Run on that
+                        // handle surfaces as an opaque native error that is not a memory exception —
+                        // it would land in the generic catch and lose the page instead of recovering
+                        // at the halved tile. The lookup itself is a dictionary hit on the warm path.
+                        session = sessionFactory.GetOrCreateSession(modelPath);
                         using (sessionFactory.EnterInferenceScope())
                         {
                             upscaledBytes = OnnxTiler.UpscaleRgb(

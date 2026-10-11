@@ -136,6 +136,42 @@ public class ModelPackageExtractorTests : IDisposable
         Assert.Equal("content", File.ReadAllText(Path.Combine(nested, "model_fp32.onnx")));
     }
 
+    [Fact]
+    public void Extract_WithANestedEntry_FlattensItIntoTheModelsDirectory()
+    {
+        // An archive that keeps its files in a subdirectory used to have them deleted together
+        // with the scratch tree, so the model was missing while the package's hash check had
+        // already passed. The entry has to come out flat, under its resolved name.
+        CreateArchive("pkg.zip", ("nested/dir/model.onnx", "nested content"));
+
+        ModelPackageExtractor.Extract(
+            Path.Combine(_dir, "pkg.zip"),
+            _dir,
+            ModelFileNames.Fp32Suffix
+        );
+
+        Assert.Equal("nested content", File.ReadAllText(Path.Combine(_dir, "model_fp32.onnx")));
+        Assert.Empty(Directory.GetDirectories(_dir));
+    }
+
+    [Fact]
+    public void Extract_WithAMixedArchive_KeepsTopLevelAndNestedEntries()
+    {
+        CreateArchive(
+            "pkg.zip",
+            ("4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx", "top content"),
+            ("nested/dir/model.onnx", "nested content")
+        );
+
+        ModelPackageExtractor.Extract(Path.Combine(_dir, "pkg.zip"), _dir, null);
+
+        Assert.Equal(
+            "top content",
+            File.ReadAllText(Path.Combine(_dir, "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"))
+        );
+        Assert.Equal("nested content", File.ReadAllText(Path.Combine(_dir, "model.onnx")));
+    }
+
     private void CreateArchive(string name, params (string FileName, string Content)[] entries)
     {
         Directory.CreateDirectory(_dir);
