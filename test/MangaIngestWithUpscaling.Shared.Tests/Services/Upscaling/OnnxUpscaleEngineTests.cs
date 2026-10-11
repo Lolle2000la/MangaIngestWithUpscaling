@@ -588,7 +588,7 @@ public class OnnxUpscaleEngineTests : IDisposable
 
         Assert.True(File.Exists(output));
         using ZipArchive archive = ZipFile.OpenRead(output);
-        ZipArchiveEntry page = Assert.Single(archive.Entries.Where(e => e.Name.Length > 0));
+        ZipArchiveEntry page = Assert.Single(archive.Entries, e => e.Name.Length > 0);
         Assert.Equal((32 * scale, 40 * scale), ReadEntrySize(page));
     }
 
