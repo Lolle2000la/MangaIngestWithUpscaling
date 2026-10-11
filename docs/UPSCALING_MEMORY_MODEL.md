@@ -296,6 +296,15 @@ VRAM is already used. Below the threshold it keeps only a 256 MB reserve; above 
 eviction margin of 15% of total VRAM (1.5–3 GiB) kicks in, because drivers start evicting into GTT
 past 85–90% utilisation.
 
+The driver's own `VK_EXT_memory_budget` figure is *not* that number: RADV reports total-minus-used
+with no eviction headroom of its own (16 304 MB card, 3 190 MB used → 13 113 MB "budget", against a
+calculated 10 668 MB). Using it verbatim therefore spends the card to the point where the driver
+starts evicting: measured on this card a page reached 16.2 GB VRAM and 275 MB of GTT against the
+13.1 GB driver budget, and the fp32 FDAT_M plan that fitted in 3x3 tiles did not in 2x3. The driver
+figure is used verbatim only while the card counts as quasi-exclusive (nothing else using it, or a
+bounded partner below `VramExclusiveThresholdBytes`); otherwise it is capped by the calculated
+budget. At the calculated 10.7 GB both models planned a grid that stayed out of GTT.
+
 The default threshold is 350 MB — driver plus a display server. That is pessimistic for a card that
 *is* shared, but with a partner whose footprint is known and bounded (a video transcoder holding
 700 MB, a second inference server). `VramExclusiveThresholdBytes` moves the boundary:
@@ -376,15 +385,15 @@ model property it does not model, and the difference between the two behaviours 
 
 ---
 
-## 6. Per-device calibration
+## 6. Per-model calibration (per device)
 
 The coefficients above are generic. The two numbers that are *not* derivable from a model graph —
 how many times the analytic working set this particular accelerator actually needs, and how much
-memory a live session holds — are measured once per device and cached.
+memory a live session holds — are measured and cached **per model and per device**.
 
-### 6.1 What gets measured
+### 6.1 What gets measured, and why per model
 
-A short benchmark runs three inferences of one small ESRGAN model and takes two readings:
+Two inferences of the model itself give two readings:
 
 ```
 peak(n) = reservation + scale · analytic · n²
@@ -392,60 +401,79 @@ peak(n) = reservation + scale · analytic · n²
 
 | measurement | gives |
 |---|---|
-| warm-up at 64 px | `reservation` — everything fixed (arenas, driver allocations, pipeline caches) |
 | inference at n₁ and n₂ | `scale` — the per-pixel slope, divided by the analytic one |
+| the two points together | `reservation` — the fixed part, with the weights taken out |
 
-Three inferences on an RX 9070 XT take ~1.3 s. It runs once per device and only when the device,
-execution provider, ONNX Runtime build or calibration version changes.
+`scale` is a property of the model *and* the execution provider together, not of the device, so one
+device-wide factor cannot represent it. Measured on an RX 9070 XT / WebGPU EP:
+
+| model | analytic B/px | measured B/px | ratio |
+|---|---|---|---|
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k` (fp16) | 21 120 | 19 140 | **0.90** |
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k_fp32` | 42 240 | 29 320 | **0.69** |
+| `4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32` | 29 440 | 37 700 | **1.28** |
+
+The spread between the extremes is a factor of 1.9. The previous design fitted a single device
+factor (1.02, from the fp16 ESRGAN) and applied it everywhere, which under-estimated the fp32
+transformer by ~25% — enough to fill a 16 GB card and push the page into GTT — while
+over-estimating the conv nets.
+
+**Each benchmark tile runs on its own session.** The WebGPU EP caches its buffers per tensor shape
+and exposes no way to release them, so measuring two sizes in one session makes the larger reading
+include the smaller one's cached buffers. On this card that inflated the fitted slope from
+19 140 to 21 465 B/px (+12%), and the tile plan with it.
+
+Each benchmark is two inferences plus two session builds (~1 s). It runs the first time a model is
+used on a device and only when the device, execution provider, ONNX Runtime build or calibration
+version changes.
 
 ### 6.2 The result on this machine
 
 ```
-device          : AMD Radeon RX 9070 XT (RADV GFX1201) (WebGpu)
-activation scale: 0.982x
-session reserve : 140 MB
-model used      : 4x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx
-measured tiles  : 128, 448 px
+device : AMD Radeon RX 9070 XT (RADV GFX1201) (WebGpu)
+model  : 4x_MangaJaNai_1600p_V1_ESRGAN_70k           scale 0.90x
+model  : 4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32 scale 1.28x
 ```
 
-A scale of ~1.0 is the expected outcome here: the table in §3 *was* measured on this card, so the
-benchmark confirms it. The value of the benchmark is on any *other* device, where the same code
-would report e.g. 0.3x on a CUDA card or 2x on an integrated GPU, and tile sizing would follow.
+A per-model measurement of ~0.9x on the fp16 conv net is the expected outcome here: the table in §3
+*was* measured on this card, so the benchmark confirms it. The value of the benchmark is on any
+*other* device, where the same code would report e.g. 0.3x on a CUDA card or 2x on an integrated GPU,
+and tile sizing would follow.
 
-Verified end-to-end through `OnnxUpscaleEngine` (real manga page, 6 GB budget, first run):
-
-```
-profile before run : none
-profile after run  : scale=0.982 reservation=140MB tiles=128/448
-output             : 3808 KB in 9.0s
-peak VRAM          : 8156 MB  (delta 6081 MB of a 6000 MB budget)
-peak GTT           :  299 MB
-```
-
-The reservation the benchmark measures is the one the profile stores, so both readings above record
-the same ~140 MB (`146800640` bytes, §6.3).
+Verified end-to-end through `OnnxUpscaleEngine` (real manga page, 13 GB budget, fp32 FDAT_M): the
+model's own factor planned a 3x3 grid of 448x576-padded tiles and the page stayed out of GTT, where
+the device-wide factor planned 2x3 of 640x576 and reached 16.2 GB VRAM plus 275 MB of GTT.
 
 ### 6.3 Where it is stored
 
 `<models directory>/device-memory-profile.json`, one file holding a **map of device fingerprint to
-profile**:
+profile**, and inside each profile a map of model key to measurement:
 
 ```json
 {
-  "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2": {
-    "fingerprint": "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2",
+  "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3": {
+    "fingerprint": "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3",
     "provider": 2,
     "deviceName": "AMD Radeon RX 9070 XT (RADV GFX1201)",
     "totalDeviceMemoryBytes": 17095983104,
-    "activationScale": 0.982,
-    "sessionReservationBytes": 146800640,
-    "calibratedAtUtc": "2026-10-09T07:46:13Z",
-    "calibratedWithModel": "4x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx",
-    "measuredTiles": [128, 448],
-    "measuredPeakBytes": [249561088, 4071493632]
+    "activationScale": 0.902,
+    "sessionReservationBytes": 126316544,
+    "models": {
+      "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx|16761523": {
+        "activationScale": 1.28,
+        "sessionReservationBytes": 9437184,
+        "measuredTiles": [320, 640],
+        "measuredPeakBytes": [2100000000, 13100000000],
+        "calibratedAtUtc": "2026-10-12T01:20:00Z"
+      }
+    }
   }
 }
 ```
+
+A model key is `file name|size`: the fp16 and fp32 exports of one model differ only in size and
+precision, and a re-exported file can keep its name while its graph changes, so the size is what
+stops a stale measurement from being applied to a new file.
 
 Because every profile is keyed by fingerprint, one file can carry several devices: switching the
 GPU, swapping the execution provider, or pointing the models directory at a shared volume used by
@@ -453,8 +481,8 @@ two hosts, keeps every calibration. A fingerprint is
 
 ```
 execution provider | device index | device name | total device memory | ONNX Runtime version | calibration version
-webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2
-cpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v2
+webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3
+cpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3
 ```
 
 The provider is **not** probed independently: it comes from `IOnnxSessionFactory.GetEffectiveBackend()`,
@@ -464,18 +492,38 @@ session (and vice versa) just because both happen to run on the same card.
 
 ### 6.4 Behaviour and fallbacks
 
-* First upscale on an unseen device + provider → the benchmark runs (logged at `Information`), then
-  the cached profile is used for the rest of the process lifetime. Switching
-  `PreferredGpuBackend` to another provider simply gets its own profile.
+* First use of a model on an unseen device + provider → that model's benchmark runs (logged at
+  `Information`), then the cached measurement is used for the rest of the process lifetime.
+* A model with no measurement of its own falls back to the device-wide default, and then to the
+  built-in coefficients.
 * `RecalibrateDeviceMemory = true` forces a re-measure on the next upscale.
 * `UseCPU = true` skips calibration entirely (there is no device budget to fill).
-* A profile with a scale outside `0.2…12` or a reservation outside `0…8 GB` is discarded and the
-  built-in coefficients are used — that is what a distorted measurement (another process on the
-  device, driver eviction) looks like.
+* A scale outside `0.2…12` is discarded and the built-in coefficients are used — that is what a
+  distorted measurement (another process on the device, driver eviction) looks like.
 * If the models directory is read-only or the benchmark throws, nothing breaks: the built-in
   coefficients apply, which are the WebGPU/AMD values and therefore conservative.
-* The measured scale is applied *on top of* the architecture table, not instead of it, so a
-  per-architecture mismatch (calibrated on ESRGAN, applied to HAT) cannot compound.
+* A model whose own benchmark cannot run is not retried for every page: the failure is remembered
+  per model for the process.
+
+### 6.5 The per-shape buffer cache (why a chapter is not one long session)
+
+The WebGPU EP caches its buffers per tensor shape and has no API to release them. A page whose
+padded tile shape differs from the previous page's therefore adds a *second* set to the cache
+instead of reusing the first. Measured on an RX 9070 XT with the fp16 ESRGAN at a 13 GB budget:
+
+| session | page | shape | peak VRAM | GTT spill | page time |
+|---|---|---|---|---|---|
+| fresh | 1 | 640x832 | 12.2 GB | 82 MB | 7.0 s |
+| continued | 2 | 640x576 | 15.8 GB | 3.9 GB | 6.8 s |
+| continued | 3 | 448x576 | 16.1 GB | 9.6 GB | 24.8 s |
+| continued | 4+ | 640x832 | 16.1 GB | 9.6 GB (plateau) | 7.0 s |
+
+Five *same-shape* pages in one session stay at 82-89 MB and 7 s each, so the growth is shape churn,
+not "any second page". The engine therefore releases the cached session when the padded shape
+changes; a rebuild costs ~290 ms, which is far cheaper than the 9.6 GB and 25 s a churned session
+pays. The absolute `gttAfter > 1 GB` trigger it replaces fired on essentially every page (the GTT
+baseline alone is ~1 GB on a desktop), which turned the cache's own reuse into a rebuild per page.
+
 
 ## 7. Reproducing the numbers
 

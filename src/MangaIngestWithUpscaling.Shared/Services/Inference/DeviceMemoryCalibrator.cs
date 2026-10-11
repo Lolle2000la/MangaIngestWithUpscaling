@@ -17,12 +17,33 @@ namespace MangaIngestWithUpscaling.Shared.Services.Inference;
 public interface IDeviceMemoryCalibrator
 {
     /// <summary>
-    /// Returns the calibration for the current device, running the benchmark once if no valid
-    /// profile exists yet. Never throws: a failed benchmark falls back to the built-in coefficients.
+    /// Returns the calibration for the current device, running the benchmark once with a small
+    /// representative model if no valid profile exists yet. Never throws: a failed benchmark falls
+    /// back to the built-in coefficients. This is the device-wide default; prefer
+    /// <see cref="GetOrCalibrateForModelAsync"/> where the model is known.
     /// </summary>
     Task<DeviceMemoryProfile?> GetOrCalibrateAsync(
         int deviceId,
         string modelsDirectory,
+        CancellationToken cancellationToken = default
+    );
+
+    /// <summary>
+    /// Returns the calibration for the current device with a measurement for
+    /// <paramref name="modelPath"/> filled in, running that model's benchmark once if it has none.
+    /// Never throws: a failed benchmark leaves the device-wide default (or the built-ins) in place.
+    /// <para>
+    /// The per-pixel cost belongs to the model and the execution provider together, so this is the
+    /// accurate entry point. Measured on an RX 9070 XT / WebGPU EP: fp16 ESRGAN 0.90x its analytic
+    /// working set, fp32 ESRGAN 0.69x, fp32 FDAT_M 1.28x. A device-wide factor cannot represent
+    /// that range, and using one under-estimated the fp32 transformer enough to spill into GTT.
+    /// </para>
+    /// </summary>
+    Task<DeviceMemoryProfile?> GetOrCalibrateForModelAsync(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale,
         CancellationToken cancellationToken = default
     );
 }
@@ -31,14 +52,15 @@ public interface IDeviceMemoryCalibrator
 /// Runs a short inference benchmark on the GPU to derive the two numbers that cannot be read off
 /// the model graph:
 /// <list type="bullet">
-/// <item><see cref="DeviceMemoryProfile.ActivationScale"/> — how many times the analytically
+/// <item><see cref="ModelMemoryProfile.ActivationScale"/> — how many times the analytically
 /// derived activation working set the execution provider really needs (precision casts, layout
 /// re-packing, non-shrinking arenas)</item>
 /// <item><see cref="DeviceMemoryProfile.SessionReservationBytes"/> — how much device memory a live
 /// session holds independently of tile size</item>
 /// </list>
 /// Two tile sizes give two measurements, and their difference isolates the per-pixel term:
-/// <c>peak(n) = reservation + scale · analytic · n²</c>.
+/// <c>peak(n) = reservation + scale · analytic · n²</c>. The measurement is per model, because the
+/// scale is a property of the model and the provider together rather than of the device.
 /// </summary>
 [RegisterSingleton]
 public sealed class DeviceMemoryCalibrator(
@@ -50,9 +72,10 @@ public sealed class DeviceMemoryCalibrator(
 {
     /// <summary>
     /// Bumped whenever the built-in coefficients or the measurement method change, so a profile
-    /// stored by an older build is re-measured instead of trusted.
+    /// stored by an older build is re-measured instead of trusted. v3 measures each benchmark tile
+    /// on its own session (see <see cref="MeasurePoint"/>) and records the result per model.
     /// </summary>
-    public const int CalibrationVersion = 2;
+    public const int CalibrationVersion = 3;
 
     private static readonly Lock BenchmarkGate = new();
     private readonly SemaphoreSlim asyncGate = new(1, 1);
@@ -60,9 +83,11 @@ public sealed class DeviceMemoryCalibrator(
     /// <summary>
     /// Fingerprints the benchmark has already been attempted for and failed on, so it is not
     /// retried for every page. Without this, a models directory the profile cannot be written to
-    /// (a read-only volume, a container running as an arbitrary uid) makes <see cref="GetOrCalibrateAsync"/>
-    /// return null forever — and every page pays three inferences plus a session teardown to reach it.
-    /// Scoped to the process: a worker that skips a chapter because of it re-benchmarks on the next.
+    /// (a read-only volume, a container running as an arbitrary uid) makes
+    /// <see cref="GetOrCalibrateAsync"/> return null forever — and every page pays inferences plus a
+    /// session teardown to reach it. Scoped to the process: a worker that skips a chapter because of
+    /// it re-benchmarks on the next. Entries are keyed by device fingerprint, or by device
+    /// fingerprint plus model for the per-model path.
     /// </summary>
     private readonly HashSet<string> _unsupported = new(StringComparer.Ordinal);
 
@@ -71,8 +96,7 @@ public sealed class DeviceMemoryCalibrator(
     /// <see cref="UpscalerConfig.RecalibrateDeviceMemory"/> means "on the next upscale", but
     /// configuration is only ever read — nothing writes <see cref="UpscalerConfig"/> back — so the
     /// flag cannot be cleared at the source. Remembering the one-shot here is what stops it from
-    /// re-benchmarking on every page of every chapter: three inferences plus a session teardown
-    /// each time, to re-derive the profile it has just saved.
+    /// re-benchmarking on every page of every chapter.
     /// </summary>
     private bool _forcedRecalibrationDone;
 
@@ -80,6 +104,29 @@ public sealed class DeviceMemoryCalibrator(
         int deviceId,
         string modelsDirectory,
         CancellationToken cancellationToken = default
+    ) => await GetOrCalibrateCoreAsync(deviceId, modelsDirectory, null, 0, cancellationToken);
+
+    public async Task<DeviceMemoryProfile?> GetOrCalibrateForModelAsync(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale,
+        CancellationToken cancellationToken = default
+    ) =>
+        await GetOrCalibrateCoreAsync(
+            deviceId,
+            modelsDirectory,
+            modelPath,
+            scale,
+            cancellationToken
+        );
+
+    private async Task<DeviceMemoryProfile?> GetOrCalibrateCoreAsync(
+        int deviceId,
+        string modelsDirectory,
+        string? modelPath,
+        int scale,
+        CancellationToken cancellationToken
     )
     {
         if (string.IsNullOrEmpty(modelsDirectory) || !Directory.Exists(modelsDirectory))
@@ -98,63 +145,74 @@ public sealed class DeviceMemoryCalibrator(
         {
             bool force = config.Value.RecalibrateDeviceMemory && !_forcedRecalibrationDone;
 
-            if (!force)
-            {
-                DeviceMemoryProfile? cached = store.Load(modelsDirectory, fingerprint);
-                if (cached is not null)
-                {
-                    return cached;
-                }
-            }
+            DeviceMemoryProfile? cached = force ? null : store.Load(modelsDirectory, fingerprint);
 
             // CPU mode has no per-tile footprint worth calibrating: the activation working set is
             // allocated in system RAM, not on a device with a budget we are trying to fill.
             if (config.Value.UseCPU)
             {
-                return null;
+                return cached;
             }
 
-            // The benchmark already came back empty for this fingerprint in this process, so there is
-            // nothing to learn by trying again: a models directory the profile cannot be written back
-            // to would otherwise pay three inferences plus a session teardown on every page. A
-            // measurement that worked is deliberately not in here (see below), so a fingerprint in
-            // this set always skipped the benchmark, never a successful one.
-            if (!force && _unsupported.Contains(fingerprint))
+            string? modelKey = modelPath is null
+                ? null
+                : DeviceMemoryProfile.ModelKey(modelPath, FileLength(modelPath));
+
+            // Nothing to measure: the profile is cached and, when a model was named, it already
+            // carries that model's own measurement. Returning the stored profile untouched is what
+            // keeps a cached device from touching the GPU at all.
+            if (cached is not null && (modelKey is null || cached.Models.ContainsKey(modelKey)))
             {
-                return null;
+                return cached;
             }
 
-            DeviceMemoryProfile? profile;
+            string attemptedKey = modelKey is null ? fingerprint : fingerprint + "|" + modelKey;
+
+            // The benchmark already came back empty for this key in this process, so there is nothing
+            // to learn by trying again: a models directory the profile cannot be written back to
+            // would otherwise pay the benchmark on every page. A measurement that worked is
+            // deliberately not in here.
+            if (!force && _unsupported.Contains(attemptedKey))
+            {
+                return cached;
+            }
+
+            DeviceMemoryProfile profile = cached ?? CreateProfileSkeleton(fingerprint, deviceId);
+
+            bool measured = false;
             try
             {
-                profile = RunBenchmark(deviceId, modelsDirectory, fingerprint);
+                measured = modelPath is null
+                    ? MeasureDeviceDefault(deviceId, modelsDirectory, profile)
+                    : MeasureModel(deviceId, modelsDirectory, profile, modelPath, scale);
+
                 // Once the forced benchmark has actually run, the forced calibration is spent:
                 // whether it produced a profile or not, every later call takes the normal path.
                 _forcedRecalibrationDone = true;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // The forced benchmark ran and threw, so the calibration is still spent. The failure
-                // is remembered unconditionally: a forced attempt has to be as sticky as a normal
-                // one, otherwise the next page falls straight through to a second benchmark.
+                // The benchmark ran and threw, so the calibration is still spent. The failure is
+                // remembered unconditionally: a forced attempt has to be as sticky as a normal one,
+                // otherwise the next page falls straight through to a second benchmark.
                 _forcedRecalibrationDone = true;
-                RecordUnusable(fingerprint);
-
                 logger.LogWarning(
                     ex,
                     "Device memory benchmark failed; using built-in coefficients"
                 );
-                return null;
             }
 
-            if (profile is null)
+            if (!measured)
             {
-                RecordUnusable(fingerprint);
+                // Nothing usable came back — an implausible reading, a model that cannot be probed,
+                // or no calibration model at all. Remember it so every page does not pay the
+                // benchmark again. A measurement that worked is deliberately not recorded here,
+                // which is what stops a models directory the profile cannot be written back to from
+                // discarding a measurement that did work.
+                _unsupported.Add(attemptedKey);
+                return cached;
             }
 
-            // A measured profile is deliberately not recorded here. Recording it would make the
-            // next page take the "already tried" short-cut and get null on a models directory the
-            // profile could not be written back to, throwing away a measurement that worked.
             return profile;
         }
         finally
@@ -164,16 +222,108 @@ public sealed class DeviceMemoryCalibrator(
     }
 
     /// <summary>
-    /// Remembers that the benchmark produced nothing usable for this fingerprint, so it is not run
-    /// again for every page.
+    /// A profile with the device identity filled in but no measurement yet.
     /// </summary>
-    private void RecordUnusable(string fingerprint) => _unsupported.Add(fingerprint);
+    private static DeviceMemoryProfile CreateProfileSkeleton(string fingerprint, int deviceId) =>
+        new()
+        {
+            Fingerprint = fingerprint,
+            Provider = ExecutionProvider.Unknown,
+            DeviceName = ResolveDeviceName(deviceId),
+            TotalDeviceMemoryBytes = ResolveTotalDeviceMemory(deviceId),
+            CalibratedAtUtc = DateTimeOffset.UtcNow,
+        };
+
+    /// <summary>
+    /// Measures the device-wide default with a small representative model. Kept as the fallback for
+    /// a model whose own benchmark fails.
+    /// </summary>
+    private bool MeasureDeviceDefault(
+        int deviceId,
+        string modelsDirectory,
+        DeviceMemoryProfile profile
+    )
+    {
+        string? modelPath = SelectCalibrationModel(modelsDirectory, deviceId);
+        if (modelPath is null)
+        {
+            logger.LogDebug(
+                "No model small enough to benchmark device memory with; using built-in coefficients"
+            );
+            return false;
+        }
+
+        int scale = OnnxUpscaleEngine.InferScaleFromModelName(Path.GetFileName(modelPath));
+        long budget = OnnxTiler.GetAvailableVramBudget(deviceId);
+
+        ModelMemoryProfile? measured = RunBenchmark(deviceId, modelPath, scale, budget);
+        if (measured is null)
+        {
+            return false;
+        }
+
+        profile.Provider = ToProvider(sessionFactory.GetEffectiveBackend());
+        profile.ActivationScale = measured.ActivationScale;
+        profile.SessionReservationBytes = measured.SessionReservationBytes;
+        profile.CalibratedAtUtc = measured.CalibratedAtUtc;
+        profile.CalibratedWithModel = Path.GetFileName(modelPath);
+        profile.MeasuredTiles = measured.MeasuredTiles;
+        profile.MeasuredPeakBytes = measured.MeasuredPeakBytes;
+        store.Save(modelsDirectory, profile);
+
+        logger.LogInformation(
+            "Calibrated device memory profile for {Device} on {Provider}: activation scale {Scale:F2}x, session reservation {Reservation} MB (measured at {Small}px and {Large}px tiles with {Model})",
+            profile.DeviceName,
+            profile.Provider,
+            profile.ActivationScale,
+            profile.SessionReservationBytes / 1048576,
+            measured.MeasuredTiles[0],
+            measured.MeasuredTiles[1],
+            profile.CalibratedWithModel
+        );
+        return true;
+    }
+
+    /// <summary>
+    /// Measures <paramref name="modelPath"/> on this device and records it on the profile.
+    /// </summary>
+    private bool MeasureModel(
+        int deviceId,
+        string modelsDirectory,
+        DeviceMemoryProfile profile,
+        string modelPath,
+        int scale
+    )
+    {
+        long budget = OnnxTiler.GetAvailableVramBudget(deviceId);
+        ModelMemoryProfile? measured = RunBenchmark(deviceId, modelPath, scale, budget);
+        if (measured is null)
+        {
+            return false;
+        }
+
+        profile.Provider = ToProvider(sessionFactory.GetEffectiveBackend());
+        profile.Models[DeviceMemoryProfile.ModelKey(modelPath, FileLength(modelPath))] = measured;
+        store.Save(modelsDirectory, profile);
+
+        logger.LogInformation(
+            "Calibrated {Model} on {Device} ({Provider}): activation scale {Scale:F2}x (measured at {Small}px and {Large}px tiles)",
+            Path.GetFileName(modelPath),
+            profile.DeviceName,
+            profile.Provider,
+            measured.ActivationScale,
+            measured.MeasuredTiles[0],
+            measured.MeasuredTiles[1]
+        );
+        return true;
+    }
 
     /// <summary>
     /// Identity of the measured configuration. The execution provider comes from the session factory
     /// (the single place that resolves it, honouring <see cref="UpscalerConfig.PreferredGpuBackend"/>,
     /// <see cref="UpscalerConfig.UseCPU"/> and the device index), so a calibration is only ever
-    /// reused for the provider that will actually run the model.
+    /// reused for the provider that will actually run the model. The device is part of the key, so a
+    /// second GPU, or the same GPU under CUDA instead of WebGPU, gets its own measurement.
     /// </summary>
     public string BuildFingerprint(int deviceId)
     {
@@ -223,133 +373,127 @@ public sealed class DeviceMemoryCalibrator(
         );
     }
 
-    private DeviceMemoryProfile? RunBenchmark(
-        int deviceId,
-        string modelsDirectory,
-        string fingerprint
-    )
+    /// <summary>
+    /// Fits <c>peak(n) = reservation + scale · analytic · n²</c> for one model from two tile sizes,
+    /// or null when the measurement is unusable.
+    /// </summary>
+    private ModelMemoryProfile? RunBenchmark(int deviceId, string modelPath, int scale, long budget)
     {
-        string? modelPath = SelectCalibrationModel(modelsDirectory, deviceId);
-        if (modelPath is null)
-        {
-            logger.LogDebug(
-                "No model small enough to benchmark device memory with; using built-in coefficients"
-            );
-            return null;
-        }
-
         // Never run the benchmark concurrently with a real upscale: both would need the device.
         lock (BenchmarkGate)
         {
-            long fileBytes = new FileInfo(modelPath).Length;
-            int scale = OnnxUpscaleEngine.InferScaleFromModelName(Path.GetFileName(modelPath));
+            long fileBytes = FileLength(modelPath);
+            OnnxTiler.ActivationCoefficients analytic = OnnxTiler.ActivationCoefficients.For(
+                modelPath,
+                fileBytes
+            );
 
-            // Drop a cached session for this model so the measurement pays — and therefore sees —
-            // the real cost of bringing a session up on this device.
-            sessionFactory.InvalidateSession(modelPath);
-
-            long baseline = DeviceMemorySampler.Read(deviceId);
-
-            // The scope is taken before the fetch so a concurrent eviction cannot free the session
-            // between the lookup and the measurement — the read scope keeps the session alive for the
-            // whole benchmark. It is released explicitly before the finally below, because that
-            // invalidates the session and its drain takes the write lock this thread would otherwise
-            // still be holding.
-            IDisposable scope = sessionFactory.EnterInferenceScope();
-            InferenceSession session;
+            bool isFp16;
             try
             {
-                session = sessionFactory.GetOrCreateSession(modelPath);
+                isFp16 = IsFp16Model(modelPath);
             }
-            catch
+            catch (Exception ex)
             {
-                scope.Dispose();
-                throw;
-            }
-
-            try
-            {
-                bool isFp16 =
-                    session.InputMetadata.TryGetValue("input", out var meta)
-                    && meta.ElementType == typeof(Float16);
-                OnnxTiler.ActivationCoefficients analytic = OnnxTiler.ActivationCoefficients.For(
-                    modelPath,
-                    fileBytes
+                logger.LogDebug(
+                    ex,
+                    "Could not read the input type of {Model} to benchmark it",
+                    Path.GetFileName(modelPath)
                 );
-
-                long budget = OnnxTiler.GetAvailableVramBudget(deviceId);
-                int large = ChooseLargeTile(scale, isFp16, analytic, budget);
-                int small = Math.Max(96, (large / 3 / 64) * 64);
-                const int warmup = 64;
-                if (small >= large)
-                {
-                    return null;
-                }
-
-                // The execution provider grows its arenas lazily on the first inference, so the
-                // warm-up pass pays that cost. The tiny tile's peak then measures everything that
-                // is fixed (session state, arenas, driver allocations), which leaves the two
-                // measured tiles to give a clean per-pixel slope.
-                long floor = MeasureTile(session, deviceId, warmup, scale);
-                long peakSmall = MeasureTile(session, deviceId, small, scale);
-                long peakLarge = MeasureTile(session, deviceId, large, scale);
-
-                double analyticBytesPerPixel = analytic.BytesPerPixel(scale, isFp16);
-                double bytesPerPixel =
-                    (peakLarge - peakSmall) / (double)((long)large * large - (long)small * small);
-                double activationScale =
-                    analyticBytesPerPixel > 0 ? bytesPerPixel / analyticBytesPerPixel : 1.0;
-                long reservation = Math.Max(0, floor - baseline);
-
-                // Sanity: a factor far outside the plausible range means the measurement was
-                // distorted (another process on the device, driver eviction, ...). Keep built-ins.
-                if (
-                    activationScale is < 0.2 or > 12.0
-                    || reservation < 0
-                    || reservation > 8L * 1024 * 1024 * 1024
-                )
-                {
-                    logger.LogWarning(
-                        "Device memory benchmark produced an implausible result (activationScale={Scale:F2}, sessionReservation={Reservation} MB); keeping built-in coefficients",
-                        activationScale,
-                        reservation / 1048576
-                    );
-                    return null;
-                }
-
-                var profile = new DeviceMemoryProfile
-                {
-                    Fingerprint = fingerprint,
-                    Provider = ToProvider(sessionFactory.GetEffectiveBackend()),
-                    DeviceName = ResolveDeviceName(deviceId),
-                    TotalDeviceMemoryBytes = ResolveTotalDeviceMemory(deviceId),
-                    ActivationScale = activationScale,
-                    SessionReservationBytes = reservation,
-                    CalibratedAtUtc = DateTimeOffset.UtcNow,
-                    CalibratedWithModel = Path.GetFileName(modelPath),
-                    MeasuredTiles = [small, large],
-                    MeasuredPeakBytes = [peakSmall - floor, peakLarge - floor],
-                };
-
-                store.Save(modelsDirectory, profile);
-                logger.LogInformation(
-                    "Calibrated device memory profile for {Device} on {Provider}: activation scale {Scale:F2}x, session reservation {Reservation} MB (measured at {Small}px and {Large}px tiles with {Model})",
-                    profile.DeviceName,
-                    profile.Provider,
-                    activationScale,
-                    reservation / 1048576,
-                    small,
-                    large,
-                    profile.CalibratedWithModel
-                );
-                return profile;
+                return null;
             }
-            finally
+
+            int large = ChooseLargeTile(scale, isFp16, analytic, budget);
+            int small = Math.Max(96, (large / 3 / 64) * 64);
+            if (small >= large)
             {
-                scope.Dispose();
-                sessionFactory.InvalidateSession(modelPath);
+                return null;
             }
+
+            long growthSmall = MeasurePoint(deviceId, modelPath, small, scale);
+            long growthLarge = MeasurePoint(deviceId, modelPath, large, scale);
+
+            double analyticBytesPerPixel = analytic.BytesPerPixel(scale, isFp16);
+            double bytesPerPixel =
+                (growthLarge - growthSmall) / (double)((long)large * large - (long)small * small);
+            double activationScale =
+                analyticBytesPerPixel > 0 ? bytesPerPixel / analyticBytesPerPixel : 1.0;
+
+            // Sanity: a factor far outside the plausible range means the measurement was distorted
+            // (another process on the device, driver eviction, ...). Keep built-ins.
+            if (activationScale is < 0.2 or > 12.0)
+            {
+                logger.LogWarning(
+                    "Device memory benchmark for {Model} produced an implausible result (activationScale={Scale:F2}); keeping built-in coefficients",
+                    Path.GetFileName(modelPath),
+                    activationScale
+                );
+                return null;
+            }
+
+            // The two measured growths include the model weights and the session's own arena; the
+            // fit separates them. The reservation is what the planner needs *besides* the weights it
+            // adds itself, so the weights come off here rather than being counted twice.
+            long weights = OnnxTiler.EstimateModelBytes(modelPath, fileBytes);
+            long reservation = Math.Max(
+                0,
+                growthLarge - (long)(bytesPerPixel * large * large) - weights
+            );
+            if (reservation > 8L * 1024 * 1024 * 1024)
+            {
+                reservation = 0;
+            }
+
+            return new ModelMemoryProfile
+            {
+                ActivationScale = activationScale,
+                SessionReservationBytes = reservation,
+                MeasuredTiles = [small, large],
+                MeasuredPeakBytes = [growthSmall, growthLarge],
+                CalibratedAtUtc = DateTimeOffset.UtcNow,
+            };
         }
+    }
+
+    private bool IsFp16Model(string modelPath)
+    {
+        using (sessionFactory.EnterInferenceScope())
+        {
+            InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+            return session.InputMetadata.TryGetValue("input", out var meta)
+                && meta.ElementType == typeof(Float16);
+        }
+    }
+
+    /// <summary>
+    /// Runs one inference on an n×n tile through the engine's real tiling path and returns the
+    /// device-memory growth over the pre-session baseline.
+    /// <para>
+    /// Each point gets its own freshly created session. The WebGPU EP caches its buffers per tensor
+    /// shape and exposes no way to release them, so two sizes measured in one session make the
+    /// larger reading include the smaller one's cached buffers: on an RX 9070 XT that inflated the
+    /// fitted slope from 19 140 to 21 465 B/px (+12%), and the tile plan with it. The cached session
+    /// is released synchronously (not retired) so the next baseline is read with the previous
+    /// session genuinely gone.
+    /// </para>
+    /// </summary>
+    private long MeasurePoint(int deviceId, string modelPath, int n, int scale)
+    {
+        sessionFactory.ReleaseCachedSessions();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
+        long baseline = DeviceMemorySampler.Read(deviceId);
+
+        long peak;
+        using (sessionFactory.EnterInferenceScope())
+        {
+            InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+            peak = MeasureTile(session, deviceId, n, scale);
+        }
+
+        sessionFactory.ReleaseCachedSessions();
+        return Math.Max(0, peak - baseline);
     }
 
     /// <summary>
@@ -370,6 +514,18 @@ public sealed class DeviceMemoryCalibrator(
             () =>
                 OnnxTiler.UpscaleTile(input, n, n, scale, session, default, targetW: n, targetH: n)
         );
+    }
+
+    private static long FileLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     /// <summary>

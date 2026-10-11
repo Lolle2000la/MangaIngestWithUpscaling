@@ -43,6 +43,14 @@ public class OnnxUpscaleEngine(
     private const int ModelUsableCacheCapacity = 256;
 
     /// <summary>
+    /// GTT growth during one page above which the cached session is dropped after the page. The
+    /// per-shape buffer cache is handled proactively (see <see cref="_sessionShape"/>), so this is a
+    /// safety net for anything that still grows; a page on a clean session measures under 100 MB of
+    /// growth, and a second page at a new shape measured 3.9 GB.
+    /// </summary>
+    private const long ElevatedGttGrowthBytes = 512L * 1024 * 1024;
+
+    /// <summary>
     /// Verdict per model <em>and scale</em> for this device, keyed by path and scale. Scoped to the
     /// process: whether a model runs is a property of the execution provider and the accelerator,
     /// neither of which changes while the process runs. The scale is part of the key because the
@@ -72,6 +80,19 @@ public class OnnxUpscaleEngine(
         public int GetHashCode(ModelScaleKey obj) =>
             HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Path), obj.Scale);
     }
+
+    /// <summary>
+    /// Padded tensor shape the cached session was last used at, and the model it belonged to. The
+    /// WebGPU EP caches its buffers per tensor shape and exposes no API to release them, so a page
+    /// whose tile shape differs from the previous one adds a second set to the cache instead of
+    /// reusing the first. Measured on an RX 9070 XT with the fp16 ESRGAN at a 13 GB budget: the
+    /// second page in a session, at a different shape, spilled 3.9 GB into GTT and took 25 s, while
+    /// five same-shape pages in one session stayed at 82-89 MB and 7 s each. Dropping the session
+    /// first costs a ~300 ms rebuild and keeps the page on the clean path.
+    /// </summary>
+    private readonly Lock _sessionShapeGate = new();
+    private string? _sessionShapeModel;
+    private (int Width, int Height) _sessionShape;
 
     private readonly record struct UpscaledPage(
         byte[] Bytes,
@@ -166,12 +187,10 @@ public class OnnxUpscaleEngine(
                         );
 
                 // First upscale on a device runs a short benchmark so tile sizing uses what this
-                // accelerator does rather than a generic coefficient. Cached on disk per device.
-                DeviceMemoryProfile? profile = await deviceCalibrator.GetOrCalibrateAsync(
-                    deviceId,
-                    ModelsDirectory,
-                    cancellationToken
-                );
+                // accelerator does rather than a generic coefficient. The benchmark is per model, so
+                // it happens where the model is known (UpscaleWithModelAsync) rather than here.
+
+                var (_, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
 
                 (string model, byte[] upscaledBytes) = await UpscaleWithFirstWorkingModelAsync(
                     inputPath,
@@ -182,7 +201,6 @@ public class OnnxUpscaleEngine(
                     scale,
                     deviceId,
                     budget,
-                    profile,
                     cancellationToken
                 );
 
@@ -193,14 +211,20 @@ public class OnnxUpscaleEngine(
                     isGrayscale
                 );
 
+                // Compared against the reading taken before the page, not an absolute threshold: the
+                // GTT baseline alone already sits near 1 GB on a desktop, so an absolute figure fires
+                // on every page and turns the per-shape buffer cache's own reuse into a rebuild per
+                // page. The per-shape growth is handled proactively in UpscaleWithModelAsync; this is
+                // the safety net for anything that still grows.
                 var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
-                if (gttAfter > 1000L * 1024 * 1024)
+                if (gttAfter - gttBefore > ElevatedGttGrowthBytes)
                 {
                     logger.LogWarning(
-                        "Elevated GPU memory detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB. Flushing session cache to release memory.",
+                        "Elevated GPU memory growth after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB (+{GttGrowthMb} MB). Flushing session cache to release memory.",
                         Path.GetFileName(inputPath),
                         vramAfter / (1024 * 1024),
-                        gttAfter / (1024 * 1024)
+                        gttAfter / (1024 * 1024),
+                        (gttAfter - gttBefore) / (1024 * 1024)
                     );
                     sessionFactory.InvalidateSession(model);
                     GC.Collect();
@@ -839,7 +863,6 @@ public class OnnxUpscaleEngine(
         int scale,
         int deviceId,
         long budget,
-        DeviceMemoryProfile? profile,
         CancellationToken cancellationToken
     )
     {
@@ -873,7 +896,6 @@ public class OnnxUpscaleEngine(
                     scale,
                     deviceId,
                     budget,
-                    profile,
                     cancellationToken
                 );
                 return (modelPath, upscaled);
@@ -925,10 +947,21 @@ public class OnnxUpscaleEngine(
         int scale,
         int deviceId,
         long budget,
-        DeviceMemoryProfile? profile,
         CancellationToken cancellationToken
-    ) =>
-        await Task.Run(
+    )
+    {
+        // The per-pixel cost is a property of the model and the execution provider together, so the
+        // benchmark is run for this model (once per device) instead of reusing a device-wide factor
+        // that cannot represent the spread between an fp16 conv net and an fp32 transformer.
+        DeviceMemoryProfile? profile = await deviceCalibrator.GetOrCalibrateForModelAsync(
+            deviceId,
+            ModelsDirectory,
+            modelPath,
+            scale,
+            cancellationToken
+        );
+
+        return await Task.Run(
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -960,9 +993,15 @@ public class OnnxUpscaleEngine(
                         profile
                     );
 
+                // The execution provider caches its buffers per tensor shape, so a page at a shape
+                // this session has not run yet would add a second set instead of reusing the first.
+                // Release the session first; see _sessionShape for the measurement behind this.
+                (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+                ReleaseSessionForShapeChange(modelPath, paddedWidth, paddedHeight);
+
                 var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
                 logger.LogDebug(
-                    "Upscaling {InputPath} ({Width}x{Height}, scale {Scale}) using model {Model} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
+                    "Upscaling {InputPath} ({Width}x{Height}, scale {Scale}) using model {Model} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (predicted peak: {PredictedMb} MB, budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
                     Path.GetFileName(inputPath),
                     width,
                     height,
@@ -972,6 +1011,14 @@ public class OnnxUpscaleEngine(
                     split.Rows,
                     split.TileWidth,
                     split.TileHeight,
+                    OnnxTiler.PredictTilePeakBytes(
+                        split,
+                        scale,
+                        modelPath,
+                        modelSizeBytes,
+                        isFp16,
+                        profile
+                    ) / (1024 * 1024),
                     budget / (1024 * 1024),
                     vramBefore / (1024 * 1024),
                     gttBefore / (1024 * 1024)
@@ -1040,6 +1087,38 @@ public class OnnxUpscaleEngine(
             },
             cancellationToken
         );
+    }
+
+    /// <summary>
+    /// Releases the cached session when the next page needs a padded tensor shape this model has not
+    /// run on it yet. See <see cref="_sessionShape"/> for why.
+    /// </summary>
+    private void ReleaseSessionForShapeChange(string modelPath, int paddedWidth, int paddedHeight)
+    {
+        bool changed;
+        lock (_sessionShapeGate)
+        {
+            changed =
+                string.Equals(_sessionShapeModel, modelPath, StringComparison.OrdinalIgnoreCase)
+                && _sessionShape != (paddedWidth, paddedHeight);
+            _sessionShapeModel = modelPath;
+            _sessionShape = (paddedWidth, paddedHeight);
+        }
+
+        if (!changed)
+        {
+            return;
+        }
+
+        logger.LogDebug(
+            "Tile shape for {Model} changed to {Width}x{Height}; releasing the cached session so the execution provider's per-shape buffer cache cannot accumulate across the chapter.",
+            Path.GetFileName(modelPath),
+            paddedWidth,
+            paddedHeight
+        );
+        sessionFactory.ReleaseCachedSessions();
+        GC.Collect();
+    }
 
     /// <summary>
     /// Whether this model can run on the configured device at this scale, remembered for the

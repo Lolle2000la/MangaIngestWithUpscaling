@@ -62,4 +62,92 @@ public sealed class DeviceMemoryProfile
 
     [JsonPropertyName("measuredPeakBytes")]
     public long[] MeasuredPeakBytes { get; set; } = [];
+
+    /// <summary>
+    /// Per-model measurements on this device, keyed by <see cref="ModelKey"/>. The per-pixel cost is
+    /// a property of the model and the execution provider together, not of the device: measured on
+    /// an RX 9070 XT / WebGPU EP the fp16 ESRGAN needs 0.90x its analytic working set, the fp32
+    /// ESRGAN 0.69x and the fp32 FDAT_M 1.28x. A single device-wide factor therefore under-estimates
+    /// the fp32 transformer by ~25% and over-estimates the conv nets, which is what made a chapter
+    /// spill into GTT. Entries are added lazily, one per model actually used.
+    /// </summary>
+    [JsonPropertyName("models")]
+    public Dictionary<string, ModelMemoryProfile> Models { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The activation scale to plan <paramref name="modelNameOrPath"/> with: its own measurement if
+    /// this device has one, otherwise the device-wide default from the small calibration model.
+    /// </summary>
+    public double ScaleFor(string modelNameOrPath, long modelSizeBytes)
+    {
+        if (
+            Models.TryGetValue(ModelKey(modelNameOrPath, modelSizeBytes), out ModelMemoryProfile? m)
+            && m.ActivationScale is > 0 and < 12
+        )
+        {
+            return m.ActivationScale;
+        }
+
+        return ActivationScale;
+    }
+
+    /// <summary>
+    /// The tile-independent session footprint to plan <paramref name="modelNameOrPath"/> with: its own
+    /// measurement when this device has one, otherwise the device-wide default. The per-model value
+    /// excludes the weights (the planner adds those itself).
+    /// </summary>
+    public long ReservationFor(string modelNameOrPath, long modelSizeBytes)
+    {
+        if (
+            Models.TryGetValue(ModelKey(modelNameOrPath, modelSizeBytes), out ModelMemoryProfile? m)
+            && m.SessionReservationBytes is >= 0 and < 8L * 1024 * 1024 * 1024
+        )
+        {
+            return m.SessionReservationBytes;
+        }
+
+        return SessionReservationBytes;
+    }
+
+    /// <summary>
+    /// Identity of a model within a device profile. The file name alone is not enough: the fp16 and
+    /// fp32 exports of the same model differ only in size and precision, and a re-exported file can
+    /// keep its name while its graph changes, so the size is part of the key.
+    /// </summary>
+    public static string ModelKey(string modelNameOrPath, long modelSizeBytes) =>
+        string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{Path.GetFileName(modelNameOrPath)}|{modelSizeBytes}"
+        );
+}
+
+/// <summary>
+/// One model's measured memory behaviour on one device. Mirrors the device-level fields that used to
+/// be the only measurement there was.
+/// </summary>
+public sealed class ModelMemoryProfile
+{
+    [JsonPropertyName("activationScale")]
+    public double ActivationScale { get; set; } = 1.0;
+
+    /// <summary>
+    /// Tile-independent session footprint for this model on this device, excluding the model
+    /// weights (the planner adds those separately), in bytes.
+    /// </summary>
+    [JsonPropertyName("sessionReservationBytes")]
+    public long SessionReservationBytes { get; set; }
+
+    [JsonPropertyName("measuredTiles")]
+    public int[] MeasuredTiles { get; set; } = [];
+
+    /// <summary>
+    /// Device-memory growth over the pre-session baseline at each of <see cref="MeasuredTiles"/>,
+    /// including the model weights and the session's own arena.
+    /// </summary>
+    [JsonPropertyName("measuredPeakBytes")]
+    public long[] MeasuredPeakBytes { get; set; } = [];
+
+    [JsonPropertyName("calibratedAtUtc")]
+    public DateTimeOffset CalibratedAtUtc { get; set; }
 }

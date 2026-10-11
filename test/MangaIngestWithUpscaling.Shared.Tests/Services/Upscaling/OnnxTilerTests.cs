@@ -1,4 +1,6 @@
 using System.Reflection;
+using MangaIngestWithUpscaling.Shared.Services.GPU;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.ML.OnnxRuntime;
@@ -1443,10 +1445,11 @@ public class OnnxTilerTests : IDisposable
         bool expected
     )
     {
-        // GetAvailableVramBudget cannot be driven without a real Vulkan device, so the branch it
-        // takes when VK_EXT_memory_budget answers is pinned through the predicate it now delegates to.
-        // Before the fix, a threshold-only override was NOT explicit here, so the driver's raw
-        // BudgetBytes was returned and the threshold was silently ignored.
+        // GetAvailableVramBudget's P/Invoke cannot be driven without a real Vulkan device, so the
+        // branch it takes when VK_EXT_memory_budget answers is pinned through the predicate it
+        // delegates to (and, for the exclusive/shared decision itself, through
+        // BudgetFromVulkanMetrics). Before the fix, a threshold-only override was NOT explicit here,
+        // so the driver's raw BudgetBytes was returned and the threshold was silently ignored.
         Assert.Equal(
             expected,
             OnnxTiler.HasExplicitVramBudgetOverride(
@@ -1479,6 +1482,178 @@ public class OnnxTilerTests : IDisposable
         Assert.True(
             exclusive > desktop,
             $"the 1 GiB threshold should recover the desktop margin: {exclusive} vs {desktop}"
+        );
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_ExclusiveCard_UsesTheDriverBudget()
+    {
+        // Nothing else on the card: the driver's number is total minus used, and spending it is what
+        // an operator who wants the whole card asked for. 16 GB card, 200 MB used -> exclusive.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 200L * 1024 * 1024;
+        var metrics = new VulkanGpuMemory(0, "gpu", 0x1002, total, total - used, used);
+
+        Assert.Equal(total - used, OnnxTiler.BudgetFromVulkanMetrics(metrics));
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_SharedCard_AppliesTheEvictionMargin()
+    {
+        // A desktop holding ~3 GB. The driver reports total-minus-used with no eviction headroom of
+        // its own, and spending it drives the card to where the driver starts evicting into GTT —
+        // measured on an RX 9070 XT that is how a page reached 16.2 GB VRAM and 275 MB of GTT against
+        // a 13.1 GB driver budget. The calculated margin has to cap it.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 3L * 1024 * 1024 * 1024;
+        long driverBudget = total - used;
+        var metrics = new VulkanGpuMemory(0, "gpu", 0x1002, total, driverBudget, used);
+
+        long budget = OnnxTiler.BudgetFromVulkanMetrics(metrics);
+
+        Assert.Equal(OnnxTiler.CalculateVramBudget(total, used), budget);
+        Assert.True(
+            budget < driverBudget,
+            $"expected the eviction margin to cap the driver budget, got {budget} vs {driverBudget}"
+        );
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_SharedCardWithABoundedPartner_CanStayExclusive()
+    {
+        // A partner whose footprint is known and bounded does not need the desktop margin: raising
+        // the threshold above it puts the card back in the exclusive branch, which keeps only the
+        // minimal reserve. The driver budget is then trusted to within that reserve, and far more of
+        // the card comes back than the desktop margin would allow.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 700L * 1024 * 1024;
+        long driverBudget = total - used;
+        var metrics = new VulkanGpuMemory(0, "gpu", 0x1002, total, driverBudget, used);
+
+        long exclusive = OnnxTiler.BudgetFromVulkanMetrics(
+            metrics,
+            exclusiveThresholdBytes: 1L * 1024 * 1024 * 1024
+        );
+        long desktop = OnnxTiler.BudgetFromVulkanMetrics(metrics);
+
+        Assert.True(
+            driverBudget - exclusive <= 256L * 1024 * 1024 + 1,
+            $"the exclusive branch should keep only its minimal reserve: {exclusive} vs {driverBudget}"
+        );
+        Assert.True(
+            exclusive > desktop,
+            $"the 1 GiB threshold should recover the desktop margin: {exclusive} vs {desktop}"
+        );
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_ExplicitOverride_BeatsTheDriverBudget()
+    {
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 3L * 1024 * 1024 * 1024;
+        var metrics = new VulkanGpuMemory(0, "gpu", 0x1002, total, total - used, used);
+
+        long budget = OnnxTiler.BudgetFromVulkanMetrics(metrics, utilizationFraction: 0.5);
+
+        Assert.Equal((long)((total - used) * 0.5), budget);
+    }
+
+    [Fact]
+    public void PlanTileSplit_UsesTheModelsOwnScaleNotTheDeviceDefault()
+    {
+        // The device default was fitted on a small fp16 ESRGAN (0.90x); the fp32 transformer measured
+        // 1.28x. Planning the transformer with the default would produce a grid whose real footprint
+        // overruns the budget, which is exactly the spill this resolution exists to prevent.
+        long budget = 12L * 1024 * 1024 * 1024;
+        string model = "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx";
+        long weights = 16L * 1024 * 1024;
+
+        var withModel = new DeviceMemoryProfile
+        {
+            ActivationScale = 0.90,
+            SessionReservationBytes = 120L * 1024 * 1024,
+        };
+        withModel.Models[DeviceMemoryProfile.ModelKey(model, weights)] = new ModelMemoryProfile
+        {
+            ActivationScale = 1.28,
+            SessionReservationBytes = 9L * 1024 * 1024,
+        };
+
+        var defaultOnly = new DeviceMemoryProfile
+        {
+            ActivationScale = 0.90,
+            SessionReservationBytes = 120L * 1024 * 1024,
+        };
+
+        OnnxTiler.TileSplit planned = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            model,
+            budget,
+            weights,
+            isFp16: false,
+            withModel
+        );
+        OnnxTiler.TileSplit fromDefault = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            model,
+            budget,
+            weights,
+            isFp16: false,
+            defaultOnly
+        );
+
+        Assert.True(
+            planned.PaddedTilePixels < fromDefault.PaddedTilePixels,
+            $"the model's own factor should shrink the tile: {planned.PaddedTilePixels} vs {fromDefault.PaddedTilePixels}"
+        );
+
+        // The default-scaled grid does not actually fit once the model's own factor is applied...
+        Assert.True(
+            OnnxTiler.PredictTilePeakBytes(fromDefault, 4, model, weights, false, withModel)
+                > budget,
+            "the default-scaled grid was expected to overrun the budget at the model's real factor"
+        );
+        // ...and the grid planned with that factor does fit.
+        Assert.True(
+            OnnxTiler.PredictTilePeakBytes(planned, 4, model, weights, false, withModel) <= budget,
+            "the model-scaled grid was expected to fit the budget"
+        );
+    }
+
+    [Fact]
+    public void PredictTilePeakBytes_FollowsTheGridAndTheProfile()
+    {
+        string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        long weights = 34L * 1024 * 1024;
+        var split = new OnnxTiler.TileSplit(2, 2, 563, 800);
+
+        long builtin = OnnxTiler.PredictTilePeakBytes(split, 4, model, weights, isFp16: true);
+
+        var heavier = new DeviceMemoryProfile
+        {
+            ActivationScale = 2.0,
+            SessionReservationBytes = 100L * 1024 * 1024,
+        };
+        long withProfile = OnnxTiler.PredictTilePeakBytes(
+            split,
+            4,
+            model,
+            weights,
+            isFp16: true,
+            heavier
+        );
+
+        // The prediction has to track the padded tensor, not the raw tile: the same grid inferred at
+        // fp32 costs twice the activation term.
+        long fp32 = OnnxTiler.PredictTilePeakBytes(split, 4, model, weights, isFp16: false);
+        Assert.True(fp32 > builtin, $"fp32 should cost more than fp16: {fp32} vs {builtin}");
+        Assert.True(
+            withProfile > builtin,
+            $"a 2x factor should cost more: {withProfile} vs {builtin}"
         );
     }
 

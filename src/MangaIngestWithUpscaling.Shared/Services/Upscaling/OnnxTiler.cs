@@ -658,6 +658,75 @@ public static class OnnxTiler
         );
 
     /// <summary>
+    /// The two device-specific factors the planner uses: how many times the analytic working set the
+    /// execution provider really needs, and the tile-independent session footprint. Both come from
+    /// the measured profile where it has a value and from the built-ins otherwise (those are the
+    /// WebGPU/AMD values, so they are conservative rather than optimistic elsewhere).
+    /// <para>
+    /// The activation factor is resolved per model, because it is a property of the model and the
+    /// provider together rather than of the device: measured on an RX 9070 XT with the WebGPU EP the
+    /// fp16 ESRGAN needs 0.90x its analytic working set, the fp32 ESRGAN 0.69x and the fp32 FDAT_M
+    /// 1.28x. A single device-wide factor cannot represent that range, and using one under-estimated
+    /// the fp32 transformer enough to fill the card and spill into GTT.
+    /// </para>
+    /// </summary>
+    private static (double ActivationScale, long SessionReservationBytes) ResolveProfileFactors(
+        DeviceMemoryProfile? profile,
+        string modelNameOrPath,
+        long modelSizeBytes
+    )
+    {
+        double activationScale = 1.0;
+        long sessionReservation = SessionReservationBytes;
+        if (profile is null)
+        {
+            return (activationScale, sessionReservation);
+        }
+
+        double measuredScale = profile.ScaleFor(modelNameOrPath, modelSizeBytes);
+        if (measuredScale is > 0 and < 12)
+        {
+            activationScale = measuredScale;
+        }
+
+        long measuredReservation = profile.ReservationFor(modelNameOrPath, modelSizeBytes);
+        if (measuredReservation is > 0 and < 8L * 1024 * 1024 * 1024)
+        {
+            sessionReservation = measuredReservation;
+        }
+
+        return (activationScale, sessionReservation);
+    }
+
+    /// <summary>
+    /// The device memory one tile of <paramref name="split"/> is predicted to need, using the same
+    /// factors <see cref="PlanTileSplit"/> fits the budget with. Logged next to the measured peak so
+    /// an estimate that is off shows up as a number in the log instead of only as a spill.
+    /// </summary>
+    public static long PredictTilePeakBytes(
+        TileSplit split,
+        int scale,
+        string modelNameOrPath,
+        long modelSizeBytes = 0,
+        bool isFp16 = false,
+        DeviceMemoryProfile? profile = null
+    )
+    {
+        (double activationScale, long sessionReservation) = ResolveProfileFactors(
+            profile,
+            modelNameOrPath,
+            modelSizeBytes
+        );
+        double bytesPerPixel =
+            ActivationCoefficients.For(modelNameOrPath, modelSizeBytes).BytesPerPixel(scale, isFp16)
+            * activationScale;
+
+        return EstimateModelBytes(modelNameOrPath, modelSizeBytes)
+            + sessionReservation
+            + (long)(bytesPerPixel * split.PaddedTilePixels);
+    }
+
+    /// <summary>
     /// Plans the grid a page of <paramref name="width"/> x <paramref name="height"/> is upscaled in
     /// for <paramref name="memoryBudgetBytes"/>: the number of tiles per axis and their size.
     /// <para>
@@ -694,16 +763,13 @@ public static class OnnxTiler
         );
 
         // A measured profile replaces the built-in execution-model factor and session reservation
-        // with what this accelerator actually does. Without one the built-ins are used; those are
-        // the WebGPU/AMD values, so they are conservative rather than optimistic elsewhere.
-        double activationScale = profile?.ActivationScale is > 0 and < 12
-            ? profile.ActivationScale
-            : 1.0;
-        long sessionReservation = profile?.SessionReservationBytes
-            is > 0
-                and < 8L * 1024 * 1024 * 1024
-            ? profile.SessionReservationBytes
-            : SessionReservationBytes;
+        // with what this accelerator actually does. See ResolveProfileFactors for why the activation
+        // factor is taken per model rather than per device.
+        (double activationScale, long sessionReservation) = ResolveProfileFactors(
+            profile,
+            modelNameOrPath,
+            modelSizeBytes
+        );
 
         double bytesPerPixel = analytic.BytesPerPixel(scale, isFp16) * activationScale;
 
@@ -793,6 +859,64 @@ public static class OnnxTiler
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// The budget for a card whose driver reported <c>VK_EXT_memory_budget</c> metrics. Pure, so the
+    /// exclusive/shared decision can be pinned without a GPU.
+    /// <para>
+    /// The driver's budget is total minus what is already in use, with no eviction headroom of its
+    /// own. On a card that is otherwise idle that is exactly what should be spent, and an operator who
+    /// wants the whole card gets it. On a shared card it is too much: the driver starts evicting into
+    /// GTT past ~85-90% utilisation, which is the spill the margin in
+    /// <see cref="CalculateVramBudget"/> exists to avoid, so the driver's number is capped by it. The
+    /// boundary is the same configurable one the calculated path uses, so a card shared with a partner
+    /// that stays bounded can still be budgeted as exclusive.
+    /// </para>
+    /// </summary>
+    internal static long BudgetFromVulkanMetrics(
+        VulkanGpuMemory metrics,
+        double? utilizationFraction = null,
+        long? safetyMarginBytes = null,
+        long? exclusiveThresholdBytes = null
+    )
+    {
+        // If explicit overrides were provided, respect them
+        if (
+            HasExplicitVramBudgetOverride(
+                utilizationFraction,
+                safetyMarginBytes,
+                exclusiveThresholdBytes
+            )
+        )
+        {
+            return CalculateVramBudget(
+                metrics.TotalVramBytes,
+                metrics.UsedVramBytes,
+                utilizationFraction,
+                safetyMarginBytes,
+                exclusiveThresholdBytes
+            );
+        }
+
+        long exclusiveThreshold = exclusiveThresholdBytes is > 0
+            ? exclusiveThresholdBytes.Value
+            : DefaultExclusiveThresholdBytes;
+
+        if (metrics.BudgetBytes > 0 && metrics.UsedVramBytes <= exclusiveThreshold)
+        {
+            return metrics.BudgetBytes;
+        }
+
+        long calculated = CalculateVramBudget(
+            metrics.TotalVramBytes,
+            metrics.UsedVramBytes,
+            utilizationFraction,
+            safetyMarginBytes,
+            exclusiveThresholdBytes
+        );
+
+        return metrics.BudgetBytes > 0 ? Math.Min(metrics.BudgetBytes, calculated) : calculated;
     }
 
     /// <summary>
@@ -888,6 +1012,13 @@ public static class OnnxTiler
     /// Prioritizes Vulkan VK_EXT_memory_budget (driver-calculated memory budget across AMD, NVIDIA, Intel),
     /// falling back to Linux DRM sysfs (AMD/Intel) and nvidia-smi (NVIDIA), and finally a safe default budget.
     /// Automatically adapts to dedicated/NAS vs desktop environments.
+    /// <para>
+    /// The driver's own <c>heapBudget</c> is used verbatim only while the card counts as quasi-exclusive
+    /// (see <see cref="CalculateVramBudget"/> and <c>VramExclusiveThresholdBytes</c>). Once something
+    /// else is using the card it is capped by the calculated budget, because the driver's number is
+    /// total-minus-used with no eviction headroom and would spend the card to the point where the
+    /// driver starts evicting into GTT.
+    /// </para>
     /// </summary>
     public static long GetAvailableVramBudget(
         int deviceId = 0,
@@ -900,33 +1031,8 @@ public static class OnnxTiler
         var vkMem = VulkanMemoryProvider.QueryDevice(deviceId);
         if (vkMem != null && vkMem.TotalVramBytes > 0)
         {
-            // If explicit overrides were provided, respect them
-            if (
-                HasExplicitVramBudgetOverride(
-                    utilizationFraction,
-                    safetyMarginBytes,
-                    exclusiveThresholdBytes
-                )
-            )
-            {
-                return CalculateVramBudget(
-                    vkMem.TotalVramBytes,
-                    vkMem.UsedVramBytes,
-                    utilizationFraction,
-                    safetyMarginBytes,
-                    exclusiveThresholdBytes
-                );
-            }
-
-            // Driver budget is calculated directly by the GPU driver taking OS & desktop into account
-            if (vkMem.BudgetBytes > 0)
-            {
-                return vkMem.BudgetBytes;
-            }
-
-            return CalculateVramBudget(
-                vkMem.TotalVramBytes,
-                vkMem.UsedVramBytes,
+            return BudgetFromVulkanMetrics(
+                vkMem,
                 utilizationFraction,
                 safetyMarginBytes,
                 exclusiveThresholdBytes

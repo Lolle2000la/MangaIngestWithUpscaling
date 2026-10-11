@@ -84,6 +84,122 @@ public class DeviceMemoryCalibratorTests
     }
 
     [Fact]
+    public async Task GetOrCalibrateForModel_AFailedModelIsNotRetriedButDoesNotBlockAnother()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+            // A session the factory cannot produce is the same failure an unwritable models volume
+            // ends in, without needing one to set up.
+            sessionFactory.GetOrCreateSession(Arg.Any<string>()).Returns((InferenceSession)null!);
+
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig()),
+                store,
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            string first = Path.Combine(dir, "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx");
+            string second = Path.Combine(dir, "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx");
+            TinyOnnxModel.WriteNearestUpscaler(dir, scale: 4, fileName: Path.GetFileName(first));
+            TinyOnnxModel.WriteNearestUpscaler(dir, scale: 4, fileName: Path.GetFileName(second));
+
+            Assert.Null(
+                await calibrator.GetOrCalibrateForModelAsync(
+                    0,
+                    dir,
+                    first,
+                    4,
+                    TestContext.Current.CancellationToken
+                )
+            );
+            Assert.Null(
+                await calibrator.GetOrCalibrateForModelAsync(
+                    0,
+                    dir,
+                    first,
+                    4,
+                    TestContext.Current.CancellationToken
+                )
+            );
+            // The first model's failure must not stop a different model from being measured: the
+            // "already tried" memory is keyed per model, not per device.
+            Assert.Null(
+                await calibrator.GetOrCalibrateForModelAsync(
+                    0,
+                    dir,
+                    second,
+                    4,
+                    TestContext.Current.CancellationToken
+                )
+            );
+
+            // One attempt for each model, not one per page for the failing one.
+            sessionFactory.Received(2).GetOrCreateSession(Arg.Any<string>());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetOrCalibrateForModel_WithAMeasuredModelInTheStore_DoesNotTouchTheGpu()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig()),
+                store,
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            string model = Path.Combine(dir, "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx");
+            TinyOnnxModel.WriteNearestUpscaler(dir, scale: 4, fileName: Path.GetFileName(model));
+            long size = new FileInfo(model).Length;
+
+            string fingerprint = calibrator.BuildFingerprint(0);
+            var cached = new DeviceMemoryProfile
+            {
+                Fingerprint = fingerprint,
+                ActivationScale = 0.90,
+            };
+            cached.Models[DeviceMemoryProfile.ModelKey(model, size)] = new ModelMemoryProfile
+            {
+                ActivationScale = 1.28,
+                CalibratedAtUtc = DateTimeOffset.UnixEpoch,
+            };
+            store.Save(dir, cached);
+
+            DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateForModelAsync(
+                0,
+                dir,
+                model,
+                4,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.NotNull(profile);
+            Assert.Equal(1.28, profile!.ScaleFor(model, size));
+            // A stored per-model measurement must not touch the GPU at all.
+            sessionFactory.DidNotReceiveWithAnyArgs().GetOrCreateSession(default!);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task GetOrCalibrate_WithCachedProfile_DoesNotBenchmark()
     {
         string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");

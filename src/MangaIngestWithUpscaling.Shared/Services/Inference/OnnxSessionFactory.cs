@@ -21,6 +21,8 @@ public sealed class OnnxSessionFactory(
     private static bool? _migraphxAvailable;
     private static bool? _directMlAvailable;
     private readonly Lock _lock = new();
+    private readonly Lock _backendGate = new();
+    private GpuBackend? _resolvedBackend;
     private readonly Dictionary<string, InferenceSession> _sessions = new(
         StringComparer.OrdinalIgnoreCase
     );
@@ -699,6 +701,19 @@ public sealed class OnnxSessionFactory(
     }
 
     public GpuBackend GetEffectiveBackend()
+    {
+        // Resolved once per process. The probe below builds a SessionOptions and asks the runtime to
+        // attach each candidate provider, which is real work — and it ran on every call, i.e. once
+        // per page through the calibrator's fingerprint. The answer cannot change while the process
+        // runs: the configuration is a fixed snapshot (IOptions, not IOptionsMonitor) and neither
+        // the accelerator nor the runtime changes underneath it.
+        lock (_backendGate)
+        {
+            return _resolvedBackend ??= ResolveEffectiveBackend();
+        }
+    }
+
+    private GpuBackend ResolveEffectiveBackend()
     {
         UpscalerConfig currentConfig = config.Value;
         if (currentConfig.UseCPU || currentConfig.SelectedDeviceIndex <= 0)

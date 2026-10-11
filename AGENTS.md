@@ -233,6 +233,19 @@ local and synchronous.
 }
 ```
 
+### Local secrets (worker API key)
+
+`WorkerConfig:ApiKey` is a per-developer secret and is deliberately **not** tracked in
+`src/MangaIngestWithUpscaling.RemoteWorker/appsettings.Development.json`. Set it once with:
+
+```bash
+dotnet user-secrets set "WorkerConfig:ApiKey" "<key>" --project src/MangaIngestWithUpscaling.RemoteWorker
+```
+
+User secrets are read in Development only and are never deployed, so a standalone container (the
+main deployment) is configured through `Ingest_WorkerConfig__ApiKey` or a mounted `appsettings.json`
+instead — `Ingest_`-prefixed environment variables are already registered and need no code change.
+
 ### Environment Variables (for development)
 - `Ingest_Upscaler__RemoteOnly=true` - Run the upscaling on the remote worker instead of locally
 - `Ingest_Upscaler__UseCPU=true` - Force CPU backend
