@@ -91,7 +91,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
 | `TileSize` | `Ingest_Upscaler__TileSize` | `0` | Tile size in pixels for ONNX inference. `0` = plan the grid from the model's activation footprint and the VRAM budget (default — see [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md)); `> 0` = manual maximum tile size; `-1` = force single pass (no tiling). |
 | `MemoryBudgetBytes` | `Ingest_Upscaler__MemoryBudgetBytes` | *(unset)* | VRAM memory budget for tile estimation, as a byte count or a size string (`4GiB`, `12288MiB`, `4294967296`). Unset means auto-detect free VRAM (default); a value that cannot be parsed fails startup. |
-| `VramExclusiveThresholdBytes` | `Ingest_Upscaler__VramExclusiveThresholdBytes` | `350 MiB` | Usage at or below which the card is treated as quasi-exclusive (minimal 256 MiB reserve), as a byte count or a size string (`700MiB`, `1 GiB`). Raise it when another process reliably shares the GPU but stays bounded — e.g. a video transcoder holding 700 MiB: at `1GiB` the budget again treats the card as exclusive. Unparseable values fall back to the default. See [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md). |
+| `VramExclusiveThresholdBytes` | `Ingest_Upscaler__VramExclusiveThresholdBytes` | `350 MiB` | Usage at or below which the card is treated as quasi-exclusive (minimal 256 MiB reserve), as a byte count or a size string (`700MiB`, `1 GiB`). Raise it when another process reliably shares the GPU but stays bounded — e.g. a video transcoder holding 700 MiB: at `1GiB` the budget again treats the card as exclusive. A value that cannot be parsed fails startup, like the other size settings; the default applies only while the setting is unset. See [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md). |
 | `RecalibrateDeviceMemory` | `Ingest_Upscaler__RecalibrateDeviceMemory` | `false` | Force the one-off per-device memory benchmark to run again on the next upscale. Normally unnecessary: the benchmark runs automatically the first time a device is seen and is cached in `device-memory-profile.json` next to the models. See [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md#6-per-device-calibration). |
 
 #### `PreferredGpuBackend` values
@@ -111,6 +111,27 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
 | `ModelsDirectory` | `Ingest_Upscaler__ModelsDirectory` | `/models/MangaJaNai` (Docker) | Directory where upscaling models are stored. |
+
+#### Model integrity and the verification marker
+
+Every downloaded model package is verified against the SHA-256 hashes pinned in the application, and a
+marker file `.verified_<zipHash>` is written next to the models once that verification passes. The
+marker does **not** mean "trust these files blindly": it stores each model file's size and last-write
+time, and on every startup those fingerprints are compared with the files on disk.
+
+- **Files unchanged** (size and mtime match the marker): the SHA-256 pass is skipped, so a models
+  directory holding several gigabytes does not get re-hashed on every start.
+- **Any file changed** (different size or mtime — e.g. corrupted, truncated, or swapped after the
+  first download): every file in the package is re-hashed before the package is used. A mismatch
+  triggers a re-download instead of silently loading a broken model.
+- **Legacy markers** written by older versions contain only the bare zip hash. They are treated as
+  stale: the package is re-verified once and the marker is rewritten in the fingerprint format.
+
+Residual trust boundary: a modification that preserves **both** the file size and its mtime (for
+example, deliberately restoring the original timestamp after editing bytes in place, or silent bit
+rot that never updates metadata) is not detected without re-hashing. Re-run with an empty models
+directory, or delete the `.verified_*` markers, to force a full re-verification if you suspect
+tampering that deliberately preserved metadata.
 
 ### Preprocessing settings
 

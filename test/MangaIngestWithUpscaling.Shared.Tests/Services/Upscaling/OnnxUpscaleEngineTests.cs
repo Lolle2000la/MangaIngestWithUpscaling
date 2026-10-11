@@ -184,10 +184,12 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
-    public void SelectModel_IsTheFirstCandidate()
+    public void SelectModel_ReturnsTheExpectedTopPreferenceForEachImageKind()
     {
-        // Every path SelectModel used to return has to stay the first preference, so the
-        // candidate list is what now feeds it rather than being a second opinion.
+        // SelectModel is defined as SelectModelCandidates(...)[0], so comparing the two (the old
+        // body) re-ran the same deterministic function twice and could never fail. Pin the actual
+        // winner for a directory whose naming rules give a known answer instead, so a change to the
+        // resolution ladder or the architecture ordering has to break one of these.
         string[] modelFiles =
         [
             "4x_MangaJaNai_1600p_v1.onnx",
@@ -204,15 +206,18 @@ public class OnnxUpscaleEngineTests : IDisposable
             File.WriteAllText(Path.Combine(_tempDir, file), "dummy");
         }
 
+        // Height 1600 lands in the 1600p bucket and a grayscale page prefers MangaJaNai, so the
+        // 1600p MangaJaNai model wins over every IllustrationJaNai one.
         Assert.Equal(
-            OnnxUpscaleEngine.SelectModel(_tempDir, isGrayscale: true, height: 1600, scale: 4),
-            OnnxUpscaleEngine.SelectModelCandidates(_tempDir, isGrayscale: true, height: 1600, 4)[0]
+            Path.Combine(_tempDir, "4x_MangaJaNai_1600p_v1.onnx"),
+            OnnxUpscaleEngine.SelectModel(_tempDir, isGrayscale: true, height: 1600, scale: 4)
         );
+
+        // Colour prefers V3detail and, within it, FDAT_M over the other architectures, so the
+        // fp16 FDAT_M copy is the top preference.
         Assert.Equal(
-            OnnxUpscaleEngine.SelectModel(_tempDir, isGrayscale: false, height: 1600, scale: 4),
-            OnnxUpscaleEngine.SelectModelCandidates(_tempDir, isGrayscale: false, height: 1600, 4)[
-                0
-            ]
+            Path.Combine(_tempDir, "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx"),
+            OnnxUpscaleEngine.SelectModel(_tempDir, isGrayscale: false, height: 1600, scale: 4)
         );
     }
 
@@ -435,12 +440,13 @@ public class OnnxUpscaleEngineTests : IDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
-    public async Task UpscaleFileAsync_EncodesThroughATempAndLeavesNoPartialBehind()
+    public async Task UpscaleFileAsync_SuccessfulRunReplacesDestinationAndLeavesNoStagingFile()
     {
-        // The encode is staged next to the destination and moved on completion, so a codec or disk
-        // failure cannot leave a truncated image where the page should be. This pins the two
-        // observable consequences: the destination is replaced atomically, and the staging file does
-        // not survive the call.
+        // The encode is staged next to the destination and moved on completion, so the success path
+        // leaves neither the old destination nor the staging file. Note this only covers the happy
+        // path: the move itself removes the staged file, so it cannot observe the finally-block
+        // cleanup. That cleanup is guarded separately by
+        // UpscaleFileAsync_WhenTheFinalMoveFails_DeletesTheStagingFileAndLeavesTheDestinationUntouched.
         const int width = 64;
         const int height = 90;
         const int scale = 2;
@@ -479,6 +485,68 @@ public class OnnxUpscaleEngineTests : IDisposable
         Assert.Equal(height * scale, outImg.Height);
 
         Assert.Empty(Directory.GetFiles(_tempDir, "*.part-*"));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleFileAsync_WhenTheFinalMoveFails_DeletesTheStagingFileAndLeavesTheDestinationUntouched()
+    {
+        // The success path moves the staged file onto the destination, so the move itself removes
+        // the *.part-* file and the finally-block File.Delete never has anything to do — removing
+        // that delete would leave the success-path test green. To exercise the cleanup, the final
+        // move has to fail *after* the encoder has written the staged file. Pointing the destination
+        // at an existing non-empty directory does that, because File.Move cannot replace a
+        // directory; the staging file must then be gone and the destination untouched.
+        const int width = 64;
+        const int height = 90;
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(_tempDir, width, height);
+
+        string destination = Path.Combine(_tempDir, "upscaled-destination");
+        Directory.CreateDirectory(destination);
+        string sentinel = Path.Combine(destination, "previous-output.txt");
+        File.WriteAllText(sentinel, "previous-output");
+
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        using var sessionFactory = new OnnxSessionFactory(
+            config,
+            NullLogger<OnnxSessionFactory>.Instance
+        );
+        var engine = new OnnxUpscaleEngine(
+            sessionFactory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        Exception? failure = await Record.ExceptionAsync(() =>
+            engine.UpscaleFileAsync(
+                inputPath,
+                destination,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        // A failure anywhere before the write stage (candidate selection, inference) surfaces as
+        // InvalidOperationException/FileNotFoundException, so requiring an IO/permission error pins
+        // the failure to File.Move and proves the staged file had been written by then. The exact
+        // type is platform-dependent: rename(2) reports EISDIR for a file onto a directory.
+        Assert.True(
+            failure is IOException or UnauthorizedAccessException,
+            "expected the final move onto a directory to fail, got: "
+                + $"{failure?.GetType().Name ?? "no exception"}: {failure?.Message}"
+        );
+
+        // Only the finally-block File.Delete can remove this; the failed move left it behind.
+        Assert.Empty(Directory.GetFiles(_tempDir, "*.part-*"));
+        Assert.True(Directory.Exists(destination));
+        Assert.Equal("previous-output", File.ReadAllText(sentinel));
     }
 
     [Fact]

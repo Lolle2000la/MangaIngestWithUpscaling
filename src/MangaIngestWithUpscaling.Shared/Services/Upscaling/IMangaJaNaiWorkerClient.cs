@@ -94,7 +94,7 @@ public enum UpscaleJobStatus
     /// <summary>The page was decoded and upscaled; <see cref="UpscaleJobFile.Output"/> is the result.</summary>
     Success,
 
-    /// <summary>The page could not be upscaled; the caller should pass its source bytes through.</summary>
+    /// <summary>The page could not be upscaled; the caller fails the chapter rather than substituting the source page.</summary>
     Error,
 }
 

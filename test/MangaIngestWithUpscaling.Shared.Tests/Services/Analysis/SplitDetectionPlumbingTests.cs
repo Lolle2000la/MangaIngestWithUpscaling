@@ -129,6 +129,24 @@ public class SplitDetectionPlumbingTests : IDisposable
         Assert.Equal(0, result.Count);
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task DetectSplitsAsync_ClampsASplitAtTheBottomEdgeToTheLastRealRow()
+    {
+        // A 384x100 page resizes to 768x200 (vscale = 2), which is just short of the edge margin, so
+        // the last resized row (199) is processed. It maps to round(199/2) = 100 == the original
+        // height. SplitApplier drops a split at the image height, so without the clamp the
+        // bottom-edge split would be lost; it must land on the last real row instead.
+        const int height = 100;
+        SplitDetectionResult result = await Run(
+            WriteSolidImage("bottom-edge.png", brightFrom: height / 2, height)
+        );
+
+        Assert.NotEmpty(result.Splits);
+        Assert.Contains(result.Splits, split => split.YOriginal == height - 1);
+        Assert.DoesNotContain(result.Splits, split => split.YOriginal >= height);
+    }
+
     private async Task<SplitDetectionResult> Run(string imagePath)
     {
         // Written under the name ResolveModelPath looks for, and into the models directory it
@@ -200,6 +218,34 @@ public class SplitDetectionPlumbingTests : IDisposable
                 Enums.BandFormat.Uchar
             )
         )
+        {
+            image.WriteToFile(path);
+        }
+
+        return path;
+    }
+
+    /// <summary>
+    /// Writes a black page of the given size whose rows from <paramref name="brightFrom"/> to the
+    /// bottom are white, so the detector proposes a split at the bottom edge.
+    /// </summary>
+    private string WriteSolidImage(string fileName, int brightFrom, int height)
+    {
+        const int width = SourceWidth;
+        var pixels = new byte[width * height * 3];
+        for (int y = brightFrom; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int offset = (y * width + x) * 3;
+                pixels[offset] = 255;
+                pixels[offset + 1] = 255;
+                pixels[offset + 2] = 255;
+            }
+        }
+
+        string path = Path.Combine(_dir, fileName);
+        using (var image = Image.NewFromMemory(pixels, width, height, 3, Enums.BandFormat.Uchar))
         {
             image.WriteToFile(path);
         }

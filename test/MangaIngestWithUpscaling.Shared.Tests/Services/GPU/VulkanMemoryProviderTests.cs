@@ -94,6 +94,83 @@ public class VulkanMemoryProviderTests
         // this code. What is pinned is that the answer is a bool and does not throw.
     }
 
+    /// <summary>
+    /// The fp16 decision after the Vulkan feature query. The native query cannot be driven from a
+    /// unit test, so the decision is pinned through the pure helper: it cannot cover the P/Invoke
+    /// call itself, only how its answer (or its absence) is interpreted.
+    /// </summary>
+    [Theory]
+    [InlineData((uint)0x10DE)] // NVIDIA
+    [InlineData((uint)0x1002)] // AMD
+    [InlineData((uint)0x8086)] // Intel
+    [InlineData((uint)0x106B)] // Apple
+    public void ResolveFp16Support_QueryRanAndSaidNo_IsNotOverriddenByVendorId(uint vendorId)
+    {
+        // vkGetPhysicalDeviceFeatures2 succeeded and reported neither fp16 feature. That is the
+        // driver saying "not supported", so the vendor heuristic must not turn it back into a yes —
+        // otherwise the fp16-only model set is downloaded and the WebGPU EP cannot run it.
+        Assert.False(
+            VulkanMemoryProvider.ResolveFp16Support(
+                featureQueryRan: true,
+                shaderFloat16: false,
+                storageBuffer16BitAccess: false,
+                vendorId: vendorId
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData((uint)0x10DE)] // NVIDIA
+    [InlineData((uint)0x1002)] // AMD
+    [InlineData((uint)0x8086)] // Intel
+    [InlineData((uint)0x106B)] // Apple
+    public void ResolveFp16Support_QueryDidNotRun_FallsBackToVendorHeuristic(uint vendorId)
+    {
+        // With no entry point (or a query that faulted) the device cannot be asked, so the four
+        // known modern vendors are assumed capable.
+        Assert.True(
+            VulkanMemoryProvider.ResolveFp16Support(
+                featureQueryRan: false,
+                shaderFloat16: false,
+                storageBuffer16BitAccess: false,
+                vendorId: vendorId
+            )
+        );
+    }
+
+    [Fact]
+    public void ResolveFp16Support_QueryDidNotRun_UnknownVendor_IsFalse()
+    {
+        // The heuristic only ever answers for the vendors it names; an unknown vendor stays "no".
+        Assert.False(
+            VulkanMemoryProvider.ResolveFp16Support(
+                featureQueryRan: false,
+                shaderFloat16: false,
+                storageBuffer16BitAccess: false,
+                vendorId: 0x1234
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ResolveFp16Support_QueryRanAndReportedAFeature_IsTrue(
+        bool shaderFloat16,
+        bool storageBuffer16BitAccess
+    )
+    {
+        // Either fp16 feature is enough, and the vendor id is irrelevant once the query has answered.
+        Assert.True(
+            VulkanMemoryProvider.ResolveFp16Support(
+                featureQueryRan: true,
+                shaderFloat16: shaderFloat16,
+                storageBuffer16BitAccess: storageBuffer16BitAccess,
+                vendorId: 0x1234
+            )
+        );
+    }
+
     [Fact]
     public void ResolveGpuIndex_SkipsSoftwareRasterizers()
     {

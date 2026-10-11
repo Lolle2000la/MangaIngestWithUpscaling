@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
@@ -241,6 +242,153 @@ public class SplitDetectionServiceTests : IDisposable
                 cancellationToken: TestContext.Current.CancellationToken
             )
         );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WhenDetectorFailsStructurally_DoesNotRebuildItForEveryPage()
+    {
+        // A model that loads and runs but cannot serve as the detector (its outputs are not the
+        // detector's) fails structurally: it will fail again on every page. Without a verdict cache
+        // the session is rebuilt and re-failed per page of every chapter; the second page must be
+        // answered from the cached verdict instead.
+        string modelsDir = Path.Combine(_root, "structural_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(
+            modelsDir,
+            scale: 2,
+            fp16: false,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+        factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult first = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("structural-first.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+        SplitDetectionResult second = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("structural-second.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.NotNull(first.Error);
+        Assert.NotNull(second.Error);
+        // The second page was served from the verdict, not by rebuilding the session.
+        factory.Received(1).GetOrCreateSession(modelPath);
+
+        // The verdict is scoped to the resolved backend: a different backend is not disabled by it.
+        factory.GetEffectiveBackend().Returns(GpuBackend.WebGPU);
+        var otherBackend = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+        await otherBackend.DetectSplitsAsync(
+            WriteDecodableImage("structural-other-backend.png"),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        factory.Received(2).GetOrCreateSession(modelPath);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WhenInferenceHangs_ReturnsAnErrorWithinTheTimeout()
+    {
+        // session.Run is synchronous and cannot be cancelled, so a hung provider would otherwise
+        // park the chapter forever. The service bounds the await and returns an error instead.
+        string modelsDir = Path.Combine(_root, "hang_models");
+        Directory.CreateDirectory(modelsDir);
+        TinyOnnxModel.WritePeakMaskDetector(modelsDir, fileName: "page_break_detector.onnx");
+
+        var real = new OnnxSessionFactory(
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir, UseCPU = true }),
+            NullLogger<OnnxSessionFactory>.Instance
+        );
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var release = new ManualResetEventSlim(false);
+        factory
+            .GetOrCreateSession(Arg.Any<string>())
+            .Returns(ci =>
+            {
+                // Never return from session creation until the test lets it, simulating a wedged
+                // execution provider.
+                release.Wait(TimeSpan.FromSeconds(30));
+                return real.GetOrCreateSession(ci.ArgAt<string>(0));
+            });
+        factory.EnterInferenceScope().Returns(_ => real.EnterInferenceScope());
+        factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = modelsDir,
+                    UseCPU = true,
+                    UpscaleTimeout = TimeSpan.FromMilliseconds(300),
+                }
+            )
+        );
+
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            SplitDetectionResult result = Assert.Single(
+                await service.DetectSplitsAsync(
+                    WriteDecodableImage("hang.png"),
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+            );
+            stopwatch.Stop();
+
+            Assert.NotNull(result.Error);
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+                $"detection was not bounded; it took {stopwatch.Elapsed}"
+            );
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(199, 2.0, 100, 99)] // rounds to 100 == origHeight; clamped to the last real row
+    [InlineData(100, 2.0, 100, 50)]
+    [InlineData(0, 2.0, 100, 0)]
+    [InlineData(3, 1.0, 4, 3)]
+    [InlineData(0, 0.0, 4, 0)]
+    public void MapRowToOriginal_ClampsToTheLastRealRow(
+        int row,
+        double vscale,
+        int origHeight,
+        int expected
+    )
+    {
+        // Downstream SplitApplier drops a split at or below the image height, so a row that rounds
+        // up to origHeight on a short page must be clamped to the last real row.
+        Assert.Equal(expected, SplitDetectionService.MapRowToOriginal(row, vscale, origHeight));
     }
 
     /// <summary>

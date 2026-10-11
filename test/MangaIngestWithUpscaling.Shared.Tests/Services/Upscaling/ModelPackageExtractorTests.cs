@@ -118,7 +118,47 @@ public class ModelPackageExtractorTests : IDisposable
             ModelFileNames.Fp32Suffix
         );
 
-        Assert.Empty(Directory.GetDirectories(Path.GetTempPath(), "model_extract_*"));
+        Assert.Empty(
+            Directory.GetDirectories(_dir, $"{ModelPackageExtractor.ScratchDirectoryPrefix}*")
+        );
+    }
+
+    [Fact]
+    public void ScratchDirectory_IsInsideTheModelsDirectoryAndCannotLookLikeAModel()
+    {
+        // The scratch has to be on the same filesystem as the installed models, or the final
+        // File.Move degrades to a copy+delete and a concurrent reader can see a half-written .onnx.
+        // It also must not match the flat *.onnx model enumeration if a crash leaves it behind.
+        string scratch = ModelPackageExtractor.ScratchDirectory(_dir);
+
+        Assert.Equal(_dir, Path.GetDirectoryName(scratch));
+        Assert.StartsWith(ModelPackageExtractor.ScratchDirectoryPrefix, Path.GetFileName(scratch));
+        Assert.DoesNotContain(
+            ".onnx",
+            Path.GetFileName(scratch),
+            StringComparison.OrdinalIgnoreCase
+        );
+    }
+
+    [Fact]
+    public void Extract_WhenTheInstallMoveFails_LeavesNoScratchOrPartialModelBehind()
+    {
+        // A failure while installing (here the resolved name collides with an existing directory)
+        // must not leave the scratch tree behind, and the models directory must not end up holding a
+        // half-installed *.onnx. The only copy of the extracted file is inside the scratch tree,
+        // which the finally removes.
+        CreateArchive("pkg.zip", ("model.onnx", "content"));
+        Directory.CreateDirectory(Path.Combine(_dir, "model.onnx"));
+
+        Assert.ThrowsAny<Exception>(() =>
+            ModelPackageExtractor.Extract(Path.Combine(_dir, "pkg.zip"), _dir, null)
+        );
+
+        Assert.True(Directory.Exists(Path.Combine(_dir, "model.onnx")));
+        Assert.Empty(Directory.GetFiles(_dir, "*.onnx"));
+        Assert.Empty(
+            Directory.GetDirectories(_dir, $"{ModelPackageExtractor.ScratchDirectoryPrefix}*")
+        );
     }
 
     [Fact]

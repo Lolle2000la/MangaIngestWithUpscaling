@@ -398,6 +398,48 @@ public class PageManifestBuilderTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BuildDetectionAndUpscaleDescriptors_AgreeOnTheIndexToSourceMapping()
+    {
+        // Detection and upscaling each derive a page index from the archive entries. If detection
+        // iterated in archive order while upscaling used natural order, the same entry would sit at
+        // a different index on the two paths and a page fetched for detection would not be the page
+        // the upscale manifest names.
+        string directory = Directory.CreateTempSubdirectory("manifest_detect_order").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("10.png", new byte[] { 1 }),
+                ("2.png", new byte[] { 2 }),
+                ("001.jpg", new byte[] { 3 }),
+                ("ComicInfo.xml", new byte[] { 4 })
+            );
+
+            List<SpoolPageDescriptor> upscale = PageManifestBuilder.BuildPageDescriptors(
+                source,
+                Profile()
+            );
+            List<SpoolPageDescriptor> detection = PageManifestBuilder.BuildDetectionPageDescriptors(
+                source
+            );
+
+            Assert.Equal(
+                upscale.OrderBy(p => p.Index).Select(p => (p.Index, p.SourceName)),
+                detection.OrderBy(p => p.Index).Select(p => (p.Index, p.SourceName))
+            );
+            Assert.Equal(
+                new[] { "001.jpg", "2.png", "10.png" },
+                detection.Select(p => p.SourceName)
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static ImagePreprocessingOptions Preprocessing() => new();
 
     private static SharedUpscalerProfile Profile(

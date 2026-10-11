@@ -8,6 +8,12 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 public static class ModelPackageExtractor
 {
     /// <summary>
+    /// Prefix of the scratch directory, which must not look like a model (<c>*.onnx</c>) and must be
+    /// dot-prefixed so nothing that walks the models directory mistakes it for one.
+    /// </summary>
+    internal const string ScratchDirectoryPrefix = ".extract-";
+
+    /// <summary>
     /// Extracts <paramref name="zipPath"/> into <paramref name="modelsDirectory"/>, storing each
     /// file under <see cref="ModelFileNames.Resolve(string, string?)"/>. The models directory stays
     /// flat, so a file the archive kept in a subdirectory is stored under its own name.
@@ -25,7 +31,12 @@ public static class ModelPackageExtractor
 
         Directory.CreateDirectory(modelsDirectory);
 
-        string scratch = Path.Combine(Path.GetTempPath(), $"model_extract_{Guid.NewGuid():N}");
+        // The scratch directory lives inside the models directory rather than under
+        // Path.GetTempPath(): the final move then stays on one filesystem and is a metadata-only
+        // rename. Across filesystems (models on a data mount, temp on tmpfs) File.Move degrades to
+        // a copy+delete, so the file appears in the models directory non-atomically and a
+        // concurrent verify or GetOrCreateSession can read a half-written .onnx.
+        string scratch = ScratchDirectory(modelsDirectory);
         try
         {
             ZipFile.ExtractToDirectory(zipPath, scratch, overwriteFiles: true);
@@ -59,4 +70,16 @@ public static class ModelPackageExtractor
             }
         }
     }
+
+    /// <summary>
+    /// A fresh scratch directory for an extraction into <paramref name="modelsDirectory"/>.
+    /// <para>
+    /// It is inside the models directory so the install move stays on one filesystem, and it carries
+    /// a <see cref="ScratchDirectoryPrefix"/> and a <c>.onnx</c>-free name so the flat model
+    /// enumeration (<c>Directory.GetFiles(modelsDirectory, "*.onnx")</c>) can never mistake a
+    /// crashed run's leftover for a model. Exposed for tests, which assert both properties.
+    /// </para>
+    /// </summary>
+    internal static string ScratchDirectory(string modelsDirectory) =>
+        Path.Combine(modelsDirectory, $"{ScratchDirectoryPrefix}{Guid.NewGuid():N}");
 }

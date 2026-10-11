@@ -295,6 +295,11 @@ public sealed class PageStreamClient(
                     // way, so the two agree.
                     pageErrors.Add($"{file.Input}: {file.Status}");
                     TryDeleteFile(sourcePagePath, doneIndex);
+
+                    // Released immediately, because nothing was handed to the upload loop: the slot
+                    // is otherwise only freed after an upload, so every failed page would burn one
+                    // permanently and the ninth failure would block this callback for good.
+                    uploadSlots.Release();
                 }
             }
 

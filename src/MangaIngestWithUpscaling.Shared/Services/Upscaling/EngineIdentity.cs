@@ -73,11 +73,11 @@ public static class EngineIdentity
                     ?? config.ResolveUseFp16(resolvedBackend ?? config.PreferredGpuBackend)
             )
             .Append('|')
-            // The effective compute mode, not just UseCPU: the worker maps
-            // SelectedDeviceIndex = UseCPU ? 0 : SelectedDeviceIndex, and device 0 is the CPU switch.
-            // So UseCPU=true and (UseCPU=false, SelectedDeviceIndex=0) must hash the same and differ
-            // from a GPU run (SelectedDeviceIndex > 0).
-            .Append(config.UseCPU || config.SelectedDeviceIndex == 0)
+            // The effective compute mode, not just UseCPU: device 0 is the CPU switch and, as in
+            // OnnxSessionFactory.ShouldUseCpuProvider and UpscalerConfig.ResolveUseFp16, every
+            // SelectedDeviceIndex <= 0 resolves to CPU. So UseCPU=true, SelectedDeviceIndex=0 and
+            // SelectedDeviceIndex=-1 must all hash the same and differ from a GPU run (> 0).
+            .Append(config.UseCPU || config.SelectedDeviceIndex <= 0)
             .Append('|')
             // The *resolved* accelerator backend, so a CUDA and a WebGPU run never mix even when both
             // are configured Auto. The GPU index itself is not hashed, so a same-backend hand-off
@@ -135,6 +135,10 @@ public static class EngineIdentity
                     File: file
                 )
             )
+            // Nothing from a dot-directory: the extractor works in a `.extract-<guid>` scratch inside
+            // this directory, so a live or crashed one would otherwise contribute duplicate weights to
+            // the identity even though the installed models are unchanged.
+            .Where(entry => !entry.Relative.Split('/').Any(segment => segment.StartsWith('.')))
             .OrderBy(entry => entry.Relative, StringComparer.Ordinal);
         foreach ((string relative, long length, string file) in files)
         {

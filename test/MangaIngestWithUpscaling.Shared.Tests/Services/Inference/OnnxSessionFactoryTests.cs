@@ -317,4 +317,75 @@ public class OnnxSessionFactoryTests : IDisposable
             "the invalidated session was never disposed after its scope ended"
         );
     }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void ReleaseCachedSessions_DisposesTheCachedSessionBeforeItReturns()
+    {
+        // InvalidateAllSessions retires and lets the thread pool drain, so the memory is not
+        // necessarily free when it returns. ReleaseCachedSessions has to be synchronous: the OOM
+        // retry and the chapter boundary depend on the device memory being free before their next
+        // scope, which the deferred drain would otherwise block behind.
+        string modelPath = ModelPath();
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        InferenceSession session = factory.GetOrCreateSession(modelPath);
+        Assert.False(IsDisposed(session));
+
+        factory.ReleaseCachedSessions();
+
+        Assert.True(
+            IsDisposed(session),
+            "ReleaseCachedSessions returned with the session still resident"
+        );
+        Assert.NotSame(session, factory.GetOrCreateSession(modelPath));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void DrainRetired_AfterTheFactoryIsDisposed_FreesItsBatchWithoutThrowing()
+    {
+        // Dispose() disposes _activeExecutionLock once it has taken the write lock. A background
+        // drain that snapshotted its batch first and reached EnterWriteLock afterwards used to throw
+        // ObjectDisposedException on a pool thread — an unhandled exception, i.e. a non-graceful
+        // process shutdown — and leave the batch undisposed. The drain runs after Dispose here, with
+        // a batch only the drain owns (the session was never cached, so Dispose did not take it).
+        string modelPath = ModelPath();
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        InferenceSession batch = factory.CreateSession(modelPath);
+        factory.Dispose();
+
+        RetiredSetOf(factory).Add(batch);
+
+        InvokeDrainRetired(factory); // Must not surface ObjectDisposedException.
+
+        Assert.True(
+            IsDisposed(batch),
+            "the drain gave up and leaked the batch it had snapshotted before Dispose won"
+        );
+    }
+
+    private static HashSet<InferenceSession> RetiredSetOf(OnnxSessionFactory factory) =>
+        (HashSet<InferenceSession>)(
+            typeof(OnnxSessionFactory)
+                .GetField("_retired", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(factory)
+            ?? throw new InvalidOperationException(
+                "OnnxSessionFactory._retired was not found; the disposal probe needs updating."
+            )
+        );
+
+    private static void InvokeDrainRetired(OnnxSessionFactory factory) =>
+        (
+            typeof(OnnxSessionFactory).GetMethod(
+                "DrainRetired",
+                BindingFlags.Instance | BindingFlags.NonPublic
+            )
+            ?? throw new InvalidOperationException(
+                "OnnxSessionFactory.DrainRetired was not found; the disposal probe needs updating."
+            )
+        ).Invoke(factory, null);
 }

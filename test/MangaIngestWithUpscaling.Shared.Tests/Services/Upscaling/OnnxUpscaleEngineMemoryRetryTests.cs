@@ -83,6 +83,14 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
             factory.SessionsRequestedAfterInvalidation > 0,
             "the retry did not fetch a new session after the invalidation"
         );
+        // The engine used the synchronous flush, and it had a live session to free: without it the
+        // OOM-causing session would stay resident through the whole retry (the background drain
+        // waits for the retry's own scope to end), doubling peak VRAM in the path meant to reduce it.
+        Assert.Equal(1, factory.ReleaseCachedSessionsCalls);
+        Assert.True(
+            factory.ReleasedALiveSession,
+            "the synchronous flush did not free the live session before the retry"
+        );
         // The probe's scope, the scope that threw, and the one the retry succeeded under. Pinned
         // exactly so that a change in how often the probe scopes breaks this test loudly.
         Assert.Equal(3, factory.InferenceScopeCalls);
@@ -130,6 +138,8 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         private int _invalidations;
         private int _requestedAfterInvalidation;
         private int _scopeCalls;
+        private int _releaseCalls;
+        private bool _releasedALiveSession;
 
         /// <summary>Sessions asked for after the first invalidation; 1 means the retry re-fetched.</summary>
         public int SessionsRequestedAfterInvalidation
@@ -139,6 +149,30 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
                 lock (_lock)
                 {
                     return _requestedAfterInvalidation;
+                }
+            }
+        }
+
+        /// <summary>How often the engine used the synchronous flush in its memory-pressure path.</summary>
+        public int ReleaseCachedSessionsCalls
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _releaseCalls;
+                }
+            }
+        }
+
+        /// <summary>Whether the synchronous flush had a live session to free (not a no-op).</summary>
+        public bool ReleasedALiveSession
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _releasedALiveSession;
                 }
             }
         }
@@ -171,6 +205,21 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         }
 
         public void InvalidateAllSessions() => InvalidateSession(modelPath);
+
+        /// <summary>
+        /// The real factory's synchronous flush: it frees the live session before returning. Mirrored
+        /// here so the retry below sees a disposed session, exactly as the production path must.
+        /// </summary>
+        public void ReleaseCachedSessions()
+        {
+            lock (_lock)
+            {
+                _releaseCalls++;
+                _releasedALiveSession |= _session is not null;
+            }
+
+            InvalidateAllSessions();
+        }
 
         public Shared.Configuration.GpuBackend GetEffectiveBackend() =>
             Shared.Configuration.GpuBackend.CPU;

@@ -22,6 +22,100 @@ public class SplitDetectionService(
 {
     public const int CURRENT_DETECTOR_VERSION = 1;
 
+    /// <summary>
+    /// Upper bound on the known-failure cache. A detector that cannot run on a backend is a property
+    /// of the model and the execution provider, so the number of distinct entries is tiny; the cap
+    /// only stops a pathological stream of distinct model paths from growing it without limit.
+    /// Overflow clears it and restarts, which costs at most one re-failure.
+    /// </summary>
+    private const int KnownFailureCacheCapacity = 64;
+
+    /// <summary>
+    /// Bound used for one page's detection when <see cref="UpscalerConfig.UpscaleTimeout"/> is unset
+    /// or non-positive. Detection has no other watchdog of its own, so "disabled" is not honoured
+    /// here the way the upscale paths honour it.
+    /// </summary>
+    private static readonly TimeSpan DefaultDetectionTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Detectors already known to fail structurally on a backend for this process, keyed by model
+    /// path and resolved backend, so a graph the execution provider cannot run is not rebuilt, run
+    /// and failed again for every page of every chapter. Only structural failures are recorded: a
+    /// transient failure (memory, IO) is retried on the next page, and a hang is retried after the
+    /// timeout. Static because the service is scoped and the verdict is a property of the process,
+    /// mirroring <c>OnnxUpscaleEngine</c>'s model-usability cache. The error message is stored so a
+    /// cache hit still reports why the detector is unusable.
+    /// </summary>
+    private static readonly Dictionary<DetectorBackendKey, string> KnownFailures = new(
+        DetectorBackendKeyComparer.Instance
+    );
+
+    private static readonly Lock KnownFailuresGate = new();
+
+    private GpuBackend? effectiveBackend;
+
+    /// <summary>
+    /// The accelerator backend the detector will run on, resolved once per instance. The session
+    /// factory resolves it by probing the machine, so it is not called for every page.
+    /// </summary>
+    private GpuBackend EffectiveBackend =>
+        effectiveBackend ??= onnxSessionFactory.GetEffectiveBackend();
+
+    /// <summary>Model path and resolved accelerator backend a failure verdict applies to.</summary>
+    private readonly record struct DetectorBackendKey(string ModelPath, GpuBackend Backend);
+
+    /// <summary>
+    /// Compares keys case-insensitively on the path, matching how the session factory resolves model
+    /// paths.
+    /// </summary>
+    private sealed class DetectorBackendKeyComparer : IEqualityComparer<DetectorBackendKey>
+    {
+        public static readonly DetectorBackendKeyComparer Instance = new();
+
+        public bool Equals(DetectorBackendKey x, DetectorBackendKey y) =>
+            x.Backend == y.Backend
+            && string.Equals(x.ModelPath, y.ModelPath, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode(DetectorBackendKey obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ModelPath),
+                obj.Backend
+            );
+    }
+
+    private static bool TryGetKnownFailure(string modelPath, GpuBackend backend, out string error)
+    {
+        lock (KnownFailuresGate)
+        {
+            return KnownFailures.TryGetValue(
+                new DetectorBackendKey(modelPath, backend),
+                out error!
+            );
+        }
+    }
+
+    private static void RecordKnownFailure(string modelPath, GpuBackend backend, string error)
+    {
+        lock (KnownFailuresGate)
+        {
+            var key = new DetectorBackendKey(modelPath, backend);
+            if (KnownFailures.Count >= KnownFailureCacheCapacity && !KnownFailures.ContainsKey(key))
+            {
+                KnownFailures.Clear();
+            }
+
+            KnownFailures[key] = error;
+        }
+    }
+
+    /// <summary>
+    /// True for a detection failure that says nothing about the detector: a resource error (memory,
+    /// a lost device) or an IO error. Such a failure must be retried, not cached as unusable.
+    /// Mirrors <c>OnnxUpscaleEngine.IsTransientProbeFailure</c>.
+    /// </summary>
+    private static bool IsTransientDetectionFailure(Exception ex) =>
+        OnnxTiler.IsMemoryException(ex) || ex is IOException;
+
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
         IProgress<UpscaleProgress>? progress = null,
@@ -103,16 +197,33 @@ public class SplitDetectionService(
             throw new FileNotFoundException(localizer["Error_CheckpointNotFound", modelPath]);
         }
 
+        GpuBackend backend = EffectiveBackend;
+        if (TryGetKnownFailure(modelPath, backend, out string knownError))
+        {
+            // This detector already failed structurally on this backend in this process; rebuilding
+            // the same session would only fail again, once per page of every chapter.
+            logger.LogDebug(
+                "Skipping split detection on {ImagePath}: the detector is known to be unusable on {Backend}.",
+                imagePath,
+                backend
+            );
+            return new SplitDetectionResult { ImagePath = imagePath, Error = knownError };
+        }
+
         logger.LogInformation("Running in-process ONNX split detection on {ImagePath}", imagePath);
 
         // Only a failure that came out of the session itself should drop the cached session. The
         // image is decoded before any session is requested, so whether this was ever assigned is
         // what separates an inference failure from a decode failure of an unrelated, healthy model.
         InferenceSession? session = null;
+        // Whether execution reached the model (session creation or Run) rather than failing while
+        // decoding the page. Only a model-path failure can be a property of the detector and cached.
+        bool reachedModel = false;
 
         try
         {
-            return await Task.Run(
+            (int pageWidth, int pageHeight) = ReadImageSize(imagePath);
+            Task<SplitDetectionResult> detection = Task.Run(
                 () =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -173,6 +284,7 @@ public class SplitDetectionService(
                     // failure came out of the session.
                     // The scope is taken before the fetch: an eviction on another thread otherwise
                     // finds no reader yet and can dispose the session between the lookup and the Run.
+                    reachedModel = true;
                     using var inferenceScope = onnxSessionFactory.EnterInferenceScope();
 
                     InferenceSession localSession = onnxSessionFactory.GetOrCreateSession(
@@ -221,7 +333,7 @@ public class SplitDetectionService(
 
                         if (peakMaskTensor[0, y])
                         {
-                            int yOrig = (int)Math.Round(y / vscale);
+                            int yOrig = MapRowToOriginal(y, vscale, origHeight);
                             float confidence = probsTensor[0, y];
                             splits.Add(
                                 new DetectedSplit
@@ -244,19 +356,51 @@ public class SplitDetectionService(
                 },
                 cancellationToken
             );
+
+            // session.Run is a synchronous native call that cannot be cancelled, so the only bound
+            // available is on the await: WaitAsync abandons the task and returns to the caller, but
+            // it does NOT stop the provider's Run — that thread keeps running until the native call
+            // returns, and the process cannot reclaim it. It is still enough to stop a hung detection
+            // from parking the chapter forever, which is the failure this guards. The upscale path is
+            // bounded by the worker's inactivity watchdog; the detection path has none of its own.
+            ObserveIfAbandoned(detection);
+            return await detection.WaitAsync(
+                ResolveDetectionTimeout(pageWidth, pageHeight),
+                cancellationToken
+            );
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (TimeoutException ex)
         {
-            logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
+            // A hang says nothing about the detector's graph, so it is not cached: the next page
+            // rebuilds the session and retries, matching how the worker treats a timed-out upscale
+            // as recoverable. The abandoned Run may still hold the inference scope, so a retired
+            // session is not disposed until that native call returns (see OnnxSessionFactory).
+            logger.LogError(ex, "ONNX split detection timed out for {ImagePath}", imagePath);
+            if (session is not null)
+            {
+                onnxSessionFactory.InvalidateSession(modelPath);
+            }
 
-            // Only one session is cached at a time (OnnxSessionFactory.MaxCachedSessions), so a
-            // session that keeps failing would be reused, and fail again, for every remaining page
-            // of the chapter. Drop it so the next page rebuilds a fresh one. A decode-time failure
-            // never fetched a session, so it must leave a healthy cached one in place.
+            return new SplitDetectionResult
+            {
+                ImagePath = imagePath,
+                Error = "Split detection timed out; the execution provider did not return.",
+            };
+        }
+        catch (Exception ex) when (reachedModel && IsTransientDetectionFailure(ex))
+        {
+            // Transient: a resource hiccup (memory, a lost device) or an IO error, not a property of
+            // the detector. Drop the session for this attempt but do NOT cache the verdict, so a
+            // later page retries it.
+            logger.LogWarning(
+                ex,
+                "Split detection for {ImagePath} failed transiently; it will be retried.",
+                imagePath
+            );
             if (session is not null)
             {
                 onnxSessionFactory.InvalidateSession(modelPath);
@@ -264,6 +408,89 @@ public class SplitDetectionService(
 
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
         }
+        catch (Exception ex) when (reachedModel)
+        {
+            logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
+
+            // Only one session is cached at a time (OnnxSessionFactory.MaxCachedSessions), so a
+            // session that keeps failing would be reused, and fail again, for every remaining page
+            // of the chapter. Drop it so the next page rebuilds a fresh one, and remember the
+            // structural failure for this backend so the rebuild does not happen on every page of
+            // every chapter either.
+            if (session is not null)
+            {
+                onnxSessionFactory.InvalidateSession(modelPath);
+            }
+
+            RecordKnownFailure(modelPath, backend, ex.Message);
+            return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
+        }
+        catch (Exception ex)
+        {
+            // Failed before reaching the model (a corrupt or unsupported page). The detector is not
+            // at fault, so it must not be invalidated or marked unusable.
+            logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
+            return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
+        }
+    }
+
+    /// <summary>
+    /// Observe the fault of a detection task that <c>Task.WaitAsync</c> may abandon on a timeout or
+    /// a cancellation, so a later native failure does not surface as an unobserved task exception on
+    /// the finalizer thread. A successful or cancelled task never triggers the continuation.
+    /// </summary>
+    private static void ObserveIfAbandoned(Task task)
+    {
+        _ = task.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
+    }
+
+    /// <summary>
+    /// Image dimensions from the file header, used only to scale the detection timeout by the page
+    /// size the way the upscale paths do. Throws like any decode failure, so the caller's existing
+    /// error path handles an unreadable page.
+    /// </summary>
+    private static (int Width, int Height) ReadImageSize(string imagePath)
+    {
+        using var image = NetVips.Image.NewFromFile(imagePath, access: NetVips.Enums.Access.Random);
+        return (image.Width, image.Height);
+    }
+
+    /// <summary>
+    /// Per-page bound on the awaited detection, scaled by the page's pixel count like the upscale
+    /// paths (<c>UpscaleTimeout × max(1, megapixels)</c>). A non-positive configured timeout still
+    /// gets <see cref="DefaultDetectionTimeout"/>: detection has no other watchdog, so honouring
+    /// "disabled" here would re-introduce the indefinite park this bound exists to prevent.
+    /// </summary>
+    private TimeSpan ResolveDetectionTimeout(int width, int height)
+    {
+        TimeSpan configured = upscalerConfig?.Value.UpscaleTimeout ?? TimeSpan.Zero;
+        TimeSpan basis = configured > TimeSpan.Zero ? configured : DefaultDetectionTimeout;
+        double scaling = Math.Max(1.0, (double)width * height / 1_000_000.0);
+        return basis * scaling;
+    }
+
+    /// <summary>
+    /// Maps a peak row of the resized page back to a coordinate in the original, clamped to the last
+    /// real row. A row at the very bottom of the resized page can round up to
+    /// <paramref name="origHeight"/> on a short page; downstream <c>SplitApplier</c> drops a split at
+    /// or below the image height (<c>splitY &gt;= image.Height</c>), so without the clamp the
+    /// bottom-edge split would be silently lost.
+    /// </summary>
+    internal static int MapRowToOriginal(int resizedRow, double vscale, int origHeight)
+    {
+        int lastRow = Math.Max(0, origHeight - 1);
+        if (vscale <= 0)
+        {
+            return Math.Clamp(resizedRow, 0, lastRow);
+        }
+
+        int mapped = (int)Math.Round(resizedRow / vscale);
+        return Math.Clamp(mapped, 0, lastRow);
     }
 
     /// <summary>

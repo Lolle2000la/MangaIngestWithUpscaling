@@ -170,7 +170,26 @@ public sealed class OnnxSessionFactory(
             }
 
             // The write lock waits for every read scope to drain, so nothing can be Running these.
-            _activeExecutionLock.EnterWriteLock();
+            try
+            {
+                _activeExecutionLock.EnterWriteLock();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Dispose() won a shutdown race: it disposed _activeExecutionLock, and it only does
+                // that after it has taken the write lock itself, so every inference scope has
+                // already ended and no new one can start (_disposed is set). These sessions were
+                // removed from _retired by the snapshot above, so Dispose()'s own snapshot did not
+                // see them; free them here, with no scope possible, instead of leaking the native
+                // handles — and never surface an unhandled ObjectDisposedException on a pool thread.
+                foreach (var session in batch)
+                {
+                    DisposeSession(session, "retired during factory disposal");
+                }
+
+                return;
+            }
+
             try
             {
                 foreach (var session in batch)
@@ -213,6 +232,56 @@ public sealed class OnnxSessionFactory(
 
             _sessions.Clear();
             _lruOrder.Clear();
+        }
+    }
+
+    /// <inheritdoc />
+    public void ReleaseCachedSessions()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        List<InferenceSession> batch;
+        lock (_lock)
+        {
+            if (_disposed)
+                return;
+
+            batch = [.. _sessions.Values, .. _retired];
+            _sessions.Clear();
+            _lruOrder.Clear();
+            _retired.Clear();
+        }
+
+        // The interface contract requires that the caller holds no inference scope, so taking the
+        // write lock here waits out only scopes on other threads and frees the sessions on this
+        // thread before returning. A pending background drain just finds _retired empty afterwards.
+        try
+        {
+            _activeExecutionLock.EnterWriteLock();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Dispose() raced this flush during shutdown. It takes the write lock before disposing
+            // the lock, so every scope has ended and none can start; free the batch here, with no
+            // scope possible, rather than throw or leak it.
+            foreach (var session in batch)
+            {
+                DisposeSession(session, "released during factory disposal");
+            }
+
+            return;
+        }
+
+        try
+        {
+            foreach (var session in batch)
+            {
+                DisposeSession(session, "released");
+            }
+        }
+        finally
+        {
+            _activeExecutionLock.ExitWriteLock();
         }
     }
 

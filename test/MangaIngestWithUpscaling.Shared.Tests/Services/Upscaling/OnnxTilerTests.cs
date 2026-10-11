@@ -9,6 +9,10 @@ namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
 public class OnnxTilerTests : IDisposable
 {
+    private const string NoGpuMemoryReporting =
+        "no GPU or driver memory source is available in this environment, so GetGpuVramInfo "
+        + "correctly returns (0, 0, 0) and there is no VRAM relationship to assert about";
+
     private readonly List<string> _created = [];
 
     [Fact]
@@ -1442,18 +1446,21 @@ public class OnnxTilerTests : IDisposable
     [Fact]
     public void GetGpuVramInfo_OnSupportedHost_DiscoversValidVram()
     {
+        // A GPU-less CI has no VRAM to report and GetGpuVramInfo answers (0, 0, 0) rather than
+        // throwing. The pre-fix body wrapped the assertions in `if (total > 0)` with no else, so on
+        // such a host the test silently passed while asserting nothing. Skipping makes the absent
+        // precondition explicit in the run output instead.
         var (total, used, free) = OnnxTiler.GetGpuVramInfo(0);
-        if (total > 0)
-        {
-            Assert.True(total >= used);
+        Assert.SkipWhen(total == 0, NoGpuMemoryReporting);
 
-            // free is the driver's budget when the driver reports one, and that budget is
-            // deliberately below total - used: it is what is left after the desktop's and any other
-            // tenant's reservation. The raw difference only matches on an idle card, so asserting
-            // equality here made this test fail whenever anything else on the machine was using the
-            // GPU, which is most of the time on a desktop.
-            Assert.InRange(free, 0, total - used);
-        }
+        Assert.True(total >= used);
+
+        // free is the driver's budget when the driver reports one, and that budget is
+        // deliberately below total - used: it is what is left after the desktop's and any other
+        // tenant's reservation. The raw difference only matches on an idle card, so asserting
+        // equality here made this test fail whenever anything else on the machine was using the
+        // GPU, which is most of the time on a desktop.
+        Assert.InRange(free, 0, total - used);
     }
 
     private string CreateDir()

@@ -87,7 +87,10 @@ public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
     {
         // The first probe fails with an OutOfMemoryException, which says nothing about the model. It
         // must skip the model for that attempt without caching "unusable", so a later page retries it
-        // and succeeds.
+        // and succeeds. Because every candidate was skipped by a transient failure, the original
+        // exception type has to survive instead of being flattened into "no model can upscale this"
+        // (an InvalidOperationException, which upstream is treated as a permanent, spool-dropping
+        // failure).
         const int scale = 2;
         TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale, fileName: "2x_tiny.onnx");
         string input = CreateTestJpeg(64, 90);
@@ -106,7 +109,7 @@ public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
         );
 
         string firstOutput = Path.Combine(_tempDir, "transient-first.webp");
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
             engine.UpscaleFileAsync(
                 input,
                 firstOutput,
@@ -131,6 +134,47 @@ public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
         Assert.True(
             flaky.ScopeCalls >= 2,
             "the probe was not retried on the second page; the transient failure was cached"
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task TransientProbeFailureAfterAStructuralOne_WinsAndSurfacesItsType()
+    {
+        // Two candidates: the first fails structurally (a corrupt graph), the second transiently (a
+        // resource hiccup). Neither succeeds, so the page fails — but the transient one is the one a
+        // retry could get past, and it must be the exception that surfaces. Flattening to a generic
+        // InvalidOperationException here would make a recoverable failure look permanent upstream.
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale, fileName: "2x_a_structural.onnx");
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale, fileName: "2x_b_transient.onnx");
+        string input = CreateTestJpeg(64, 90);
+
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        using var factory = new PerModelProbeSessionFactory(
+            new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance),
+            structuralModel: Path.Combine(_tempDir, "2x_a_structural.onnx"),
+            transientModel: Path.Combine(_tempDir, "2x_b_transient.onnx")
+        );
+        var engine = new OnnxUpscaleEngine(
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        string output = Path.Combine(_tempDir, "structural-then-transient.webp");
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            engine.UpscaleFileAsync(
+                input,
+                output,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
         );
     }
 
@@ -202,6 +246,46 @@ public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
 
             return inner.EnterInferenceScope();
         }
+
+        public void Dispose() => inner.Dispose();
+    }
+
+    /// <summary>
+    /// Delegates to a real factory but fails the probe of two specific models: one structurally (a
+    /// generic error, as a corrupt graph would) and one transiently (an <see cref="OutOfMemoryException"/>).
+    /// Exists to pin that the transient failure is what surfaces when no candidate can be probed,
+    /// even though the structural failure was seen first.
+    /// </summary>
+    private sealed class PerModelProbeSessionFactory(
+        IOnnxSessionFactory inner,
+        string structuralModel,
+        string transientModel
+    ) : IOnnxSessionFactory
+    {
+        public InferenceSession GetOrCreateSession(string modelPath)
+        {
+            if (string.Equals(modelPath, structuralModel, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("simulated structurally broken model");
+            }
+
+            if (string.Equals(modelPath, transientModel, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new OutOfMemoryException("simulated transient device memory pressure");
+            }
+
+            return inner.GetOrCreateSession(modelPath);
+        }
+
+        public InferenceSession CreateSession(string modelPath) => inner.CreateSession(modelPath);
+
+        public void InvalidateSession(string modelPath) => inner.InvalidateSession(modelPath);
+
+        public void InvalidateAllSessions() => inner.InvalidateAllSessions();
+
+        public GpuBackend GetEffectiveBackend() => inner.GetEffectiveBackend();
+
+        public IDisposable EnterInferenceScope() => inner.EnterInferenceScope();
 
         public void Dispose() => inner.Dispose();
     }

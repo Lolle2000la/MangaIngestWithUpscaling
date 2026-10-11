@@ -455,6 +455,14 @@ public static class VulkanMemoryProvider
             return false;
         }
 
+        // A successful vkGetPhysicalDeviceFeatures2 is authoritative for both answers: a zero
+        // shaderFloat16 / storageBuffer16BitAccess field means the driver said "not supported",
+        // not "could not be asked". Only a query that never ran (no entry point, or the call
+        // faulted) may fall back to the vendor heuristic in ResolveFp16Support.
+        bool featureQueryRan = false;
+        bool shaderFloat16 = false;
+        bool storageBuffer16BitAccess = false;
+
         if (_vkGetPhysicalDeviceFeatures2 != null)
         {
             try
@@ -474,35 +482,58 @@ public static class VulkanMemoryProvider
                     };
 
                     _vkGetPhysicalDeviceFeatures2(dev, ref feat2);
-                    if (feat16.shaderFloat16 != 0)
-                    {
-                        return true;
-                    }
+                    featureQueryRan = true;
+                    shaderFloat16 = feat16.shaderFloat16 != 0;
 
-                    var featStorage = new VkPhysicalDevice16BitStorageFeatures
+                    if (!shaderFloat16)
                     {
-                        sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
-                        pNext = IntPtr.Zero,
-                    };
-                    feat2.pNext = (IntPtr)(&featStorage);
-                    _vkGetPhysicalDeviceFeatures2(dev, ref feat2);
-                    if (featStorage.storageBuffer16BitAccess != 0)
-                    {
-                        return true;
+                        var featStorage = new VkPhysicalDevice16BitStorageFeatures
+                        {
+                            sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+                            pNext = IntPtr.Zero,
+                        };
+                        feat2.pNext = (IntPtr)(&featStorage);
+                        _vkGetPhysicalDeviceFeatures2(dev, ref feat2);
+                        storageBuffer16BitAccess = featStorage.storageBuffer16BitAccess != 0;
                     }
                 }
             }
             catch
             {
-                // Degrade gracefully
+                // Degrade gracefully: featureQueryRan stays false, so an entry point that faulted is
+                // treated as "could not be asked" and the vendor heuristic still gets a say.
             }
         }
 
-        // Fallback for hardware GPUs if feature extension query failed:
-        // Known modern GPU vendors: NVIDIA (0x10DE), AMD (0x1002), Intel (0x8086), Apple (0x106B)
         uint vendor =
             _vendorIds != null && targetIndex < _vendorIds.Length ? _vendorIds[targetIndex] : 0;
-        return vendor is 0x10DE or 0x1002 or 0x8086 or 0x106B;
+        return ResolveFp16Support(featureQueryRan, shaderFloat16, storageBuffer16BitAccess, vendor);
+    }
+
+    /// <summary>
+    /// The FP16-support decision once the Vulkan feature query has (or has not) answered. Split out
+    /// from <see cref="SupportsFp16"/> so it can be exercised without a GPU, because the native query
+    /// it depends on cannot be driven from a unit test.
+    /// <para>
+    /// When <paramref name="featureQueryRan"/> is true the two feature flags are authoritative —
+    /// including when both are false, so a Vulkan device that explicitly reports no FP16 is never
+    /// overridden by its vendor id. The vendor heuristic answers only when the query never ran.
+    /// </para>
+    /// </summary>
+    internal static bool ResolveFp16Support(
+        bool featureQueryRan,
+        bool shaderFloat16,
+        bool storageBuffer16BitAccess,
+        uint vendorId
+    )
+    {
+        if (featureQueryRan)
+        {
+            return shaderFloat16 || storageBuffer16BitAccess;
+        }
+
+        // Known modern GPU vendors: NVIDIA (0x10DE), AMD (0x1002), Intel (0x8086), Apple (0x106B)
+        return vendorId is 0x10DE or 0x1002 or 0x8086 or 0x106B;
     }
 
     /// <summary>

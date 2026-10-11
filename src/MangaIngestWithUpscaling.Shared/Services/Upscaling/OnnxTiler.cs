@@ -1420,60 +1420,91 @@ public static class OnnxTiler
 
             IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([inVal]);
 
-            if (prevDecodeTask != null)
+            // Until the decode task below takes it, the pipeline is the owner of `outputs` and has
+            // to release it on every path out. Blending the previous tile can throw
+            // NonFiniteModelOutputException — the exact bad-model case this pipeline recovers from —
+            // and building the row blender can throw OutOfMemoryException; without this scope the
+            // native output tensor of the current tile is leaked for the rest of the candidate.
+            try
             {
-                byte[] prevBytes = prevDecodeTask.GetAwaiter().GetResult();
-                var prevOverlap = new TileOverlap(
-                    prevJob.PadLeft * scale,
-                    prevJob.PadRight * scale
-                );
-                currentRowBlender!.AddTile(
-                    prevBytes,
-                    prevJob.PaddedW * scale,
-                    prevJob.PaddedH * scale,
-                    prevOverlap
-                );
-
-                if (prevJob.IsLastInRow)
+                if (prevDecodeTask != null)
                 {
-                    imageBlender.AddTile(
-                        currentRowBlender.GetResult(),
-                        outWidth,
-                        prevJob.PaddedH * scale,
-                        currentRowOverlap
+                    byte[] prevBytes = prevDecodeTask.GetAwaiter().GetResult();
+                    var prevOverlap = new TileOverlap(
+                        prevJob.PadLeft * scale,
+                        prevJob.PadRight * scale
                     );
-                    currentRowBlender = null;
+                    currentRowBlender!.AddTile(
+                        prevBytes,
+                        prevJob.PaddedW * scale,
+                        prevJob.PaddedH * scale,
+                        prevOverlap
+                    );
+
+                    if (prevJob.IsLastInRow)
+                    {
+                        imageBlender.AddTile(
+                            currentRowBlender.GetResult(),
+                            outWidth,
+                            prevJob.PaddedH * scale,
+                            currentRowOverlap
+                        );
+                        currentRowBlender = null;
+                    }
                 }
-            }
 
-            if (currentRowBlender == null)
+                if (currentRowBlender == null)
+                {
+                    currentRowBlender = new TileBlender(
+                        outWidth,
+                        currentJob.PaddedH * scale,
+                        3,
+                        BlendDirection.Horizontal
+                    );
+                    currentRowOverlap = new TileOverlap(
+                        currentJob.PadTop * scale,
+                        currentJob.PadBottom * scale
+                    );
+                }
+
+                prevJob = currentJob;
+                prevDecodeTask = Task.Run(
+                    () =>
+                        DecodeOutputTensor(
+                            outputs,
+                            currentJob.PaddedW,
+                            currentJob.PaddedH,
+                            effPaddedW,
+                            effPaddedH,
+                            scale,
+                            cancellationToken
+                        ),
+                    cancellationToken
+                );
+
+                // Task.Run returns an already-cancelled task without running the delegate when the
+                // token is signalled first, so ownership of `outputs` never reaches
+                // DecodeOutputTensor. Release it in that case; when the delegate does run it
+                // disposes the collection itself (see DecodeOutputTensor).
+                prevDecodeTask.ContinueWith(
+                    completed =>
+                    {
+                        if (completed.IsCanceled)
+                        {
+                            outputs.Dispose();
+                        }
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default
+                );
+            }
+            catch
             {
-                currentRowBlender = new TileBlender(
-                    outWidth,
-                    currentJob.PaddedH * scale,
-                    3,
-                    BlendDirection.Horizontal
-                );
-                currentRowOverlap = new TileOverlap(
-                    currentJob.PadTop * scale,
-                    currentJob.PadBottom * scale
-                );
+                outputs.Dispose();
+                ObserveAbandonedInputTask(nextInputTask);
+                throw;
             }
-
-            prevJob = currentJob;
-            prevDecodeTask = Task.Run(
-                () =>
-                    DecodeOutputTensor(
-                        outputs,
-                        currentJob.PaddedW,
-                        currentJob.PaddedH,
-                        effPaddedW,
-                        effPaddedH,
-                        scale,
-                        cancellationToken
-                    ),
-                cancellationToken
-            );
         }
 
         if (prevDecodeTask != null)
@@ -1499,6 +1530,30 @@ public static class OnnxTiler
         }
 
         return imageBlender.GetResult();
+    }
+
+    /// <summary>
+    /// Observes the input-prefetch task for the next tile when the pipeline unwinds early. It holds
+    /// no native or otherwise disposable state — a <see cref="NamedOnnxValue"/> over a managed
+    /// <c>DenseTensor</c> is not itself disposable — but it is never awaited on that path, so its
+    /// fault would otherwise surface later as a task-scheduler unobserved exception.
+    /// </summary>
+    private static void ObserveAbandonedInputTask(
+        Task<(NamedOnnxValue InVal, int PaddedW, int PaddedH)> task
+    )
+    {
+        task.ContinueWith(
+            completed =>
+            {
+                if (completed.Status == TaskStatus.Faulted)
+                {
+                    _ = completed.Exception;
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
     }
 
     private readonly record struct TileJob(
@@ -1696,10 +1751,10 @@ public static class OnnxTiler
         CancellationToken cancellationToken
     )
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
         using (outputs)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             DisposableNamedOnnxValue outNamedValue = RequireOutputTensor(outputs);
             int outTileW = tileW * scale;
             int outTileH = tileH * scale;

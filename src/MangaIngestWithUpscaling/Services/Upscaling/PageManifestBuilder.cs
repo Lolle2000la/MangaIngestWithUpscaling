@@ -230,7 +230,15 @@ public static class PageManifestBuilder
         using ZipArchive archive = ZipFile.OpenRead(sourcePath);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         int index = 0;
-        foreach (ZipArchiveEntry entry in archive.Entries)
+        // Natural order, the same as BuildPageDescriptors and the whole-CBZ path. The page index is
+        // derived from this order, so a detection run and an upscale run over the same archive must
+        // iterate the entries the same way or the index names a different page on each path.
+        foreach (
+            ZipArchiveEntry entry in archive.Entries.OrderBy(
+                e => e.FullName,
+                NaturalEntryNameComparer.Instance
+            )
+        )
         {
             if (string.IsNullOrEmpty(entry.Name))
             {

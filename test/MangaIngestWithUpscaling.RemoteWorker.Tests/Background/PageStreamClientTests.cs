@@ -780,6 +780,37 @@ public class PageStreamClientTests
         return factory;
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_WithMoreFailedPagesThanTheUploadBacklog_DoesNotWedge()
+    {
+        // The page-done callback acquires a bounded upload slot (UploadBacklogLimit = 8) and the
+        // upload loop is what releases it. A failed page that hands nothing to the loop and releases
+        // nothing burns its slot for good, so the ninth failure would block the callback — and the
+        // wait token is linked only to shutdown, so the worker would never process another task. More
+        // pages than the backlog is what makes that visible: this must fail the chapter, not hang.
+        string directory = Directory.CreateTempSubdirectory("page_stream_slots").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, 12);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient { PageStatus = UpscaleJobStatus.Error });
+
+            Task run = sut.RunAsync(client, 1, Profile, CancellationToken.None);
+
+            // A wedge surfaces as this never completing, which the timeout turns into a failure.
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                run.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static string CreateSourceCbz(string directory)
     {
         string path = Path.Combine(directory, "source.cbz");

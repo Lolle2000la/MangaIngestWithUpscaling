@@ -1,3 +1,4 @@
+using System.Collections;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.ML.OnnxRuntime;
@@ -125,6 +126,94 @@ public class OnnxTilerNonFiniteDecodeTests : IDisposable
         finally
         {
             Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void UpscaleRgb_MultiTileNonFiniteModel_ThrowsFromTheTiledPipeline()
+    {
+        // The tiled pipeline decodes tile N-1 on a background task and only observes its rejection on
+        // the next iteration, by which point tile N's native output already exists and has to be
+        // released. That is the recovery path this fix protects, and it is the path a real page takes
+        // (the single-tile helper does not pipeline). A model that really returns NaN drives it
+        // end to end: 64x64 at a 32px tile size is a 2x2 grid.
+        string modelPath = TinyOnnxModel.WriteNonFiniteOutput(CreateDir(), nan: true, fp16: true);
+        using var session = new InferenceSession(modelPath);
+
+        Assert.Throws<NonFiniteModelOutputException>(() =>
+            OnnxTiler.UpscaleRgb(
+                new byte[64 * 64 * 3],
+                64,
+                64,
+                Scale,
+                session,
+                tileSize: 32,
+                cancellationToken: CancellationToken.None
+            )
+        );
+    }
+
+    [Fact]
+    public void DecodeOutputTensor_CancelledToken_StillDisposesTheOutputTensor()
+    {
+        // DecodeOutputTensor owns the outputs it is handed, so it has to release them even when it
+        // bails out on cancellation before decoding a single value. The check used to run before the
+        // using scope, which leaked the native output tensor on a cancelled tile.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(CreateDir(), scale: Scale);
+        using var session = new InferenceSession(modelPath);
+
+        var input = new DenseTensor<Float16>(
+            Enumerable.Repeat(Float16.One, 3 * PaddedW * PaddedH).ToArray(),
+            [1, 3, PaddedH, PaddedW]
+        );
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> real = session.Run([
+            NamedOnnxValue.CreateFromTensor(TinyOnnxModel.InputName, input),
+        ]);
+        var recording = new RecordingOutputs(real.ToList());
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            OnnxTiler.DecodeOutputTensor(
+                recording,
+                TileW,
+                TileH,
+                PaddedW,
+                PaddedH,
+                Scale,
+                cts.Token
+            )
+        );
+
+        Assert.Equal(1, recording.DisposeCount);
+    }
+
+    /// <summary>
+    /// Wraps a real session's output collection and counts how often it is disposed, so the
+    /// ownership contract of <see cref="OnnxTiler.DecodeOutputTensor"/> can be asserted rather than
+    /// assumed.
+    /// </summary>
+    private sealed class RecordingOutputs(IReadOnlyList<DisposableNamedOnnxValue> inner)
+        : IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
+    {
+        public int DisposeCount { get; private set; }
+
+        public int Count => inner.Count;
+
+        public DisposableNamedOnnxValue this[int index] => inner[index];
+
+        public IEnumerator<DisposableNamedOnnxValue> GetEnumerator() => inner.GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public void Dispose()
+        {
+            DisposeCount++;
+            foreach (DisposableNamedOnnxValue value in inner)
+            {
+                value.Dispose();
+            }
         }
     }
 

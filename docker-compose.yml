@@ -32,9 +32,12 @@ services:
     volumes:
       - ./test_data:/data
       - ./test_data/models:/models
-    # No NVIDIA device reservation: this builds the standard WebGPU image (Vulkan via /dev/dri), not
-    # the CUDA image, so it cannot use a reserved NVIDIA GPU. See the README for the :latest-cuda
-    # Compose example (with the NVIDIA reservation) when you need CUDA.
+    # The standard image is the WebGPU build, which reaches the GPU through Vulkan via /dev/dri, so
+    # the render nodes are passed through (see the README). There is no NVIDIA device reservation
+    # here: this is not the CUDA image. See the README for the :latest-cuda Compose example (with the
+    # NVIDIA reservation) when you need CUDA.
+    devices:
+      - /dev/dri
 
   # Remote-only variant without ML dependencies: the standard image with local upscaling switched
   # off. There is no separate image since the PyTorch removal — the ML dependencies it used to

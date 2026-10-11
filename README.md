@@ -39,7 +39,7 @@ The application runs pure C# using ONNX Runtime for ML inference. There is no Py
 
 - **Ultra-lightweight footprint** — no multi-gigabyte PyTorch/CUDA wheels downloaded
 - **Native Hardware Acceleration** — two shipped images: a universal image using the WebGPU execution provider (Vulkan on AMD Radeon and Intel GPUs) with CPU fallback, and a CUDA image for NVIDIA GPUs. Each runtime ships only its own execution providers (WebGPU + CPU, plus CUDA in the CUDA image); other providers (`DirectML`, `OpenVINO`, `MIGraphX`) are selectable in configuration, but only where the ONNX Runtime build ships them — the shipped images do not
-- **Automatic Model Provisioning** — optimized ONNX models are downloaded on demand into the `/models/MangaJaNai` directory from GitHub releases
+- **Automatic Model Provisioning** — optimized ONNX models are downloaded into the `/models/MangaJaNai` directory from GitHub releases once at startup (skipped in `RemoteOnly` mode)
 - **Persistent models** — models are cached in `/models/MangaJaNai` across updates
 
 ### Docker Image Flavors & Hardware Acceleration

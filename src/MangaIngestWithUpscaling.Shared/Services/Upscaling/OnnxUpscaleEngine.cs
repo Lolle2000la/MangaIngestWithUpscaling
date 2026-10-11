@@ -526,9 +526,13 @@ public class OnnxUpscaleEngine(
 
             File.Move(tempOutCbz, outputCbzPath);
 
-            // Invalidate cached sessions after a chapter completes to return all GPU VRAM and GTT
-            // buffers back to the driver. This guarantees zero cumulative memory creep across chapters.
-            sessionFactory.InvalidateAllSessions();
+            // Release cached sessions synchronously now the chapter is done, to return all GPU VRAM
+            // and GTT buffers back to the driver before the next chapter starts. This is a
+            // synchronous flush: the deferred InvalidateAllSessions drain would still be waiting on
+            // a scope when the next chapter began and planned its budget against memory that was
+            // not actually free. No scope is held here (every page's inference and encode has been
+            // awaited above), so taking the write lock on this thread is safe.
+            sessionFactory.ReleaseCachedSessions();
             GC.Collect();
         }
         finally
@@ -840,11 +844,21 @@ public class OnnxUpscaleEngine(
     )
     {
         var unusable = new List<string>();
+        Exception? firstTransientProbeFailure = null;
 
         foreach (string modelPath in candidates)
         {
-            if (!await ModelUsableOnThisDeviceAsync(modelPath, scale, cancellationToken))
+            (bool usable, Exception? transientFailure) = await ModelUsableOnThisDeviceAsync(
+                modelPath,
+                scale,
+                cancellationToken
+            );
+            if (!usable)
             {
+                // Keep the first transient failure even when a later structural failure follows:
+                // the transient one is the one a retry could get past, and losing its type is what
+                // turns a recoverable resource hiccup into a permanent chapter failure upstream.
+                firstTransientProbeFailure ??= transientFailure;
                 continue;
             }
 
@@ -876,6 +890,15 @@ public class OnnxUpscaleEngine(
                     sessionFactory.GetEffectiveBackend()
                 );
             }
+        }
+
+        // A transient probe failure is rethrown with its original type so the caller (via
+        // IsInfrastructureFailure and ClassifyStreamingFailure) can treat it as retryable instead of
+        // a deterministic "no model can do this". Only a run where every candidate failed
+        // structurally is genuinely a model-selection failure.
+        if (firstTransientProbeFailure is not null)
+        {
+            throw firstTransientProbeFailure;
         }
 
         throw new InvalidOperationException(
@@ -995,7 +1018,13 @@ public class OnnxUpscaleEngine(
                             attempt.TileWidth,
                             attempt.TileHeight
                         );
-                        sessionFactory.InvalidateSession(modelPath);
+                        // Synchronous flush, not InvalidateSession: the deferred drain waits for
+                        // every read scope, and the halved retry takes a new one immediately, so the
+                        // OOM-causing session would stay resident for the whole retry and double peak
+                        // VRAM in the very path meant to reduce it. This catch runs after the scope
+                        // above has been disposed (the using wraps the try body), so the caller holds
+                        // no scope and the write lock cannot deadlock.
+                        sessionFactory.ReleaseCachedSessions();
                         attempt = OnnxTiler.HalveSplit(width, height, attempt);
                         GC.Collect();
                         GC.WaitForPendingFinalizers();
@@ -1022,7 +1051,7 @@ public class OnnxUpscaleEngine(
     /// 64x64 tile costs milliseconds, while running it on the page costs the whole page.
     /// </para>
     /// </summary>
-    private async Task<bool> ModelUsableOnThisDeviceAsync(
+    private async Task<(bool Usable, Exception? TransientFailure)> ModelUsableOnThisDeviceAsync(
         string modelPath,
         int scale,
         CancellationToken cancellationToken
@@ -1034,12 +1063,13 @@ public class OnnxUpscaleEngine(
         {
             if (_modelUsable.TryGetValue(key, out bool known))
             {
-                return known;
+                return (known, null);
             }
         }
 
         bool usable;
         bool cacheVerdict = true;
+        Exception? transientFailure = null;
         try
         {
             usable = await Task.Run(
@@ -1087,7 +1117,9 @@ public class OnnxUpscaleEngine(
         {
             // Transient: a resource hiccup (out of memory, a lost device) or an IO error, not a
             // property of the model. Skip the model for this attempt but do NOT cache the verdict,
-            // so a later page retries it once the resource is available again.
+            // so a later page retries it once the resource is available again. The exception is
+            // returned to the caller so that, when no candidate can be probed, its type survives
+            // instead of being flattened into a permanent "no model works" error.
             sessionFactory.InvalidateSession(modelPath);
             logger.LogWarning(
                 ex,
@@ -1096,6 +1128,7 @@ public class OnnxUpscaleEngine(
             );
             usable = false;
             cacheVerdict = false;
+            transientFailure = ex;
         }
         catch (Exception ex)
         {
@@ -1118,7 +1151,7 @@ public class OnnxUpscaleEngine(
             RecordUsable(key, usable);
         }
 
-        return usable;
+        return (usable, transientFailure);
     }
 
     /// <summary>

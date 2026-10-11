@@ -124,6 +124,18 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 return StreamingFailureKind.Transient;
             }
 
+            // A device or host memory failure. The engine rethrows this with its original type when
+            // every candidate model failed transiently, so without this case a memory-pressure blip
+            // would be classified Permanent and drop the spool — the already-upscaled pages included.
+            if (
+                MangaIngestWithUpscaling.Shared.Services.Upscaling.OnnxTiler.IsMemoryException(
+                    current
+                )
+            )
+            {
+                return StreamingFailureKind.Transient;
+            }
+
             if (current is RpcException rpc)
             {
                 // The server signals "the chapter/profile/engine changed, restart" with

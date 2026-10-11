@@ -84,6 +84,38 @@ public class DeviceMemoryProfileStoreTests : IDisposable
     }
 
     [Fact]
+    public void TwoStoresOverTheSameFile_ShareEntriesWithoutDroppingEachOther()
+    {
+        // Two workers share the models volume. Each instance caches the file it last read, so a
+        // write by one must not be served from the other's stale snapshot, and a Save must merge
+        // into what is actually on disk rather than clobbering the other worker's profile.
+        var workerA = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        var workerB = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+
+        // A reads the (empty) file first and caches it, so A's snapshot is stale after B writes.
+        Assert.Null(workerA.Load(tempDir, "a"));
+
+        workerA.Save(tempDir, NewProfile("a", "A"));
+        Assert.NotNull(workerB.Load(tempDir, "a"));
+
+        workerB.Save(tempDir, NewProfile("b", "B"));
+        Assert.NotNull(workerA.Load(tempDir, "b"));
+
+        // A now saves an update to its own entry. Its cached snapshot predates B's write, so a
+        // read-modify-write from the cache would drop B's profile.
+        var updatedA = NewProfile("a", "A");
+        updatedA.ActivationScale = 12.5;
+        workerA.Save(tempDir, updatedA);
+
+        var fresh = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        Assert.Equal(12.5, fresh.Load(tempDir, "a")!.ActivationScale);
+        Assert.NotNull(fresh.Load(tempDir, "b"));
+
+        // B re-reads the changed file instead of serving its snapshot.
+        Assert.Equal(12.5, workerB.Load(tempDir, "a")!.ActivationScale);
+    }
+
+    [Fact]
     public void Save_OverwritesProfileForSameFingerprintOnly()
     {
         var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);

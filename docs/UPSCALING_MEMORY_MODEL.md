@@ -67,7 +67,7 @@ a pure dataflow sweep does not model:
   same large tensor (fp16 + fp32);
 * ORT re-packs activations to NCHWc layout (`InsertedPrecisionFreeCast` kernels), which allocates
   a second buffer per repack;
-* the session is created with `memory.enable_memory_arena_shrinkage: gpu:0` and
+* the session is created with `memory.enable_memory_arena_shrinkage: cpu:0;gpu:0` and
   `session.arena_extend_strategy: kSameAsRequested`, so freed blocks are pooled rather than
   returned and the arena keeps its high-water mark.
 
@@ -117,8 +117,9 @@ long budget  = memoryBudgetBytes − sessionReservation;   // the session holds 
 if (weights + bpp · paddedTilePixels(1x1) <= 0.9 · budget) return 1x1;
 
 // otherwise: every grid whose single tile fits the budget ...
-for (columns = 1 .. ceil(w / MinimumTileSize))
-for (rows    = 1 .. ceil(h / MinimumTileSize))
+// floor, not ceil, so the last column cannot shrink a tile below the quality floor (see Notes)
+for (columns = 1 .. floor(w / MinimumTileSize))
+for (rows    = 1 .. floor(h / MinimumTileSize))
 {
     tile = (ceil(w / columns), ceil(h / rows));
     if (weights + bpp · paddedTilePixels(tile) > budget) continue;
@@ -157,6 +158,12 @@ Notes:
   re-allocating per tile. It is derived from the grid the page actually has, *not* from the budget's
   tile side: an 800 px wide page inferred as a 1600 px tile computes every tile at twice the pixels
   the page contains, for identical output.
+* **The enumeration bound is a floor, not a ceiling.** The pseudo-code uses
+  `floor(w / MinimumTileSize)`, matching the implementation: `ceil(w / MinimumTileSize)` columns still
+  allowed the last column to shrink a tile below the floor (1125 px → 5 columns → 225 px), which is
+  exactly the quality `MinimumTileSize` exists to protect. Floor division bounds the column count so
+  `ceil(w / columns) >= MinimumTileSize`, while `columns = 1` stays reachable for the near-single-pass
+  case.
 
 ### 2.1 What the padding actually costs
 
@@ -226,7 +233,7 @@ Methodology for each model:
    `peakVRAM − sessionVRAM` as the measured footprint.
 
 Only the peak values that matter are shown; the *architecture* is what drives the formula, and
-all 31 shipped models fall into 8 architectures plus the page-break detector (which runs on the
+all 32 shipped models fall into 6 architectures plus the page-break detector (which runs on the
 CPU/short-lived session and is not tiled).
 
 | model | arch | weights | `4x` Δ VRAM @256 | `2x` Δ VRAM @256 | live set at peak |
@@ -282,7 +289,7 @@ formula does not try to model exactly.
 
 ---
 
-### 4.3 Sharing the card with a bounded partner
+### 4.2 Sharing the card with a bounded partner
 
 `CalculateVramBudget` decides between a quasi-exclusive and a desktop budget by looking at how much
 VRAM is already used. Below the threshold it keeps only a 256 MB reserve; above it, the driver
@@ -303,7 +310,7 @@ the threshold still counts as exclusive — and an explicit `VramSafetyMarginByt
 `VramUtilizationFraction` still takes precedence over both branches. A value of 0 or negative falls
 back to the default rather than making every card exclusive.
 
-### 4.4 Human-readable size strings
+### 4.3 Human-readable size strings
 
 Every memory setting accepts either a plain byte count or a size string, so a configuration file no
 longer has to spell out `367001600`:

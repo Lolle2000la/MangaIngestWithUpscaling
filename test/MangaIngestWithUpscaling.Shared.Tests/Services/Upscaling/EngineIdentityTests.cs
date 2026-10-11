@@ -142,6 +142,26 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_TreatsEveryNonPositiveDeviceIndexAsCpu()
+    {
+        // OnnxSessionFactory.ShouldUseCpuProvider and UpscalerConfig.ResolveUseFp16 both resolve
+        // SelectedDeviceIndex <= 0 to CPU, so a negative index and 0 run the same way and must hash
+        // the same. A bare `== 0` test made them differ, so two CPU workers discarded each other's
+        // spool.
+        UpscalerConfig zero = Config();
+        zero.SelectedDeviceIndex = 0;
+        UpscalerConfig negative = Config();
+        negative.SelectedDeviceIndex = -1;
+        UpscalerConfig flag = Config();
+        flag.SelectedDeviceIndex = 1;
+        flag.UseCPU = true;
+
+        Assert.Equal(EngineIdentity.ForUpscaler(zero), EngineIdentity.ForUpscaler(negative));
+        Assert.Equal(EngineIdentity.ForUpscaler(zero), EngineIdentity.ForUpscaler(flag));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForUpscaler_DistinguishesASameSizeFineTune()
     {
         // The fingerprint is relative path + size + a content prefix, so two models of the same size

@@ -454,18 +454,7 @@ public class MangaJaNaiUpscaler(
                 await DownloadAndExtractPackage(package, cancellationToken);
                 // Verify all model file hashes immediately after download/extraction
                 await VerifyPackageHashes(package, cancellationToken);
-                try
-                {
-                    await File.WriteAllTextAsync(markerPath, package.ZipHash, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(
-                        ex,
-                        "Failed to write package verification marker {MarkerPath}",
-                        markerPath
-                    );
-                }
+                await WriteMarkerAsync(markerPath, package, cancellationToken);
             }
         }
     }
@@ -708,7 +697,21 @@ public class MangaJaNaiUpscaler(
 
     private static readonly HttpClient SharedHttpClient = new() { Timeout = TimeSpan.FromHours(1) };
 
-    private async Task<bool> ShouldDownloadPackage(
+    /// <summary>
+    /// Marker content format that records a size/mtime fingerprint per model file. A marker written
+    /// by a build before this format holds only the bare zip hash; it is treated as stale, so the
+    /// package is re-verified once and the marker rewritten in the fingerprint format.
+    /// </summary>
+    private const string MarkerFormatVersion = "v2";
+
+    /// <summary>The per-file change signal stored in a verification marker.</summary>
+    private readonly record struct PackageFileFingerprint(
+        string FileName,
+        long Length,
+        long LastWriteUtcTicks
+    );
+
+    internal async Task<bool> ShouldDownloadPackage(
         ModelPackage package,
         string markerPath,
         CancellationToken cancellationToken
@@ -740,23 +743,41 @@ public class MangaJaNaiUpscaler(
             }
         }
 
+        // The marker only means "these files were verified once". It must not be trusted blindly,
+        // because a model can be corrupted, truncated or swapped *after* that first verification,
+        // and a corrupt model loads and renders garbage instead of failing. The marker records each
+        // file's size and last-write time: when they still match, the bytes are the ones that were
+        // hashed and the multi-gigabyte SHA-256 pass is skipped; when any of them moved, every file
+        // is re-hashed before the package is trusted again. A change that preserves both size and
+        // mtime (e.g. deliberate mtime spoofing) is the documented residual trust boundary.
         if (File.Exists(markerPath))
         {
-            return false;
-        }
+            Dictionary<string, PackageFileFingerprint>? recorded = await TryReadMarkerAsync(
+                markerPath,
+                cancellationToken
+            );
+            if (recorded != null && MarkerMatchesFiles(recorded, package))
+            {
+                return false;
+            }
 
-        try
+            logger.LogInformation(
+                "Model package {ZipUrl} changed since it was last verified, re-checking integrity",
+                package.ZipUrl
+            );
+        }
+        else
         {
             logger.LogInformation(
                 "Verifying file integrity for existing model package {ZipUrl}...",
                 package.ZipUrl
             );
+        }
+
+        try
+        {
             await VerifyPackageHashes(package, cancellationToken);
-            try
-            {
-                await File.WriteAllTextAsync(markerPath, package.ZipHash, cancellationToken);
-            }
-            catch { }
+            await WriteMarkerAsync(markerPath, package, cancellationToken);
             return false;
         }
         catch (Exception ex)
@@ -767,6 +788,121 @@ public class MangaJaNaiUpscaler(
                 package.ZipUrl
             );
             return true;
+        }
+    }
+
+    private async Task<Dictionary<string, PackageFileFingerprint>?> TryReadMarkerAsync(
+        string markerPath,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            string content = await File.ReadAllTextAsync(markerPath, cancellationToken);
+            return ParseMarker(content);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogDebug(
+                ex,
+                "Could not read package verification marker {MarkerPath}; re-verifying",
+                markerPath
+            );
+            return null;
+        }
+    }
+
+    private static Dictionary<string, PackageFileFingerprint>? ParseMarker(string content)
+    {
+        string[] lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length == 0 || lines[0].Trim() != MarkerFormatVersion)
+        {
+            return null;
+        }
+
+        var fingerprints = new Dictionary<string, PackageFileFingerprint>(StringComparer.Ordinal);
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string[] parts = lines[i].TrimEnd('\r').Split('\t');
+            if (
+                parts.Length != 3
+                || !long.TryParse(parts[0], out long length)
+                || !long.TryParse(parts[1], out long ticks)
+            )
+            {
+                return null;
+            }
+
+            fingerprints[parts[2]] = new PackageFileFingerprint(parts[2], length, ticks);
+        }
+
+        return fingerprints;
+    }
+
+    private bool MarkerMatchesFiles(
+        IReadOnlyDictionary<string, PackageFileFingerprint> recorded,
+        ModelPackage package
+    )
+    {
+        HashSet<string> expected = package
+            .ExpectedFileHashes.Keys.Select(name =>
+                ModelFileNames.Resolve(name, package.PrecisionSuffix)
+            )
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (!expected.SetEquals(recorded.Keys))
+        {
+            return false;
+        }
+
+        foreach (string name in expected)
+        {
+            var info = new FileInfo(Path.Combine(ModelPath, name));
+            if (
+                recorded[name].Length != info.Length
+                || recorded[name].LastWriteUtcTicks != info.LastWriteTimeUtc.Ticks
+            )
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private string BuildMarker(ModelPackage package)
+    {
+        IEnumerable<string> lines = package
+            .ExpectedFileHashes.Keys.Select(name =>
+                ModelFileNames.Resolve(name, package.PrecisionSuffix)
+            )
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .Select(name =>
+            {
+                var info = new FileInfo(Path.Combine(ModelPath, name));
+                return $"{info.Length}\t{info.LastWriteTimeUtc.Ticks}\t{name}";
+            });
+
+        return MarkerFormatVersion + "\n" + string.Join('\n', lines) + "\n";
+    }
+
+    private async Task WriteMarkerAsync(
+        string markerPath,
+        ModelPackage package,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            await File.WriteAllTextAsync(markerPath, BuildMarker(package), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to write package verification marker {MarkerPath}",
+                markerPath
+            );
         }
     }
 

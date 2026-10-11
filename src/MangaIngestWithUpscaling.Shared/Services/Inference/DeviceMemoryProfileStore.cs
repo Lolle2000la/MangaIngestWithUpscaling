@@ -26,6 +26,12 @@ public sealed class DeviceMemoryProfileStore
     private Dictionary<string, DeviceMemoryProfile>? cache;
     private string? cachePath;
 
+    /// <summary>
+    /// Signature of the file the cache was read from. The cache is only served while the file is
+    /// unchanged, so an entry another host wrote to a shared models volume is picked up.
+    /// </summary>
+    private (long Ticks, long Length) cacheFileSignature;
+
     public DeviceMemoryProfileStore(ILogger<DeviceMemoryProfileStore> logger)
     {
         this.logger = logger;
@@ -44,7 +50,12 @@ public sealed class DeviceMemoryProfileStore
     {
         lock (gate)
         {
-            Dictionary<string, DeviceMemoryProfile> profiles = Read(modelsDirectory);
+            // Not forced: the cached snapshot is reused only while the file on disk is untouched, so
+            // a profile another worker wrote to a shared models volume is still seen here.
+            Dictionary<string, DeviceMemoryProfile> profiles = Read(
+                modelsDirectory,
+                forceReload: false
+            );
             return profiles.TryGetValue(fingerprint, out DeviceMemoryProfile? profile)
                 ? profile
                 : null;
@@ -58,7 +69,15 @@ public sealed class DeviceMemoryProfileStore
         {
             try
             {
-                Dictionary<string, DeviceMemoryProfile> profiles = Read(modelsDirectory);
+                // Read the file back before merging rather than using the in-memory snapshot: the
+                // snapshot may predate an entry another worker wrote to a shared models volume, and
+                // writing it would silently drop that worker's profile. Two processes can still
+                // interleave their read and write — the atomic move prevents a torn file, not a lost
+                // update — but a stale in-memory snapshot is the failure that was actually hit.
+                Dictionary<string, DeviceMemoryProfile> profiles = Read(
+                    modelsDirectory,
+                    forceReload: true
+                );
                 profiles[profile.Fingerprint] = profile;
                 string path = PathFor(modelsDirectory);
                 string? directory = System.IO.Path.GetDirectoryName(path);
@@ -73,6 +92,7 @@ public sealed class DeviceMemoryProfileStore
                 File.Move(temp, path, overwrite: true);
                 cache = profiles;
                 cachePath = path;
+                cacheFileSignature = FileSignature(path);
             }
             catch (Exception ex)
             {
@@ -85,10 +105,15 @@ public sealed class DeviceMemoryProfileStore
         }
     }
 
-    private Dictionary<string, DeviceMemoryProfile> Read(string modelsDirectory)
+    private Dictionary<string, DeviceMemoryProfile> Read(string modelsDirectory, bool forceReload)
     {
         string path = PathFor(modelsDirectory);
-        if (cache is not null && cachePath == path)
+        if (
+            !forceReload
+            && cache is not null
+            && cachePath == path
+            && FileSignature(path) == cacheFileSignature
+        )
         {
             return cache;
         }
@@ -115,10 +140,42 @@ public sealed class DeviceMemoryProfileStore
                 "Device memory profile file {Path} is unreadable and will be re-created",
                 path
             );
+
+            // Fall back to the last good snapshot instead of treating an unreadable file as empty:
+            // otherwise a transient read error would let the next Save overwrite every other
+            // profile with only its own entry.
+            if (cache is not null && cachePath == path)
+            {
+                return cache;
+            }
         }
 
         cache = profiles;
         cachePath = path;
+        cacheFileSignature = FileSignature(path);
         return profiles;
+    }
+
+    /// <summary>
+    /// Length and last-write time of the store file, used to notice that another host sharing the
+    /// models volume has rewritten it since this instance last read it. The two are taken together
+    /// because either alone can miss a rewrite: the timestamp is the reliable signal where the
+    /// filesystem records sub-second times, and the length catches most entry changes even where it
+    /// does not. A write is never made from this signature — <see cref="Save"/> always re-reads — so
+    /// a missed change here only means one extra stale <see cref="Load"/>.
+    /// </summary>
+    private static (long Ticks, long Length) FileSignature(string path)
+    {
+        try
+        {
+            FileInfo info = new(path);
+            // A missing file is (0, -1) and unreadable metadata (0, -2), so neither can match the
+            // signature of a file that was actually read.
+            return info.Exists ? (info.LastWriteTimeUtc.Ticks, info.Length) : (0L, -1L);
+        }
+        catch (Exception)
+        {
+            return (0L, -2L);
+        }
     }
 }

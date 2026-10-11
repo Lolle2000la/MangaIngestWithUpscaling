@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -1013,6 +1014,195 @@ public class MangaJaNaiUpscalerTests : IDisposable
         Assert.Equal(files.Count, files.Distinct(StringComparer.Ordinal).Count());
         Assert.Contains("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx", files);
         Assert.Contains("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx", files);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_WhenFileChangesAfterVerification_RequestsRedownload()
+    {
+        // A marker written after the first verification must not be trusted blindly: a model file
+        // corrupted afterwards used to load and render garbage. Writing the file updates its
+        // last-write time, which is the marker's change signal, so the package is re-hashed and the
+        // mismatch is reported instead of silently trusted.
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] original = "a valid model payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, original, TestContext.Current.CancellationToken);
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(original));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('a', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.True(File.Exists(markerPath));
+
+        // Corrupt one byte after verification; the mtime is moved forward explicitly so the change
+        // signal does not depend on the filesystem's timestamp granularity.
+        byte[] corrupted = (byte[])original.Clone();
+        corrupted[0] ^= 0xFF;
+        await File.WriteAllBytesAsync(onDisk, corrupted, TestContext.Current.CancellationToken);
+        File.SetLastWriteTimeUtc(onDisk, File.GetLastWriteTimeUtc(onDisk).AddMinutes(1));
+
+        Assert.True(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_WhenFileTruncatedAfterVerification_RequestsRedownload()
+    {
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] original = "another valid model payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, original, TestContext.Current.CancellationToken);
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(original));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('b', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        // A truncation changes the size, the other half of the marker's change signal.
+        await File.WriteAllBytesAsync(
+            onDisk,
+            original[..(original.Length / 2)],
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.True(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_LegacyMarker_IsReVerifiedOnceAndUpgraded()
+    {
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] content = "a third valid model payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, content, TestContext.Current.CancellationToken);
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(content));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('c', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        // A marker written by an older build holds only the bare zip hash, which carries no
+        // fingerprint and therefore forces one re-verification. The file matches, so nothing is
+        // re-downloaded and the marker is upgraded in place.
+        await File.WriteAllTextAsync(
+            markerPath,
+            package.ZipHash,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        string upgraded = await File.ReadAllTextAsync(
+            markerPath,
+            TestContext.Current.CancellationToken
+        );
+        Assert.StartsWith("v2\n", upgraded);
+        Assert.Contains(archiveName, upgraded);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_WhenFingerprintUnchanged_SkipsTheRehash()
+    {
+        // The trade-off of the fingerprint marker: bytes edited in place with the original size and
+        // mtime restored look unchanged, so the package is trusted without re-hashing. This is the
+        // documented residual boundary, and it is what keeps a multi-gigabyte models directory from
+        // being re-hashed on every start. A change that moves either signal is re-hashed — see the
+        // corruption tests.
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] original = "a boundary payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, original, TestContext.Current.CancellationToken);
+        // Pin the write time to a whole second so restoring it later is exact on any filesystem,
+        // including ones with coarse timestamp granularity. The first verification records this value.
+        File.SetLastWriteTimeUtc(onDisk, new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc));
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(original));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('d', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        DateTime originalWrite = File.GetLastWriteTimeUtc(onDisk);
+
+        // Same length, different bytes, original mtime restored: the fingerprint is identical, so no
+        // hash pass runs and the substituted bytes are trusted. An always-rehash implementation would
+        // return true here, which is exactly the behaviour this marker format exists to avoid.
+        byte[] substituted = (byte[])original.Clone();
+        substituted[0] ^= 0xFF;
+        await File.WriteAllBytesAsync(onDisk, substituted, TestContext.Current.CancellationToken);
+        File.SetLastWriteTimeUtc(onDisk, originalWrite);
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
     }
 
     /// <summary>

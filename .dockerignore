@@ -1,7 +1,11 @@
 **/.classpath
 **/.dockerignore
 **/.env
-**/.git
+# The .git directory itself is deliberately not excluded (`.git/*`, not `**/.git`): excluding the
+# directory prunes it from the build-context walk, and a later `!` cannot re-include a file once its
+# parent directory has been excluded. Only its contents are filtered, so the entries at the bottom
+# of this file can bring back the handful of files the SDK needs.
+.git/*
 **/.gitignore
 **/.project
 **/.settings
@@ -25,14 +29,16 @@ LICENSE
 README.md
 !**/.gitignore
 
-# Deliberately kept out of the .git exclusion above: the .NET SDK reads HEAD/refs/packed-refs to
+# Deliberately kept out of the `.git/*` exclusion above: the .NET SDK reads HEAD/refs/packed-refs to
 # stamp the source revision into AssemblyInformationalVersion ("1.0.0+<sha>"), which EngineIdentity
 # hashes as the build half of a worker's engine identity. Without them every image claims the same
 # build, so a worker on an older upscaler build could add pages to another one's half-spooled chapter.
+# Negating `.git/refs` re-includes that whole subtree, which is what carries loose branch/tag refs;
+# `packed-refs` carries the packed form.
 !.git/HEAD
 !.git/config
 !.git/packed-refs
-!.git/refs/heads/**
+!.git/refs
 test_data/
 
 # Local-only artifacts that a clean CI checkout never has. Excluding them keeps local image builds
