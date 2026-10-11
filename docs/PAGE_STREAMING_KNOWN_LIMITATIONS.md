@@ -66,18 +66,11 @@ a change resets the spool and the worker's engine identity no longer varies with
 
 - `SplitDetectionLayout.Root` is mutable public process-global state that redirects the detector
   paths and the detector identity hash; make it internal/injected so tests can run in parallel.
-- `DetectServerClient` releases a GPU-cache request that can wait the full timeout when there is no
-  server to ask (now returns early) and its cancellation-ack handshake can skip killing a busy
-  server.
 - `UpscalingDistributionService.Pages` allocates per page in a couple of upload paths and encodes
   detection JSON twice.
 - A repair whose missing-page set became empty between preparation and delegation restarts
   (Unavailable) rather than completing, so it can cycle up to the restart cap.
 - `RequestTaskRequest.prefetch` / `RequestUpscaleTaskWithHint` are now a no-op hint logged at Debug.
-- The detector logs a warning per page while the resident server is in its cooldown window.
-- Device selection for the resident split detector is derived from `SelectedDeviceIndex`, but `GpuBackend`
-  has no MPS value: on an Apple MPS host the backend resolves to `Auto`, so `--device` is omitted and
-  the detector falls back to its own auto-select (which may not match the upscaler's device).
 - The engine identity samples three 64 KiB windows per model file, so a same-size weight change
   confined between the windows is not detected.
 - Cross-instance mutual exclusion for a chapter is process-local (see `TaskQueue.AcquireChapterGateAsync`);
@@ -123,8 +116,6 @@ a change resets the spool and the worker's engine identity no longer varies with
   partial and return a result type instead of null-means-transient.
 - Decompose `PageStreamClient` (fetch stream / upload queue / progress reporter / work directory) and
   `PageStreamSpool` (session registry / page writer / zip assembler / sweeper).
-- A generic `NdjsonJobRegistry<TResult>` and a `FailureCooldown` value type so `DetectServerClient`
-  and `MangaJaNaiWorkerClient` stop duplicating job/TCS/cooldown plumbing.
 - A single `TaskQueue.TryBeginChapterTaskAsync(task, onDefer)` owning gate + conflict check + claim
   (the conflict rule itself is now single-sourced in `ChapterConflictGuard`).
 - A real engine-fingerprint seam (`IEngineFingerprint`/`IRuntimeInfo`) instead of the static
@@ -136,22 +127,20 @@ The page-streaming work rested on duplicated discipline that has largely been ex
 remaining items are deliberately deferred.
 
 Done:
-1. **Shared resident NDJSON process supervisor.** Extracted to `ResidentNdjsonProcess` (plus a shared
-   `StderrTailBuffer`); `MangaJaNaiWorkerClient` and `DetectServerClient` are protocol adapters.
-2. **`PageManifestBuilder`.** The descriptor builders and identity computers moved out of the RPC
+1. **`PageManifestBuilder`.** The descriptor builders and identity computers moved out of the RPC
    service into `PageManifestBuilder`. (A `PageIdentity` value object is still a possible refinement.)
-3. **One restart/retry taxonomy.** `PageStreamDisposition` + `PageStreamRejections` and a single
+2. **One restart/retry taxonomy.** `PageStreamDisposition` + `PageStreamRejections` and a single
    shared `PageStreamRestartException`; the wire `terminal` bool is mapped in one place.
-4. **`IPageSpoolStore`.** The store seam exists and states the single-replica constraint once; the
+3. **`IPageSpoolStore`.** The store seam exists and states the single-replica constraint once; the
    concrete `PageStreamSpool` is the (process-local) implementation.
-5. **`AtomicFileReplacement`.** The "build a sibling temp → atomic move → sweep stale temps" pattern
+4. **`AtomicFileReplacement`.** The "build a sibling temp → atomic move → sweep stale temps" pattern
    is single-sourced for split apply and the streamed-chapter assembly (the repair assembly now uses
    it too).
-6. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
+5. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
    `SoftFailureTracker` make the loop testable without live gRPC.
-7. **One finalize pipeline.** `PageStreamFinalizer` owns the complete→assemble→finalize ladder for
+6. **One finalize pipeline.** `PageStreamFinalizer` owns the complete→assemble→finalize ladder for
    the two upload handlers and the manifest-complete branch.
-8. **Typed engine identity + one profile mapper.** Assessed and left as-is. The profile is mapped in
+7. **Typed engine identity + one profile mapper.** Assessed and left as-is. The profile is mapped in
    two places (`ToProtoProfile` on the server, `GetProfileFromResponse` on the worker), but they are
    inverses that *fail loudly* on divergence — the server maps an unknown enum to `Unspecified` and
    the worker throws on `Unspecified` — so the "must agree" hazard is limited. Sharing the protobuf

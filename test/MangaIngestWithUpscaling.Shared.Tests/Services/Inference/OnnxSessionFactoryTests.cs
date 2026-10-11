@@ -78,6 +78,31 @@ public class OnnxSessionFactoryTests : IDisposable
     }
 
     [Fact]
+    public void ShouldUseCpuProvider_CoversPreferredBackendCpu()
+    {
+        // PreferredGpuBackend = CPU is a first-class choice and GetEffectiveBackend() reports it as
+        // CPU, but it used to match no branch in TryConfigureGpuProvider and fall through to the Auto
+        // discovery block, which attaches CUDA or WebGPU — so a config that asked for CPU ran on the
+        // GPU, while the identity and logs said CPU. This pins the three ways to reach the CPU path.
+        Assert.True(
+            OnnxSessionFactory.ShouldUseCpuProvider(
+                new UpscalerConfig { PreferredGpuBackend = GpuBackend.CPU }
+            )
+        );
+        Assert.True(OnnxSessionFactory.ShouldUseCpuProvider(new UpscalerConfig { UseCPU = true }));
+        Assert.True(
+            OnnxSessionFactory.ShouldUseCpuProvider(new UpscalerConfig { SelectedDeviceIndex = 0 })
+        );
+
+        // A GPU preference still goes to the GPU path, so the check is not simply always true.
+        Assert.False(
+            OnnxSessionFactory.ShouldUseCpuProvider(
+                new UpscalerConfig { PreferredGpuBackend = GpuBackend.WebGPU }
+            )
+        );
+    }
+
+    [Fact]
     [Trait("Category", "Integration")]
     public void InvalidateAllSessions_RemovesAndDisposesCachedSessions()
     {

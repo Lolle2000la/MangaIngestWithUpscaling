@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
@@ -430,6 +431,233 @@ public class OnnxUpscaleEngineTests : IDisposable
         using var outImg = Image.NewFromFile(outputPath);
         Assert.Equal(width * scale, outImg.Width);
         Assert.Equal(height * scale, outImg.Height);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleFileAsync_EncodesThroughATempAndLeavesNoPartialBehind()
+    {
+        // The encode is staged next to the destination and moved on completion, so a codec or disk
+        // failure cannot leave a truncated image where the page should be. This pins the two
+        // observable consequences: the destination is replaced atomically, and the staging file does
+        // not survive the call.
+        const int width = 64;
+        const int height = 90;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(_tempDir, width, height);
+        string outputPath = Path.Combine(_tempDir, "upscaled.webp");
+
+        // A previous, complete output that the new one must replace.
+        File.WriteAllText(outputPath, "previous-output");
+
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        using var sessionFactory = new OnnxSessionFactory(
+            config,
+            NullLogger<OnnxSessionFactory>.Instance
+        );
+        var engine = new OnnxUpscaleEngine(
+            sessionFactory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        await engine.UpscaleFileAsync(
+            inputPath,
+            outputPath,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            TestContext.Current.CancellationToken
+        );
+
+        using var outImg = Image.NewFromFile(outputPath);
+        Assert.Equal(width * scale, outImg.Width);
+        Assert.Equal(height * scale, outImg.Height);
+
+        Assert.Empty(Directory.GetFiles(_tempDir, "*.part-*"));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleCbzAsync_SameStemInputs_KeepsBothPages()
+    {
+        // 001.jpg and 001.png both map to 001.webp. A zip allows duplicate entry names and a
+        // name-keyed reader keeps only one of them, so the second page must be disambiguated
+        // rather than silently overwritten.
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string input = CreateImageCbz(
+            _tempDir,
+            "same-stem.cbz",
+            ("001.jpg", 64, 90),
+            ("001.png", 48, 60)
+        );
+        string output = Path.Combine(_tempDir, "same-stem-out.cbz");
+
+        using OnnxSessionFactory sessionFactory = CreateCpuSessionFactory(_tempDir);
+        OnnxUpscaleEngine engine = CreateEngine(sessionFactory, _tempDir);
+        await engine.UpscaleCbzAsync(
+            input,
+            output,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            progress: null,
+            CancellationToken.None
+        );
+
+        using ZipArchive archive = ZipFile.OpenRead(output);
+        List<ZipArchiveEntry> pages = archive.Entries.Where(e => e.Name.Length > 0).ToList();
+        Assert.Equal(2, pages.Count);
+        Assert.Equal(2, pages.Select(e => e.FullName).Distinct(StringComparer.Ordinal).Count());
+
+        // Both source contents survived: the two pages keep their distinct aspect ratios.
+        List<(int Width, int Height)> sizes = pages.Select(ReadEntrySize).ToList();
+        Assert.Contains((64 * scale, 90 * scale), sizes);
+        Assert.Contains((48 * scale, 60 * scale), sizes);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleCbzAsync_OrdersPagesNaturally()
+    {
+        // Ordinal order would give 1, 10, 2; page sequence is content-critical, so it must be
+        // 1, 2, 10.
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string input = CreateImageCbz(
+            _tempDir,
+            "order.cbz",
+            ("1.png", 20, 30),
+            ("2.png", 20, 30),
+            ("10.png", 20, 30)
+        );
+        string output = Path.Combine(_tempDir, "order-out.cbz");
+
+        using OnnxSessionFactory sessionFactory = CreateCpuSessionFactory(_tempDir);
+        OnnxUpscaleEngine engine = CreateEngine(sessionFactory, _tempDir);
+        await engine.UpscaleCbzAsync(
+            input,
+            output,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            progress: null,
+            CancellationToken.None
+        );
+
+        using ZipArchive archive = ZipFile.OpenRead(output);
+        List<string> names = archive
+            .Entries.Where(e => e.Name.Length > 0)
+            .Select(e => e.FullName)
+            .ToList();
+        Assert.Equal(["1.webp", "2.webp", "10.webp"], names);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleCbzAsync_UnloadableCandidate_IsSkippedNotFatal()
+    {
+        // Candidate selection appends every .onnx as a last resort, so one corrupt file can be
+        // probed. Its probe failure must skip it, not abort the page, when a working candidate
+        // follows. "aaa_" sorts it ahead of the generated model so it is the one probed first.
+        const int scale = 2;
+        File.WriteAllBytes(
+            Path.Combine(_tempDir, "aaa_corrupt.onnx"),
+            System.Text.Encoding.UTF8.GetBytes("this is not an onnx model")
+        );
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string input = CreateImageCbz(_tempDir, "bad-model.cbz", ("1.png", 32, 40));
+        string output = Path.Combine(_tempDir, "bad-model-out.cbz");
+
+        using OnnxSessionFactory sessionFactory = CreateCpuSessionFactory(_tempDir);
+        OnnxUpscaleEngine engine = CreateEngine(sessionFactory, _tempDir);
+        await engine.UpscaleCbzAsync(
+            input,
+            output,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            progress: null,
+            CancellationToken.None
+        );
+
+        Assert.True(File.Exists(output));
+        using ZipArchive archive = ZipFile.OpenRead(output);
+        ZipArchiveEntry page = Assert.Single(archive.Entries.Where(e => e.Name.Length > 0));
+        Assert.Equal((32 * scale, 40 * scale), ReadEntrySize(page));
+    }
+
+    /// <summary>
+    /// Builds a CPU engine against a real <see cref="OnnxSessionFactory"/> so the whole path —
+    /// decode, probe, inference, encode — runs, as it does in production.
+    /// </summary>
+    private static OnnxUpscaleEngine CreateEngine(
+        OnnxSessionFactory sessionFactory,
+        string modelsDirectory
+    )
+    {
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = modelsDirectory, UseCPU = true }
+        );
+        return new OnnxUpscaleEngine(
+            sessionFactory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+    }
+
+    private static OnnxSessionFactory CreateCpuSessionFactory(string modelsDirectory)
+    {
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = modelsDirectory, UseCPU = true }
+        );
+        return new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+    }
+
+    /// <summary>
+    /// Writes a CBZ whose entries are fresh noisy images of the requested size. The source files
+    /// live in a subdirectory so they cannot be mistaken for models by candidate selection.
+    /// </summary>
+    private static string CreateImageCbz(
+        string directory,
+        string fileName,
+        params (string EntryName, int Width, int Height)[] pages
+    )
+    {
+        string sourceDir = Path.Combine(directory, $"cbz_src_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceDir);
+        string path = Path.Combine(directory, fileName);
+        using ZipArchive archive = ZipFile.Open(path, ZipArchiveMode.Create);
+        foreach ((string entryName, int width, int height) in pages)
+        {
+            using var noise = Image
+                .Gaussnoise(width, height, mean: 128, sigma: 40)
+                .Cast(Enums.BandFormat.Uchar);
+            using var rgb = noise.Bandjoin(noise).Bandjoin(noise);
+            string source = Path.Combine(
+                sourceDir,
+                $"{Guid.NewGuid():N}{Path.GetExtension(entryName)}"
+            );
+            rgb.WriteToFile(source);
+            archive.CreateEntryFromFile(source, entryName, CompressionLevel.Optimal);
+        }
+
+        return path;
+    }
+
+    private static (int Width, int Height) ReadEntrySize(ZipArchiveEntry entry)
+    {
+        using Stream stream = entry.Open();
+        using var buffer = new MemoryStream();
+        stream.CopyTo(buffer);
+        using var image = Image.NewFromBuffer(buffer.ToArray());
+        return (image.Width, image.Height);
     }
 
     /// <summary>

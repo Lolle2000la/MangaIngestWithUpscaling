@@ -83,7 +83,9 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
             factory.SessionsRequestedAfterInvalidation > 0,
             "the retry did not fetch a new session after the invalidation"
         );
-        Assert.Equal(2, factory.InferenceScopeCalls);
+        // The probe's scope, the scope that threw, and the one the retry succeeded under. Pinned
+        // exactly so that a change in how often the probe scopes breaks this test loudly.
+        Assert.Equal(3, factory.InferenceScopeCalls);
     }
 
     private static string CreateTestJpeg(int width, int height)
@@ -112,9 +114,11 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
     /// consequence of reusing the session variable across the invalidate is the same here.
     /// <para>
     /// The memory pressure is injected through <see cref="EnterInferenceScope"/> rather than by
-    /// exhausting the device: that is the only call the upscale path makes inside the retry loop, so
-    /// the first one is the first tile attempt and the exception lands on exactly the path a real
-    /// out-of-memory would. Throwing from there needs no GPU and no unreproducible size pressure.
+    /// exhausting the device: it needs no GPU and no unreproducible size pressure, and the exception
+    /// lands on exactly the path a real out-of-memory would. It is thrown on the second scope call,
+    /// because the device probe takes the first one — throwing on the first would make the probe skip
+    /// the only candidate instead of exercising the retry. The call count is asserted so that if the
+    /// probe's scoping changes, this fails loudly rather than testing nothing.
     /// </para>
     /// </summary>
     private sealed class MemoryPressureSessionFactory(string modelPath) : IOnnxSessionFactory
@@ -171,7 +175,8 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
 
         public IDisposable EnterInferenceScope()
         {
-            if (Interlocked.Increment(ref _scopeCalls) == 1)
+            // #1 is the device probe; #2 is the first tile attempt in the retry loop.
+            if (Interlocked.Increment(ref _scopeCalls) == 2)
             {
                 throw new OutOfMemoryException("simulated device memory pressure");
             }

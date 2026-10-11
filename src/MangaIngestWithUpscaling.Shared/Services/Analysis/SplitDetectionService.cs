@@ -160,6 +160,10 @@ public class SplitDetectionService(
 
                     cancellationToken.ThrowIfCancellationRequested();
 
+                    // The session is fetched before the scope is entered, so a concurrent
+                    // invalidation/eviction in that narrow window could still dispose it. The scope
+                    // does enclose the Run below, which is the part that must not run on a session
+                    // another thread is disposing.
                     InferenceSession session = onnxSessionFactory.GetOrCreateSession(modelPath);
                     using var inferenceScope = onnxSessionFactory.EnterInferenceScope();
 
@@ -221,6 +225,12 @@ public class SplitDetectionService(
         catch (Exception ex)
         {
             logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
+
+            // Only one session is cached at a time (OnnxSessionFactory.MaxCachedSessions), so a
+            // session that keeps failing would be reused, and fail again, for every remaining page
+            // of the chapter. Drop it so the next page rebuilds a fresh one.
+            onnxSessionFactory.InvalidateSession(modelPath);
+
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
         }
     }

@@ -111,17 +111,23 @@ spent on the grid itself, not on a square tile side.
 ```csharp
 long weights = EstimateModelBytes(modelNameOrPath, modelSizeBytes);
 double bpp   = C_arch · scale² · (isFp16 ? 2 : 4);      // bytes per input pixel
+long budget  = memoryBudgetBytes − sessionReservation;   // the session holds this either way
 
 // the whole page in one inference, only with headroom
-if (weights + bpp · paddedTilePixels(1x1) <= 0.9 · memoryBudgetBytes) return 1x1;
+if (weights + bpp · paddedTilePixels(1x1) <= 0.9 · budget) return 1x1;
 
 // otherwise: every grid whose single tile fits the budget ...
 for (columns = 1 .. ceil(w / MinimumTileSize))
 for (rows    = 1 .. ceil(h / MinimumTileSize))
 {
-    tile     = (ceil(w / columns), ceil(h / rows));
-    work     = columns · rows · paddedTilePixels(tile);   // overlap + alignment included
-    if (work < bestWork && weights + bpp · paddedTilePixels(tile) <= budget)
+    tile = (ceil(w / columns), ceil(h / rows));
+    if (weights + bpp · paddedTilePixels(tile) > budget) continue;
+
+    context = min(min(tile.width, tile.height), QualityTilePixels);  // 512 px = full quality
+    work    = columns · rows · paddedTilePixels(tile);                // overlap + alignment included
+
+    // most context first, then the cheapest grid that delivers it
+    if (context > bestContext || (context == bestContext && work < bestWork))
         best = (columns, rows);
 }
 return best ?? grid at MinimumTileSize;                    // quality floor when nothing fits
@@ -132,11 +138,15 @@ Notes:
 * **One tile runs at a time**, so a grid is affordable exactly when a single tile of it is. The whole
   page as one inference is only planned when its footprint stays below
   `SinglePassSafetyFraction = 0.9` of the budget, because a single-pass overflow cannot be recovered
-  without restarting the page.
-* **The objective is throughput, not the tile size.** Fewer total padded pixels means fewer (or
-  smaller) inferences, and one inference runs at a time. That is what makes the search pick 4x3 over
-  2x2 on a 1125x1600 4x page at 13 GB — the page is taller than wide, so the budget is best spent on
-  rows.
+  without restarting the page. The session reservation `C` is subtracted from the budget first, so
+  neither decision can plan past the memory a live session already holds.
+* **The objective is context first, then throughput.** The models need roughly
+  `QualityTilePixels = 512` px on both sides to see their full receptive field; below that a split
+  loses context on screentones, and above it a larger tile has nothing left to look at. The planner
+  therefore gives the smaller side all the context the budget allows, capped at 512, and among the
+  grids that tie on that context takes the one with the fewest total padded pixels. That is what
+  makes the search pick 2x2 (563x800 tiles) over 4x3 (282x534 tiles) on a 1125x1600 4x page at
+  ~13 GB: only the 2x2 grid reaches the 512 px context target.
 * **No upper cap.** On this card (16 GB, ~2 GB used by the desktop, so a ~13.4 GB Vulkan budget) a 4x
   model plans 563x800 tiles and a 2x model runs the whole 1125x1600 page in a single pass. The old
   `maxCap = { ≥4 => 512, 3 => 640, _ => 1024 }` is gone.
@@ -399,11 +409,14 @@ Verified end-to-end through `OnnxUpscaleEngine` (real manga page, 6 GB budget, f
 
 ```
 profile before run : none
-profile after run  : scale=0.982 reservation=74MB tiles=128/448
+profile after run  : scale=0.982 reservation=140MB tiles=128/448
 output             : 3808 KB in 9.0s
 peak VRAM          : 8156 MB  (delta 6081 MB of a 6000 MB budget)
 peak GTT           :  299 MB
 ```
+
+The reservation the benchmark measures is the one the profile stores, so both readings above record
+the same ~140 MB (`146800640` bytes, §6.3).
 
 ### 6.3 Where it is stored
 

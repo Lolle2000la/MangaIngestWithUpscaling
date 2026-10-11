@@ -201,9 +201,11 @@ public sealed class OnnxSessionFactory(
 
         UpscalerConfig currentConfig = config.Value;
         int deviceId = Math.Max(0, currentConfig.SelectedDeviceIndex - 1);
-        bool forceCpu = currentConfig.UseCPU || currentConfig.SelectedDeviceIndex <= 0;
+        bool forceCpu = ShouldUseCpuProvider(currentConfig);
 
-        SessionOptions options = new()
+        // Disposed on the way out: InferenceSession reads the options when it is constructed, and
+        // SessionOptions is a SafeHandle, so leaving it to the finalizer only defers the native free.
+        using SessionOptions options = new()
         {
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
             ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
@@ -243,7 +245,7 @@ public sealed class OnnxSessionFactory(
             );
 
             // Fallback cleanly to CPU
-            SessionOptions cpuOptions = new()
+            using SessionOptions cpuOptions = new()
             {
                 GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
                 ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
@@ -254,6 +256,22 @@ public sealed class OnnxSessionFactory(
             return new InferenceSession(modelPath, cpuOptions);
         }
     }
+
+    /// <summary>
+    /// Decides whether the session is built CPU-only, without ever trying a GPU provider.
+    /// <para>
+    /// <see cref="GpuBackend.CPU"/> is a first-class choice and <see cref="GetEffectiveBackend"/>
+    /// reports it as CPU, so it has to reach the CPU path here too. Without the explicit case it
+    /// matched no branch in <see cref="TryConfigureGpuProvider"/> and fell through to the Auto
+    /// discovery block, which attaches CUDA or WebGPU — the opposite of what the setting is
+    /// recommended for (running the models the GPU EP mis-executes), while the engine identity and
+    /// the logs still said CPU.
+    /// </para>
+    /// </summary>
+    internal static bool ShouldUseCpuProvider(UpscalerConfig currentConfig) =>
+        currentConfig.UseCPU
+        || currentConfig.SelectedDeviceIndex <= 0
+        || currentConfig.PreferredGpuBackend == GpuBackend.CPU;
 
     private bool TryConfigureGpuProvider(
         SessionOptions options,

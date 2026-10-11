@@ -201,7 +201,11 @@ public class MangaJaNaiWorkerClient(
                 try
                 {
                     await p.Write;
-                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, UpscaleJobStatus.Success);
+                    // The streamed consumer (PageStreamClient) keys its per-page index by the worker
+                    // page name (ChapterPage.Name), not the local temp path. Report the name so a
+                    // finished page maps back to its manifest index; reporting p.Page.Path makes
+                    // every page an unmatched error, so nothing uploads and the chapter fails.
+                    jobFile = new UpscaleJobFile(p.Page.Name, p.OutPath, UpscaleJobStatus.Success);
                 }
                 catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
                 {
@@ -210,7 +214,7 @@ public class MangaJaNaiWorkerClient(
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Failed to upscale page {PageName}", p.Page.Name);
-                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, UpscaleJobStatus.Error);
+                    jobFile = new UpscaleJobFile(p.Page.Name, p.OutPath, UpscaleJobStatus.Error);
                 }
                 RecordPage(jobFile, p.Page.Name);
             }
@@ -278,7 +282,7 @@ public class MangaJaNaiWorkerClient(
                     {
                         logger.LogError(ex, "Failed to upscale page {PageName}", page.Name);
                         RecordPage(
-                            new UpscaleJobFile(page.Path, outPath, UpscaleJobStatus.Error),
+                            new UpscaleJobFile(page.Name, outPath, UpscaleJobStatus.Error),
                             page.Name
                         );
                     }

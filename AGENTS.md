@@ -43,7 +43,7 @@ dotnet build --no-restore src/MangaIngestWithUpscaling.RemoteWorker
 
 **Main Web Application (Development Mode):**
 ```bash
-# ALWAYS use RemoteOnly mode for development to skip Python ML setup
+# ALWAYS use RemoteOnly mode for development to run upscaling on the remote worker
 export Ingest_Upscaler__RemoteOnly=true
 dotnet run --project src/MangaIngestWithUpscaling
 # Application starts on: http://localhost:5091 and https://localhost:7211
@@ -234,7 +234,7 @@ local and synchronous.
 ```
 
 ### Environment Variables (for development)
-- `Ingest_Upscaler__RemoteOnly=true` - Skip Python/ML setup
+- `Ingest_Upscaler__RemoteOnly=true` - Run the upscaling on the remote worker instead of locally
 - `Ingest_Upscaler__UseCPU=true` - Force CPU backend
 - `Ingest_DatabaseProvider=Postgres` - Select the database backend (`Sqlite` is the default; also accepts `sqlite3`, `postgres`, `postgresql`, `npgsql`; an unknown value fails startup instead of silently falling back)
 - `Ingest_ConnectionStrings__DefaultConnection` - SQLite database path (SQLite only)
@@ -366,6 +366,6 @@ run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches 
 - **Testcontainers** - Spins up PostgreSQL for the dual-provider test passes (Docker required)
 - **gRPC** - Communication protocol
 - **Serilog** - Logging framework
-- **Microsoft.ML.OnnxRuntime** - Pure C# ML inference engine (MIGraphX, DirectML, CUDA, CPU)
+- **Microsoft.ML.OnnxRuntime** - Pure C# ML inference engine (WebGPU — the default GPU backend — CUDA, DirectML, OpenVINO, MIGraphX, CPU)
 
 Remember: **ALWAYS use RemoteOnly mode for development** unless you specifically need to test ML functionality locally.

@@ -1,5 +1,7 @@
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
@@ -239,6 +241,44 @@ public class OnnxTilerTests : IDisposable
         return img;
     }
 
+    /// <summary>
+    /// Writes a tiny upscaler whose single input and output carry names other than the
+    /// <c>input</c>/<c>output</c> the tiler requires, so the "model is unusable" path can be driven
+    /// through a real ONNX Runtime session rather than a hand-built value collection.
+    /// <para>
+    /// ONNX stores tensor names as length-prefixed UTF-8, so renaming a generated model in place only
+    /// works when the replacement is the same length: <c>"input"</c> becomes <c>"image"</c> and
+    /// <c>"output"</c> becomes <c>"result"</c>, both byte-for-byte equal in size.
+    /// </para>
+    /// </summary>
+    private static string WriteModelWithForeignTensorNames(string directory, bool fp16 = false)
+    {
+        string path = TinyOnnxModel.WriteNearestUpscaler(directory, scale: 2, fp16: fp16);
+        byte[] bytes = File.ReadAllBytes(path);
+        RenameAscii(bytes, "input", "image");
+        RenameAscii(bytes, "output", "result");
+        File.WriteAllBytes(path, bytes);
+        return path;
+    }
+
+    private static void RenameAscii(byte[] bytes, string from, string to)
+    {
+        ReadOnlySpan<byte> source = System.Text.Encoding.ASCII.GetBytes(from);
+        ReadOnlySpan<byte> target = System.Text.Encoding.ASCII.GetBytes(to);
+        if (source.Length != target.Length)
+        {
+            throw new ArgumentException($"in-place rename of '{from}' to '{to}' changes length");
+        }
+
+        Span<byte> remaining = bytes;
+        int at;
+        while ((at = remaining.IndexOf(source)) >= 0)
+        {
+            target.CopyTo(remaining[at..]);
+            remaining = remaining[(at + source.Length)..];
+        }
+    }
+
     [Fact]
     [Trait("Category", "Integration")]
     public void UpscaleRgb_ProducesConsistentOutputBetweenSinglePassAndTiled()
@@ -288,6 +328,64 @@ public class OnnxTilerTests : IDisposable
         }
         double avgDiff = totalDiff / singlePass.Length;
         Assert.True(avgDiff < 5.0, $"Average pixel difference should be small, but was {avgDiff}");
+    }
+
+    [Fact]
+    public void UpscaleTile_ModelWhoseInputIsNotNamedInput_ThrowsClearError()
+    {
+        // Candidate selection can point at a model that names its single input something else. A bare
+        // InputMetadata["input"] threw a KeyNotFoundException that mentioned neither the model nor
+        // the names it does use, so the caller could not tell "this model is unusable" from a genuine
+        // tiler bug. The message now names the offending tensor and what the model actually has.
+        string modelPath = WriteModelWithForeignTensorNames(CreateDir());
+        using var session = new InferenceSession(modelPath);
+        Assert.True(
+            session.InputMetadata.ContainsKey("image"),
+            "fixture: the model input should have been renamed off 'input'"
+        );
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            OnnxTiler.UpscaleTile(
+                CreateTestImage(32, 32),
+                32,
+                32,
+                2,
+                session,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Contains("no input named", ex.Message);
+        Assert.Contains("'image'", ex.Message);
+    }
+
+    [Fact]
+    public void DecodeOutputTensor_ModelWhoseOutputIsNotNamedOutput_ThrowsClearError()
+    {
+        // The same for the output lookup: First(o => o.Name == "output") raised an empty
+        // InvalidOperationException ("Sequence contains no matching element") that said nothing about
+        // the model, so it is now resolved to a message naming the tensor the model really produced.
+        string modelPath = WriteModelWithForeignTensorNames(CreateDir());
+        using var session = new InferenceSession(modelPath);
+        Assert.True(
+            session.OutputMetadata.ContainsKey("result"),
+            "fixture: the model output should have been renamed off 'output'"
+        );
+
+        var input = new DenseTensor<float>(
+            Enumerable.Repeat(1f, 3 * 2 * 2).ToArray(),
+            [1, 3, 2, 2]
+        );
+        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([
+            NamedOnnxValue.CreateFromTensor("image", input),
+        ]);
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            OnnxTiler.DecodeOutputTensor(outputs, 2, 2, 2, 2, 2, CancellationToken.None)
+        );
+
+        Assert.Contains("no output named", ex.Message);
+        Assert.Contains("'result'", ex.Message);
     }
 
     [Theory]
@@ -1062,6 +1160,60 @@ public class OnnxTilerTests : IDisposable
 
         Assert.Equal(withDefault, withZero);
         Assert.Equal(withDefault, withNegative);
+    }
+
+    [Theory]
+    [InlineData(null, null, 1024L * 1024 * 1024, true)] // the §4.3 row: threshold alone
+    [InlineData(0.5, null, null, true)] // fraction alone
+    [InlineData(null, 0L, null, true)] // a zero margin is still an explicit margin
+    [InlineData(null, null, 0L, false)] // 0 means "use the default threshold"
+    [InlineData(null, null, -1L, false)] // negative means "use the default threshold"
+    [InlineData(0.0, -1L, null, false)] // values CalculateVramBudget ignores do not count
+    [InlineData(null, null, null, false)] // nothing set keeps the driver's own budget
+    public void HasExplicitVramBudgetOverride_MatchesWhatCalculateVramBudgetWouldActOn(
+        double? utilizationFraction,
+        long? safetyMarginBytes,
+        long? exclusiveThresholdBytes,
+        bool expected
+    )
+    {
+        // GetAvailableVramBudget cannot be driven without a real Vulkan device, so the branch it
+        // takes when VK_EXT_memory_budget answers is pinned through the predicate it now delegates to.
+        // Before the fix, a threshold-only override was NOT explicit here, so the driver's raw
+        // BudgetBytes was returned and the threshold was silently ignored.
+        Assert.Equal(
+            expected,
+            OnnxTiler.HasExplicitVramBudgetOverride(
+                utilizationFraction,
+                safetyMarginBytes,
+                exclusiveThresholdBytes
+            )
+        );
+    }
+
+    [Fact]
+    public void CalculateVramBudget_DocumentedSharedCardRow_ThresholdAloneIsExclusive()
+    {
+        // docs/UPSCALING_MEMORY_MODEL.md §4.3: on a 12 GB card with 700 MB already used, raising the
+        // exclusive threshold to 1 GiB moves the budget from the desktop branch (~9.5 GB) to the
+        // exclusive branch (~11.1 GB). Only the threshold is set, which is exactly the case
+        // GetAvailableVramBudget used to route around CalculateVramBudget.
+        long total = 12L * 1024 * 1024 * 1024;
+        long used = 700L * 1024 * 1024;
+
+        long exclusive = OnnxTiler.CalculateVramBudget(
+            total,
+            used,
+            exclusiveThresholdBytes: 1024L * 1024 * 1024
+        );
+        long desktop = OnnxTiler.CalculateVramBudget(total, used);
+
+        Assert.InRange(exclusive, (long)(11.0 * 1024 * 1024 * 1024), total);
+        Assert.InRange(desktop, (long)(9.3 * 1024 * 1024 * 1024), (long)(9.7 * 1024 * 1024 * 1024));
+        Assert.True(
+            exclusive > desktop,
+            $"the 1 GiB threshold should recover the desktop margin: {exclusive} vs {desktop}"
+        );
     }
 
     [Fact]

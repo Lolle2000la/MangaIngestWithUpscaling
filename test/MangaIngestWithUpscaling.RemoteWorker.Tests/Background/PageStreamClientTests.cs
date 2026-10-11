@@ -11,9 +11,11 @@ using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
@@ -179,6 +181,71 @@ public class PageStreamClientTests
         {
             Directory.Delete(directory, true);
         }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_WithTheRealWorkerClient_UploadsEveryUpscaledPage()
+    {
+        // Regression: PageStreamClient keys a finished page by the worker page name, so
+        // MangaJaNaiWorkerClient must report ChapterPage.Name as UpscaleJobFile.Input. Reporting the
+        // local temp path instead left every page unmatched, uploaded nothing, and failed the
+        // chapter. This drives the real producer (not FakeWorkerClient) so that contract is pinned.
+        string directory = Directory.CreateTempSubdirectory("page_stream_real_worker").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+
+            // No GPU/model needed: "upscale" by reversing the fetched source bytes into the staged
+            // output path, exactly as FakeWorkerClient does, so the upload carries upscaled bytes.
+            var engine = Substitute.For<IOnnxUpscaleEngine>();
+            engine
+                .UpscaleFileStagedAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<string>(),
+                    Arg.Any<int>(),
+                    Arg.Any<SharedCompressionFormat>(),
+                    Arg.Any<int?>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(ci =>
+                    Task.FromResult<Task>(
+                        ReverseIntoAsync(ci.ArgAt<string>(0), ci.ArgAt<string>(1))
+                    )
+                );
+
+            var worker = new MangaJaNaiWorkerClient(
+                engine,
+                Substitute.For<IOnnxSessionFactory>(),
+                NullLogger<MangaJaNaiWorkerClient>.Instance
+            );
+            var sut = CreateClient(worker);
+
+            // A name/path mismatch makes this throw InvalidOperationException("Page upscaling failed").
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            Assert.Equal(new[] { 0, 1 }, server.RequestedPages);
+            Assert.True(File.Exists(destination));
+
+            using ZipArchive zip = ZipFile.OpenRead(destination);
+            // The assembled chapter must hold the upscaled pixels, not the fetched source (1,2,3 /
+            // 4,5,6), and each page must map back to its own index.
+            Assert.Equal(new byte[] { 3, 2, 1 }, ReadEntry(zip, "001.webp"));
+            Assert.Equal(new byte[] { 6, 5, 4 }, ReadEntry(zip, "002.webp"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    private static async Task ReverseIntoAsync(string inputPath, string outputPath)
+    {
+        byte[] source = await File.ReadAllBytesAsync(inputPath);
+        await File.WriteAllBytesAsync(outputPath, source.Reverse().ToArray());
     }
 
     [Fact]
@@ -677,7 +744,7 @@ public class PageStreamClientTests
     }
 
     private static PageStreamClient CreateClient(
-        FakeWorkerClient worker,
+        IMangaJaNaiWorkerClient worker,
         IServiceScopeFactory? scopeFactory = null,
         UpscalerConfig? config = null
     ) =>

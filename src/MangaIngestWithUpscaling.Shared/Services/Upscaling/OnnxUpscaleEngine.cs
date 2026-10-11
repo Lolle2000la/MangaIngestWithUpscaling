@@ -187,10 +187,46 @@ public class OnnxUpscaleEngine(
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                WriteUpscaledPage(upscaled, outputPath, format, quality);
+
+                // Encode to a sibling temp and move only once it is complete. vips writes the file
+                // incrementally, so a codec or disk failure part-way would otherwise leave a
+                // truncated image where the destination should be. The CBZ path stages its archive
+                // the same way for the same reason. The extension is preserved because the fallback
+                // branch of SaveImage picks the format from it.
+                string partial = PartialPath(outputPath);
+                try
+                {
+                    WriteUpscaledPage(upscaled, partial, format, quality);
+                    File.Move(partial, outputPath, overwrite: true);
+                }
+                finally
+                {
+                    if (File.Exists(partial))
+                    {
+                        try
+                        {
+                            File.Delete(partial);
+                        }
+                        catch { }
+                    }
+                }
             },
             cancellationToken
         );
+    }
+
+    /// <summary>
+    /// A sibling path the encoder writes to before the finished file is moved onto
+    /// <paramref name="outputPath"/>. Kept in the same directory so the final <c>File.Move</c> stays
+    /// on one volume and is atomic, and keeps the extension so the format-by-extension fallback in
+    /// <see cref="SaveImage"/> still works.
+    /// </summary>
+    private static string PartialPath(string outputPath)
+    {
+        string directory = Path.GetDirectoryName(outputPath) ?? string.Empty;
+        string name = Path.GetFileNameWithoutExtension(outputPath);
+        string extension = Path.GetExtension(outputPath);
+        return Path.Combine(directory, $"{name}.part-{Guid.NewGuid():N}{extension}");
     }
 
     private static void WriteUpscaledPage(
@@ -246,19 +282,6 @@ public class OnnxUpscaleEngine(
             using (var inArchive = ZipFile.OpenRead(inputCbzPath))
             using (var outArchive = ZipFile.Open(tempOutCbz, ZipArchiveMode.Create))
             {
-                var entries = inArchive.Entries.ToList();
-                var imageEntries = entries
-                    .Where(e =>
-                        ImageConstants.SupportedImageExtensions.Contains(
-                            Path.GetExtension(e.FullName).ToLowerInvariant()
-                        )
-                    )
-                    .OrderBy(e => e.FullName, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                int total = imageEntries.Count;
-                int current = 0;
-
                 string targetExt = format switch
                 {
                     CompressionFormat.Avif => ".avif",
@@ -267,6 +290,48 @@ public class OnnxUpscaleEngine(
                     CompressionFormat.Png => ".png",
                     _ => ".webp",
                 };
+
+                var entries = inArchive.Entries.ToList();
+                // Natural order, not ordinal: page order is content-critical and an ordinal
+                // comparison would place "10" before "2".
+                var imageEntries = entries
+                    .Where(e =>
+                        ImageConstants.SupportedImageExtensions.Contains(
+                            Path.GetExtension(e.FullName).ToLowerInvariant()
+                        )
+                    )
+                    .OrderBy(e => e.FullName, NaturalEntryNameComparer.Instance)
+                    .ToList();
+
+                // Resolve the output name per entry, preserving the entry's folder. Two entries in
+                // one folder can share a stem (001.jpg + 001.png) and thus an output name; a zip
+                // entry name is not unique, so a name-keyed reader would keep only one and lose a
+                // page. The page-streaming path disambiguates the same way; mirror it here.
+                var outputNames = new HashSet<string>(StringComparer.Ordinal);
+                var pages = new List<(ZipArchiveEntry Entry, string OutputName)>(
+                    imageEntries.Count
+                );
+                foreach (var entry in imageEntries)
+                {
+                    string outputName = Path.ChangeExtension(entry.FullName, targetExt);
+                    if (!outputNames.Add(outputName))
+                    {
+                        string suffix = Path.GetExtension(outputName);
+                        string stem = outputName[..^suffix.Length];
+                        int n = 1;
+                        string candidate;
+                        do
+                        {
+                            candidate = $"{stem}_{n++}{suffix}";
+                        } while (!outputNames.Add(candidate));
+                        outputName = candidate;
+                    }
+
+                    pages.Add((entry, outputName));
+                }
+
+                int total = pages.Count;
+                int current = 0;
 
                 // Copy non-image entries directly (e.g. ComicInfo.xml)
                 foreach (var nonImg in entries.Where(e => !imageEntries.Contains(e)))
@@ -284,7 +349,13 @@ public class OnnxUpscaleEngine(
 
                 // Pipelined: while page N runs on the GPU, page N-1 finishes encoding and is added to
                 // the archive. Only this loop touches outArchive, so no extra synchronization is needed.
-                (ZipArchiveEntry Entry, string TempIn, string TempOut, Task Write)? pending = null;
+                (
+                    ZipArchiveEntry Entry,
+                    string OutputName,
+                    string TempIn,
+                    string TempOut,
+                    Task Write
+                )? pending = null;
 
                 async Task FinalizePendingAsync()
                 {
@@ -299,7 +370,7 @@ public class OnnxUpscaleEngine(
                         await p.Write;
                         outArchive.CreateEntryFromFile(
                             p.TempOut,
-                            Path.ChangeExtension(p.Entry.FullName, targetExt),
+                            p.OutputName,
                             CompressionLevel.Optimal
                         );
                     }
@@ -318,7 +389,7 @@ public class OnnxUpscaleEngine(
                 try
                 {
                     // Process image entries
-                    foreach (var entry in imageEntries)
+                    foreach (var (entry, outputName) in pages)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
@@ -370,7 +441,7 @@ public class OnnxUpscaleEngine(
                             TryDeleteFile(tempOutPage);
                             throw;
                         }
-                        pending = (entry, tempInPage, tempOutPage, write);
+                        pending = (entry, outputName, tempInPage, tempOutPage, write);
                     }
 
                     await FinalizePendingAsync();
@@ -916,22 +987,50 @@ public class OnnxUpscaleEngine(
                     InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
 
                     // The decode is what rejects a broken model, so the probe goes through it.
-                    OnnxTiler.UpscaleTile(
-                        CreateProbeTile(ModelProbeTilePixels),
-                        ModelProbeTilePixels,
-                        ModelProbeTilePixels,
-                        scale,
-                        session,
-                        cancellationToken
-                    );
+                    using (sessionFactory.EnterInferenceScope())
+                    {
+                        OnnxTiler.UpscaleTile(
+                            CreateProbeTile(ModelProbeTilePixels),
+                            ModelProbeTilePixels,
+                            ModelProbeTilePixels,
+                            scale,
+                            session,
+                            cancellationToken
+                        );
+                    }
+
                     return true;
                 },
                 cancellationToken
             );
         }
-        catch (NonFiniteModelOutputException)
+        catch (OperationCanceledException)
         {
+            throw;
+        }
+        catch (NonFiniteModelOutputException ex)
+        {
+            // The provider ran the model but produced NaN/Inf: it cannot be used on this device.
             sessionFactory.InvalidateSession(modelPath);
+            logger.LogWarning(
+                ex,
+                "Model {Model} produced non-finite output during the device probe; skipping it.",
+                Path.GetFileName(modelPath)
+            );
+            usable = false;
+        }
+        catch (Exception ex)
+        {
+            // Anything else — a graph that does not expose "input"/"output", a corrupt or non-ONNX
+            // file, a provider that refuses it — also means "cannot run here". Candidate selection
+            // deliberately appends every .onnx as a last resort, so a single bad file must be
+            // skipped rather than abort the page while a working candidate follows.
+            sessionFactory.InvalidateSession(modelPath);
+            logger.LogDebug(
+                ex,
+                "Model {Model} could not be probed on this device; skipping it.",
+                Path.GetFileName(modelPath)
+            );
             usable = false;
         }
 

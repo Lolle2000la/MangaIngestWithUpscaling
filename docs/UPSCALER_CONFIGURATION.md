@@ -136,15 +136,10 @@ upscaling). The original files are never modified.
 **Default behaviour:** PNG and AVIF images are converted to JPG at quality 98 for upscaler
 compatibility. This can be disabled or overridden.
 
-Because this is a JSON array, it cannot be expressed as simple environment variables. Override it
-by mounting a JSON settings file into the container:
-
-```yaml
-    volumes:
-      - ./appsettings.override.json:/app/appsettings.override.json
-```
-
-`appsettings.override.json`:
+Because this is a JSON array, it cannot be expressed as simple environment variables. The intended
+override is a mounted `appsettings.override.json`, but the container does **not** currently load one
+— nothing in the app calls `AddJsonFile` for it, so mounting that file has no effect. Set the rules
+in the image's own `appsettings.json` instead (or run from source):
 
 ```json
 {
@@ -180,13 +175,13 @@ to your `appsettings.json`:
   "Upscaler": {
     "PreferredGpuBackend": "CUDA",
     "SelectedDeviceIndex": 1,
-    "UseFp16": true,
+    "UseFp16": null,
     "UseCPU": false,
     "ModelsDirectory": "/models/MangaJaNai",
     "RemoteOnly": false,
     "UpscaleTimeout": "00:01:00",
     "MaxDimensionBeforeUpscaling": null,
-    "EnableSmartDownscale": false,
+    "EnableSmartDownscale": true,
     "SmartDownscaleThreshold": 15.0,
     "SmartDownscaleFactor": 0.75,
     "ImageFormatConversionRules": [
@@ -197,7 +192,24 @@ to your `appsettings.json`:
 }
 ```
 
+`UseFp16: null` is the default (`Auto`): the hardware capability decides, exactly as in the table
+above. `EnableSmartDownscale` now defaults to `true`; it defaulted to `false` before this release.
+
 Environment variables always take precedence over `appsettings.json` values.
+
+---
+
+## Upgrading from the Python workflow
+
+The deleted Python worker shipped its base behaviour in `appstate2.json`. Two of its post-processing
+behaviours were **not** carried over to the ONNX engine, so output changes on upgrade:
+
+- **`AutoAdjustLevels: true`** (automatic levels adjustment on the ESRGAN chains) is gone; there is
+  no equivalent setting.
+- **A 3840×2160 post-upscale resize** (`ResizeWidthAfterUpscale` / `ResizeHeightAfterUpscale`) is
+  gone; output keeps the upscaled resolution.
+
+Both belonged to the removed Python backend, not to the ONNX model set.
 
 ---
 

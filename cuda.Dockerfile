@@ -33,9 +33,14 @@ COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH="/usr/share/dotnet:${PATH}"
 
-# Install dependencies for NetVips and .NET globalization
+# The aspnet base image sets ASPNETCORE_HTTP_PORTS=8080, but its environment is not inherited here
+# because only /usr/share/dotnet is copied into the nvidia/cuda base. Set it explicitly so this
+# image matches the CPU image; Program.cs binds 8080 explicitly, which overrides it anyway.
+ENV ASPNETCORE_HTTP_PORTS=8080
+
+# Install dependencies for NetVips, .NET globalization, and the WebGPU/Vulkan fallback
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates libicu-dev \
+    wget ca-certificates libicu-dev libvulkan1 mesa-vulkan-drivers libgomp1 \
     libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
     rm -rf /var/lib/apt/lists/*
 

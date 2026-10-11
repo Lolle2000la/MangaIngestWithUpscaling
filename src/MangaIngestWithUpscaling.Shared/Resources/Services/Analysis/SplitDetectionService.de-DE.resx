@@ -61,16 +61,7 @@
   <data name="Error_InputPathNotFound" xml:space="preserve">
     <value>Eingabepfad nicht gefunden: {0}</value>
   </data>
-  <data name="Error_ScriptNotFound" xml:space="preserve">
-    <value>Split-Erkennungsskript nicht gefunden unter {0}</value>
-  </data>
   <data name="Error_CheckpointNotFound" xml:space="preserve">
-    <value>Modell-Checkpoint nicht gefunden unter {0}</value>
-  </data>
-  <data name="Error_ConfigNotFound" xml:space="preserve">
-    <value>Modellkonfiguration nicht gefunden unter {0}</value>
-  </data>
-  <data name="Error_DeserializationFailed" xml:space="preserve">
-    <value>Deserialisiertes Ergebnis ist null</value>
+    <value>Modelldatei nicht gefunden unter {0}</value>
   </data>
 </root>

@@ -356,6 +356,12 @@ public static class OnnxTiler
     /// </summary>
     public const double SinglePassSafetyFraction = 0.9;
 
+    /// <summary>The tensor name the upscaler expects the single model input to have.</summary>
+    private const string ModelInputName = "input";
+
+    /// <summary>The tensor name the upscaler expects the single model output to have.</summary>
+    private const string ModelOutputName = "output";
+
     private static readonly float[] ByteToFloatLut = CreateByteToFloatLut();
     private static readonly Float16[] ByteToFloat16Lut = CreateByteToFloat16Lut();
     private static readonly byte[] Float16ToByteLut = CreateFloat16ToByteLut();
@@ -831,6 +837,29 @@ public static class OnnxTiler
     }
 
     /// <summary>
+    /// True when any of the optional VRAM budget overrides is set to a value
+    /// <see cref="CalculateVramBudget"/> would actually act on: a positive utilization fraction, a
+    /// non-negative safety margin, or a positive exclusive threshold.
+    /// <para>
+    /// This is the gate that decides whether an override replaces the driver's own
+    /// <c>VK_EXT_memory_budget</c> value or that value is used verbatim. A custom exclusive threshold
+    /// is a reason to do the arithmetic here just as much as a custom fraction or margin: it changes
+    /// the branch <see cref="CalculateVramBudget"/> takes, so routing a threshold-only setting to the
+    /// driver budget would silently ignore it. Values the documentation defines as "use the default"
+    /// (a non-positive threshold, a non-positive fraction, a negative margin) deliberately do not
+    /// count, so they keep the driver's value.
+    /// </para>
+    /// </summary>
+    internal static bool HasExplicitVramBudgetOverride(
+        double? utilizationFraction,
+        long? safetyMarginBytes,
+        long? exclusiveThresholdBytes
+    ) =>
+        (utilizationFraction.HasValue && utilizationFraction.Value > 0)
+        || (safetyMarginBytes.HasValue && safetyMarginBytes.Value >= 0)
+        || (exclusiveThresholdBytes.HasValue && exclusiveThresholdBytes.Value > 0);
+
+    /// <summary>
     /// Discovers available GPU VRAM and computes the safe memory budget for tile size estimation.
     /// Prioritizes Vulkan VK_EXT_memory_budget (driver-calculated memory budget across AMD, NVIDIA, Intel),
     /// falling back to Linux DRM sysfs (AMD/Intel) and nvidia-smi (NVIDIA), and finally a safe default budget.
@@ -849,8 +878,11 @@ public static class OnnxTiler
         {
             // If explicit overrides were provided, respect them
             if (
-                (utilizationFraction.HasValue && utilizationFraction.Value > 0)
-                || (safetyMarginBytes.HasValue && safetyMarginBytes.Value >= 0)
+                HasExplicitVramBudgetOverride(
+                    utilizationFraction,
+                    safetyMarginBytes,
+                    exclusiveThresholdBytes
+                )
             )
             {
                 return CalculateVramBudget(
@@ -1262,7 +1294,7 @@ public static class OnnxTiler
             );
         }
 
-        Type elementType = session.InputMetadata["input"].ElementType;
+        Type elementType = RequireInputMetadata(session).ElementType;
 
         var tileJobs = new List<TileJob>(tileCountX * tileCountY);
         for (int y = 0; y < tileCountY; y++)
@@ -1601,7 +1633,7 @@ public static class OnnxTiler
             );
 
             var halfTensor = new DenseTensor<Float16>(halfData, [1, 3, paddedH, paddedW]);
-            var inVal = NamedOnnxValue.CreateFromTensor("input", halfTensor);
+            var inVal = NamedOnnxValue.CreateFromTensor(ModelInputName, halfTensor);
             return (inVal, paddedW, paddedH);
         }
         else
@@ -1626,7 +1658,7 @@ public static class OnnxTiler
             );
 
             var floatTensor = new DenseTensor<float>(floatData, [1, 3, paddedH, paddedW]);
-            var inVal = NamedOnnxValue.CreateFromTensor("input", floatTensor);
+            var inVal = NamedOnnxValue.CreateFromTensor(ModelInputName, floatTensor);
             return (inVal, paddedW, paddedH);
         }
     }
@@ -1654,7 +1686,7 @@ public static class OnnxTiler
 
         using (outputs)
         {
-            DisposableNamedOnnxValue outNamedValue = outputs.First(o => o.Name == "output");
+            DisposableNamedOnnxValue outNamedValue = RequireOutputTensor(outputs);
             int outTileW = tileW * scale;
             int outTileH = tileH * scale;
             int outPaddedW = paddedW * scale;
@@ -1802,6 +1834,58 @@ public static class OnnxTiler
         return false;
     }
 
+    /// <summary>
+    /// The metadata of the model's input, or a clear failure when the model has no input named
+    /// <c>input</c>.
+    /// <para>
+    /// A bare <c>InputMetadata["input"]</c> throws a <see cref="KeyNotFoundException"/> that says
+    /// nothing about the model being unusable, so a caller cannot tell "skip this model" apart from a
+    /// genuine tiler bug. Models in the wild do use other names, and candidate selection is expected
+    /// to reject them here rather than crash with a dictionary lookup.
+    /// </para>
+    /// </summary>
+    private static NodeMetadata RequireInputMetadata(InferenceSession session)
+    {
+        if (session.InputMetadata.TryGetValue(ModelInputName, out NodeMetadata? metadata))
+        {
+            return metadata;
+        }
+
+        throw new InvalidOperationException(
+            $"Model has no input named '{ModelInputName}'; its inputs are "
+                + $"{FormatNames(session.InputMetadata.Keys)}. The upscaler requires a model whose "
+                + "input is named 'input'."
+        );
+    }
+
+    /// <summary>
+    /// The output tensor named <c>output</c>, or a clear failure naming what the model actually
+    /// produced instead of the empty <see cref="InvalidOperationException"/> a bare
+    /// <c>First</c> would raise.
+    /// </summary>
+    private static DisposableNamedOnnxValue RequireOutputTensor(
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs
+    )
+    {
+        DisposableNamedOnnxValue? named = outputs.FirstOrDefault(o => o.Name == ModelOutputName);
+        if (named != null)
+        {
+            return named;
+        }
+
+        throw new InvalidOperationException(
+            $"Model has no output named '{ModelOutputName}'; its outputs are "
+                + $"{FormatNames(outputs.Select(o => o.Name))}. The upscaler requires a model whose "
+                + "output is named 'output'."
+        );
+    }
+
+    private static string FormatNames(IEnumerable<string> names)
+    {
+        string[] quoted = names.Select(n => $"'{n}'").ToArray();
+        return quoted.Length == 0 ? "(none)" : string.Join(", ", quoted);
+    }
+
     public static byte[] UpscaleTile(
         byte[] tileBytes,
         int tileW,
@@ -1813,7 +1897,7 @@ public static class OnnxTiler
         int targetH = 0
     )
     {
-        Type elementType = session.InputMetadata["input"].ElementType;
+        Type elementType = RequireInputMetadata(session).ElementType;
         var (inVal, paddedW, paddedH) = PrepareInputTensor(
             tileBytes,
             tileW,

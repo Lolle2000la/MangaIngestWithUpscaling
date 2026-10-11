@@ -318,7 +318,9 @@ public class MangaJaNaiWorkerClientTests
             .WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         Assert.True(secondInferenceStarted.Task.IsCompletedSuccessfully);
-        Assert.Equal(["/data/001.png", "/data/002.png"], done.Select(f => f.Input));
+        // The streamed consumer keys the per-page index by the worker page name, so the reported
+        // input is ChapterPage.Name (not the local temp path).
+        Assert.Equal(["001.png", "002.png"], done.Select(f => f.Input));
         Assert.All(done, f => Assert.Equal(UpscaleJobStatus.Success, f.Status));
         Assert.Equal(2, result.Files.Count);
     }

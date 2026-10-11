@@ -497,6 +497,47 @@ public class DeviceMemoryCalibratorTests
     }
 
     [Fact]
+    public async Task GetOrCalibrate_DuringBenchmark_EntersAnInferenceScope()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // The benchmark measures device memory through a live session, so it must hold an
+            // inference scope for its duration: without one, a concurrent upscale could evict the
+            // session at capacity or invalidate it on its own failure and dispose it mid-Run. The
+            // session here cannot be used (so the benchmark fails on it, as the retry test does),
+            // but the scope still has to be entered before the measurement starts.
+            var sessionFactory = new ScopeCountingSessionFactory();
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig()),
+                new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance),
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            TinyOnnxModel.WriteNearestUpscaler(
+                dir,
+                scale: 4,
+                fileName: "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"
+            );
+
+            DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Null(profile);
+            Assert.Equal(1, sessionFactory.ScopeCount);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ActivationCoefficients_MatchMeasuredCalibration()
     {
         // Regression guard for the table in GetOutputLiveChannels: the values the device benchmark
@@ -533,5 +574,37 @@ public class DeviceMemoryCalibratorTests
         Assert.Equal(21120.0, esrgan.BytesPerPixel(4, isFp16: true));
         Assert.Equal(42240.0, esrgan.BytesPerPixel(4, isFp16: false));
         Assert.Equal(5280.0, esrgan.BytesPerPixel(2, isFp16: true));
+    }
+
+    /// <summary>
+    /// Records every inference scope entry and hands out no usable session, so the benchmark fails
+    /// after it has entered the scope but still counts that entry.
+    /// </summary>
+    private sealed class ScopeCountingSessionFactory : IOnnxSessionFactory
+    {
+        public int ScopeCount { get; private set; }
+
+        public InferenceSession GetOrCreateSession(string modelPath) => null!;
+
+        public InferenceSession CreateSession(string modelPath) => null!;
+
+        public void InvalidateSession(string modelPath) { }
+
+        public void InvalidateAllSessions() { }
+
+        public GpuBackend GetEffectiveBackend() => GpuBackend.CPU;
+
+        public IDisposable EnterInferenceScope()
+        {
+            ScopeCount++;
+            return new NoOpScope();
+        }
+
+        public void Dispose() { }
+
+        private sealed class NoOpScope : IDisposable
+        {
+            public void Dispose() { }
+        }
     }
 }

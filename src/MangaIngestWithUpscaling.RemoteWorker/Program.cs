@@ -132,6 +132,13 @@ using (var scope = app.Services.CreateScope())
         scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
+    // Resolve the upscaler configuration before the connection retry loop. `ValidateOnStart` only runs
+    // inside Host.StartAsync (app.Run() below), which this code never reaches until the loop finishes,
+    // so an invalid size string (e.g. "12 Gigabytes") would otherwise be masked by an unbounded
+    // reconnect loop against an unreachable server. Reading `.Value` runs the registered
+    // IValidateOptions<UpscalerConfig> now, and a failure throws OptionsValidationException here.
+    _ = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>().Value;
+
     CheckConnectionResponse? connection = null;
     while (connection is null)
     {

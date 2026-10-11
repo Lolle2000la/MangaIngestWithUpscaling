@@ -61,16 +61,7 @@
   <data name="Error_InputPathNotFound" xml:space="preserve">
     <value>入力パスが見つかりません: {0}</value>
   </data>
-  <data name="Error_ScriptNotFound" xml:space="preserve">
-    <value>分割検出スクリプトが見つかりません: {0}</value>
-  </data>
   <data name="Error_CheckpointNotFound" xml:space="preserve">
-    <value>モデルチェックポイントが見つかりません: {0}</value>
-  </data>
-  <data name="Error_ConfigNotFound" xml:space="preserve">
-    <value>モデル設定が見つかりません: {0}</value>
-  </data>
-  <data name="Error_DeserializationFailed" xml:space="preserve">
-    <value>デシリアライズされた結果がnullです</value>
+    <value>モデルファイルが見つかりません: {0}</value>
   </data>
 </root>

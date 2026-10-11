@@ -1,12 +1,12 @@
-# Remote-Only Docker Variant (Deprecated)
+# Remote-Only Deployment
 
 > For a complete overview of all upscaler settings in one place, see
 > [Upscaler Configuration](UPSCALER_CONFIGURATION.md).
 
-> **⚠️ DEPRECATION NOTICE**
-> The `-remote-only` image variant is deprecated and will be removed in a future release.
-> Use the **standard image** and set `Ingest_Upscaler__RemoteOnly=true` to achieve the same result.
-> See [Using the Standard Image](#using-the-standard-image) below for the recommended approach.
+> **Note:** The separate `-remote-only` image variant has been removed. Remote-only mode is now just
+> the **standard image** with `Ingest_Upscaler__RemoteOnly=true`; the `docker-compose.yml`
+> `remote-only` profile (`docker compose --profile remote-only up`) does exactly that. There is no
+> longer a variant image to pull.
 
 This document describes the remote-only configuration of MangaIngestWithUpscaling, designed for deployment scenarios where upscaling is handled exclusively by remote workers.
 
