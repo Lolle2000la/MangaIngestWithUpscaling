@@ -641,10 +641,20 @@ public static class OnnxTiler
     /// 800 px wide page inferred as a 1600 px tile pays double for the same output.
     /// </para>
     /// </summary>
-    public static (int Width, int Height) UniformTileTensorShape(TileSplit split) =>
+    /// <param name="overlap">
+    /// The per-side overlap the tiling path will actually use. It defaults to
+    /// <see cref="DefaultTilePad"/> and must be passed through from the tiling path, otherwise the
+    /// tensor this reports would disagree with the one the tiles are padded to — and, because
+    /// <see cref="TileSplit.PaddedTilePixels"/> sizes the budget from <see cref="DefaultTilePad"/>,
+    /// a larger overlap would also make the planner under-estimate the peak it exists to bound.
+    /// </param>
+    public static (int Width, int Height) UniformTileTensorShape(
+        TileSplit split,
+        int overlap = DefaultTilePad
+    ) =>
         (
-            Math.Max(TileAlignment, ((split.TileWidth + 2 * DefaultTilePad + 63) / 64) * 64),
-            Math.Max(TileAlignment, ((split.TileHeight + 2 * DefaultTilePad + 63) / 64) * 64)
+            Math.Max(TileAlignment, ((split.TileWidth + 2 * overlap + 63) / 64) * 64),
+            Math.Max(TileAlignment, ((split.TileHeight + 2 * overlap + 63) / 64) * 64)
         );
 
     /// <summary>
@@ -1292,7 +1302,7 @@ public static class OnnxTiler
         // One uniform tensor shape for every tile keeps ONNX Runtime (WebGPU / Dawn EP) from
         // re-allocating per tile and accumulating arena memory in Vulkan VRAM/GTT. It follows the
         // tiles this grid produces, so nothing is inferred that the page does not contain.
-        (int uniformTargetW, int uniformTargetH) = UniformTileTensorShape(split);
+        (int uniformTargetW, int uniformTargetH) = UniformTileTensorShape(split, overlap);
 
         if (tileCountX <= 1 && tileCountY <= 1)
         {
@@ -1623,6 +1633,26 @@ public static class OnnxTiler
         return dst;
     }
 
+    /// <summary>
+    /// Maps a padded index onto the source row/column by reflecting at the edges. A single reflection
+    /// only works while the padding is shorter than the tile; the triangular wave here repeats it, so
+    /// a padding longer than the tile still mirrors real pixels instead of degenerating into a run of
+    /// the edge pixel. That degenerate case is reachable for a page (or a manually configured
+    /// <c>TileSize</c>) smaller than the padding, where most of the tensor would otherwise be a
+    /// constant edge value and the model would see no structure to work from.
+    /// </summary>
+    private static int Reflect(int index, int length)
+    {
+        if (length <= 1)
+        {
+            return 0;
+        }
+
+        int period = 2 * (length - 1);
+        int p = index % period;
+        return p < length ? p : period - p;
+    }
+
     public static (NamedOnnxValue InVal, int PaddedW, int PaddedH) PrepareInputTensor(
         byte[] tileBytes,
         int tileW,
@@ -1653,16 +1683,12 @@ public static class OnnxTiler
                 paddedH,
                 py =>
                 {
-                    int srcY = py < tileH ? py : (tileH - 1 - (py - tileH));
-                    if (srcY < 0)
-                        srcY = 0;
+                    int srcY = Reflect(py, tileH);
                     int dstRowOff = py * paddedW * 3;
                     int srcRowOff = srcY * tileW * 3;
                     for (int px = 0; px < paddedW; px++)
                     {
-                        int srcX = px < tileW ? px : (tileW - 1 - (px - tileW));
-                        if (srcX < 0)
-                            srcX = 0;
+                        int srcX = Reflect(px, tileW);
                         int srcIdx = srcRowOff + srcX * 3;
                         int dstIdx = dstRowOff + px * 3;
                         paddedInput[dstIdx] = tileBytes[srcIdx];

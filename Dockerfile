@@ -1,3 +1,8 @@
+# Release image, built by the release workflows for GHCR (multi-arch via TARGETARCH) with
+# ASPNETCORE_ENVIRONMENT=Production, a healthcheck and the bundled DbMigrator. The local/Compose
+# image is the separate src/MangaIngestWithUpscaling/Dockerfile; the two are intentionally not the
+# same file, so a change here does not reach `docker compose up` and vice versa.
+#
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
@@ -36,8 +41,10 @@ FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c Release -a $TARGETARCH -o /app/publish /p:UseAppHost=false
 # SQLite<->PostgreSQL migration CLI. It is framework-dependent (same runtime and shared deps as the
-# app), so publishing it into the same image adds only ~0.2 MB; the migrator csproj strips the web
-# app's multi-GB backend content. Run it by overriding the entrypoint, e.g.:
+# app), so publishing it into the same image adds only ~0.2 MB. It was once much larger because the
+# migrator csproj stripped the web app's bundled Python backend; that backend is gone, so the two
+# now overlap almost completely and `cp -rn` only adds the migrator entrypoint. Run it by overriding
+# the entrypoint, e.g.:
 #   docker run --rm --entrypoint dotnet <image> MangaIngestWithUpscaling.DbMigrator.dll <arguments>
 RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c Release -a $TARGETARCH -o /app/migrator /p:UseAppHost=false
 RUN cp -rn /app/migrator/. /app/publish/

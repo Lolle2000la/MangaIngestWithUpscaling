@@ -824,6 +824,45 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void PrepareInputTensor_PaddingLongerThanTheTile_ReflectsInsteadOfRepeatingTheEdge()
+    {
+        // A small tile padded to a much larger uniform tensor needs more padding than the tile is
+        // wide. A single reflection only covers padding shorter than the tile and used to clamp to the
+        // edge past that, so the far part of the tensor became a constant run of the edge pixel and the
+        // model had no structure to work from there. The reflection now repeats (a triangular wave),
+        // so the content keeps changing across the whole padded region.
+        const int tile = 4;
+        byte[] bytes = new byte[tile * tile * 3];
+        for (int y = 0; y < tile; y++)
+        {
+            for (int x = 0; x < tile; x++)
+            {
+                bytes[(y * tile + x) * 3] = (byte)(x * 40 + 10); // distinct per column
+            }
+        }
+
+        var (inVal, paddedW, paddedH) = OnnxTiler.PrepareInputTensor(
+            bytes,
+            tile,
+            tile,
+            128,
+            128,
+            typeof(Float16),
+            TestContext.Current.CancellationToken
+        );
+
+        // NamedOnnxValue is not disposable; the tensor it wraps is managed.
+        var tensor = inVal.AsTensor<Float16>();
+        Assert.Equal(128, paddedW);
+        Assert.Equal(128, paddedH);
+
+        // Past the tile (index 4), the old single reflection went 3,2,1,0 and then clamped at 0
+        // forever; the wave keeps moving, so neighbouring padded columns differ.
+        Assert.NotEqual(tensor[0, 0, 0, 8], tensor[0, 0, 0, 9]);
+        Assert.NotEqual(tensor[0, 0, 0, 10], tensor[0, 0, 0, 11]);
+    }
+
+    [Fact]
     public void UniformTileTensorShape_FollowsThePageNotTheBudget()
     {
         // A 1536 px tile bound on an 800 px wide, 5685 px tall page splits 1x4 into 800x1422 tiles.

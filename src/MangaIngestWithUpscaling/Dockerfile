@@ -1,3 +1,7 @@
+# Local/Compose image, built by docker-compose.yml (single-arch, no Production env, no healthcheck,
+# no bundled migrator). The release image published to GHCR is the separate root ./Dockerfile, which
+# is multi-arch and adds those. The two are intentionally not the same file.
+#
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)

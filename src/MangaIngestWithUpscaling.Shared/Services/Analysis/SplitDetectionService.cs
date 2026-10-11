@@ -220,6 +220,12 @@ public class SplitDetectionService(
         // decoding the page. Only a model-path failure can be a property of the detector and cached.
         bool reachedModel = false;
 
+        // Handed to Run so a timeout can actually abort the native call rather than only abandoning
+        // the await. Kept alive (not disposed) if the run is abandoned, because ORT is still reading
+        // it; it is then released by its finalizer once the native call returns.
+        var runOptions = new RunOptions();
+        bool disposeRunOptions = true;
+
         try
         {
             (int pageWidth, int pageHeight) = ReadImageSize(imagePath);
@@ -298,8 +304,15 @@ public class SplitDetectionService(
                     );
                     var inputs = new[] { NamedOnnxValue.CreateFromTensor("input", inputTensor) };
 
+                    // The two outputs are named explicitly rather than passing null for "all": with a
+                    // RunOptions the null-outputNames overload does not hand back every output, and
+                    // these are the only two this reads.
                     using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs =
-                        localSession.Run(inputs);
+                        localSession.Run(
+                            inputs,
+                            new[] { "peak_mask", "probabilities" },
+                            runOptions
+                        );
 
                     var peakMaskTensor = outputs.First(o => o.Name == "peak_mask").AsTensor<bool>();
                     var probsTensor =
@@ -357,11 +370,10 @@ public class SplitDetectionService(
                 cancellationToken
             );
 
-            // session.Run is a synchronous native call that cannot be cancelled, so the only bound
-            // available is on the await: WaitAsync abandons the task and returns to the caller, but
-            // it does NOT stop the provider's Run — that thread keeps running until the native call
-            // returns, and the process cannot reclaim it. It is still enough to stop a hung detection
-            // from parking the chapter forever, which is the failure this guards. The upscale path is
+            // Run is a synchronous native call with no cancellation token, so the bound is on the
+            // await, and the timeout handler below additionally asks ORT to stop through its RunOptions
+            // (see the catch). WaitAsync on its own would only abandon the task: the native call would
+            // keep running on its thread, and the process could not reclaim it. The upscale path is
             // bounded by the worker's inactivity watchdog; the detection path has none of its own.
             ObserveIfAbandoned(detection);
             return await detection.WaitAsync(
@@ -379,6 +391,24 @@ public class SplitDetectionService(
             // rebuilds the session and retries, matching how the worker treats a timed-out upscale
             // as recoverable. The abandoned Run may still hold the inference scope, so a retired
             // session is not disposed until that native call returns (see OnnxSessionFactory).
+            // The actual abort. RunOptions.Terminate makes ORT stop at the next operator boundary, so a
+            // run that is merely taking long is genuinely stopped rather than left running behind an
+            // abandoned await. It cannot unstick a driver wedged inside a kernel — nothing in the
+            // managed API can — but it is the strongest stop the API offers, and it is what makes this
+            // a real bound instead of only a caller-side one.
+            try
+            {
+                runOptions.Terminate = true;
+            }
+            catch (ObjectDisposedException)
+            {
+                // The run already finished and released the options; nothing left to stop.
+            }
+
+            // Owned by the still-running call now; freeing it here would pull the handle out from
+            // under ORT. It is left to the finalizer.
+            disposeRunOptions = false;
+
             logger.LogError(ex, "ONNX split detection timed out for {ImagePath}", imagePath);
             if (session is not null)
             {
@@ -431,6 +461,15 @@ public class SplitDetectionService(
             // at fault, so it must not be invalidated or marked unusable.
             logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
+        }
+        finally
+        {
+            // Freed only once the run has returned. On the timeout path the native call is still
+            // using it, so it is deliberately left to the finalizer instead (see the catch).
+            if (disposeRunOptions)
+            {
+                runOptions.Dispose();
+            }
         }
     }
 
