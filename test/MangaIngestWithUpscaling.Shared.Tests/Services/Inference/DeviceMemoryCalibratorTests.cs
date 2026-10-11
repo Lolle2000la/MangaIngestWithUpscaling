@@ -658,38 +658,52 @@ public class DeviceMemoryCalibratorTests
     {
         // Regression guard for the table in GetOutputLiveChannels: the values the device benchmark
         // and the estimator both use. Change the coefficients, change this test knowingly.
+        // Both columns are pinned: a single fp16-fitted value under-estimated every transformer
+        // export that actually runs on WebGPU (the fp16 ones need bf16) by up to 34%.
+        Assert.Equal((315.0, 158.0), OnnxTiler.GetOutputLiveChannels(ModelArchitecture.Span));
+        Assert.Equal((598.0, 463.0), OnnxTiler.GetOutputLiveChannels(ModelArchitecture.Esrgan));
+        Assert.Equal((462.0, 590.0), OnnxTiler.GetOutputLiveChannels(ModelArchitecture.FdatM));
+        Assert.Equal((660.0, 882.0), OnnxTiler.GetOutputLiveChannels(ModelArchitecture.FdatXl));
+        Assert.Equal((1060.0, 1167.0), OnnxTiler.GetOutputLiveChannels(ModelArchitecture.Dat2));
+        Assert.Equal((1900.0, 2055.0), OnnxTiler.GetOutputLiveChannels(ModelArchitecture.HatL));
+
+        // The name-based lookup has to reach the same table.
         Assert.Equal(
-            310.0,
-            OnnxTiler.ActivationCoefficients.For("2x_SPAN_S_model.onnx").OutputLiveChannels
+            598.0,
+            OnnxTiler.ActivationCoefficients.For("2x_MangaJaNai_ESRGAN.onnx").Fp16Channels
         );
         Assert.Equal(
-            660.0,
-            OnnxTiler.ActivationCoefficients.For("2x_MangaJaNai_ESRGAN.onnx").OutputLiveChannels
-        );
-        Assert.Equal(
-            460.0,
-            OnnxTiler.ActivationCoefficients.For("4x_FDAT_M_model.onnx").OutputLiveChannels
-        );
-        Assert.Equal(
-            660.0,
-            OnnxTiler.ActivationCoefficients.For("4x_FDAT_XL_model.onnx").OutputLiveChannels
-        );
-        Assert.Equal(
-            1060.0,
-            OnnxTiler.ActivationCoefficients.For("4x_DAT2_model.onnx").OutputLiveChannels
-        );
-        Assert.Equal(
-            1900.0,
-            OnnxTiler.ActivationCoefficients.For("4x_HAT_L_model.onnx").OutputLiveChannels
+            590.0,
+            OnnxTiler.ActivationCoefficients.For("4x_FDAT_M_model.onnx").Fp32Channels
         );
 
-        // Bytes per pixel: ESRGAN 4x fp16 measured 660 * 16 * 2 = 21120 B/px
+        // Bytes per pixel follows the precision: the fp16 ESRGAN was measured at 19140 B/px and the
+        // fp32 at 29600, not at the 21120/42240 an element-size scaling would give.
         OnnxTiler.ActivationCoefficients esrgan = OnnxTiler.ActivationCoefficients.For(
             "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"
         );
-        Assert.Equal(21120.0, esrgan.BytesPerPixel(4, isFp16: true));
-        Assert.Equal(42240.0, esrgan.BytesPerPixel(4, isFp16: false));
-        Assert.Equal(5280.0, esrgan.BytesPerPixel(2, isFp16: true));
+        Assert.Equal(598.0 * 16 * 2, esrgan.BytesPerPixel(4, isFp16: true));
+        Assert.Equal(463.0 * 16 * 4, esrgan.BytesPerPixel(4, isFp16: false));
+        Assert.Equal(598.0 * 4 * 2, esrgan.BytesPerPixel(2, isFp16: true));
+
+        // The fp32 transformer is the case that spilled: its coefficient must be the measured one,
+        // not the fp16 value applied to a 4-byte element.
+        OnnxTiler.ActivationCoefficients fdat = OnnxTiler.ActivationCoefficients.For(
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx"
+        );
+        Assert.Equal(590.0 * 16 * 4, fdat.BytesPerPixel(4, isFp16: false));
+    }
+
+    [Fact]
+    public void UnknownArchitecture_FallsBackToTheParameterCountForBothPrecisions()
+    {
+        // An unrecognised model is never under-estimated, and the fp32 arm is not smaller than the
+        // fp16 one just because the same formula is used: the fp32 export is about twice the size.
+        var small = OnnxTiler.GetOutputLiveChannels(ModelArchitecture.Unknown, 4L * 1024 * 1024);
+        var large = OnnxTiler.GetOutputLiveChannels(ModelArchitecture.Unknown, 64L * 1024 * 1024);
+
+        Assert.Equal(small.Fp16, small.Fp32);
+        Assert.True(large.Fp16 > small.Fp16);
     }
 
     /// <summary>

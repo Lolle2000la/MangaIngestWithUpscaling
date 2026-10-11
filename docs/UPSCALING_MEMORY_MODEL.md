@@ -73,17 +73,18 @@ a pure dataflow sweep does not model:
 
 Measured against the analytic sweep, the observed footprint is a stable multiple:
 
-| architecture | analytic `C_arch` (live ch) | measured `C_arch` | ratio |
+| architecture | analytic `C_arch` (live ch) | measured fp16 | measured fp32 |
 |---|---|---|---|
-| SPAN | 96 | 310 | 3.2× |
-| ESRGAN | 128 | 660 | 5.2× |
-| FDAT_M | 90 | 460 | 5.1× |
-| DAT2 | 203 | 1060 | 5.2× |
-| FDAT_XL | 135 | 660 | 4.9× |
+| SPAN | 96 | 315 | 158 |
+| ESRGAN | 128 | 598 | 463 |
+| FDAT_M | 90 | 462 | 590 |
+| DAT2 | 203 | 1060 | 1167 |
+| FDAT_XL | 135 | 660 | 882 |
 
 The ratio is constant over three orders of magnitude of tile size, so instead of modelling each
 source separately the code stores the **measured** `C_arch` (§3) and documents the analytic
-sweep as the derivation behind it.
+sweep as the derivation behind it. There are two columns because the fp16 and fp32 exports of one
+architecture are not related by the element size alone (see §3).
 
 ### 1.3 Session reservation `C`
 
@@ -186,28 +187,50 @@ are not the common case.
 
 ## 3. Coefficients (`OnnxTiler.GetOutputLiveChannels`)
 
-| `ModelArchitecture` | `C_arch` | representative models measured |
+Two coefficients per architecture, because the fp16 and fp32 exports of one architecture are not
+related by the element size alone: the fp16 graphs cast to fp32 around the upsampler, so their peak
+is already partly fp32-sized, while an fp32 graph keeps fp32 tensors throughout.
+
+| `ModelArchitecture` | `C_arch` fp16 | `C_arch` fp32 | representative models measured |
+|---|---|---|---|
+| `Span` | **315** | **158** | `2x_IllustrationJaNai_V3{detail,denoise}_SPAN_S_*` |
+| `Esrgan` | **598** | **463** | `2x/4x_MangaJaNai_*_V1_ESRGAN_*`, `*_IllustrationJaNai_V1_ESRGAN_*` |
+| `FdatM` | **462** | **590** | `*_V2standard_FDAT_M_*`, `*_V3{detail,denoise}_FDAT_M_*` |
+| `FdatXl` | **660** | **882** | `*_FDAT_XL_*` |
+| `Dat2` | **1060** | **1167** | `*_DAT2_*` |
+| `HatL` | **1900** | **2055** | `4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16` / `_fp32` |
+| unknown | `310 + 620·sqrt(MB/100)` | same | fallback: parameter-count scaling |
+
+Each is the value at which the predicted footprint matches the measured VRAM peak of a real
+single-tile inference, fitted through the origin over 3-6 tile sizes per model.
+
+The **fp32 column is the one that runs on WebGPU**: the fp16/bf16 transformer exports need bf16 and
+return NaN there, so the engine falls back to their fp32 export (candidate selection orders the fp32
+copy last and the per-tile NaN guard skips the fp16 one). The fp16 column for FDAT_XL, DAT2 and HAT_L
+is the original measurement — those exports cannot be re-measured on this EP, for the same reason
+they are skipped. (The fp16 FDAT_M only produces valid output up to 128 px, which is exactly why the
+device probe runs at 256 px.)
+
+A single fp16-fitted column — the previous table, 310/660/460/660/1060/1900 — under-estimated every
+transformer export that actually runs on WebGPU (FDAT_M by 28%, FDAT_XL by 34%) and over-estimated
+the fp16 conv nets. That is what let a 13.1 GB budget plan a page that reached 16.2 GB of VRAM.
+
+Measured bytes per input pixel, and the coefficient that follows from the fit:
+
+| model | measured B/px | `C_arch` from the fit |
 |---|---|---|
-| `Span` | **310** | `2x_IllustrationJaNai_V3{detail,denoise}_SPAN_S_*` |
-| `Esrgan` | **660** | `2x/4x_MangaJaNai_*_V1_ESRGAN_*`, `*_IllustrationJaNai_V1_ESRGAN_*` |
-| `FdatM` | **460** | `*_V2standard_FDAT_M_*`, `*_V3{detail,denoise}_FDAT_M_*` |
-| `FdatXl` | **660** | `*_FDAT_XL_*` |
-| `Dat2` | **1060** | `*_DAT2_*` |
-| `HatL` | **1900** | `4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16` |
-| unknown | `310 + 620·sqrt(MB/100)` | fallback: parameter-count scaling |
+| `2x_..._SPAN_S_40k_fp16` | 2 524 | 315 |
+| `2x_..._SPAN_S_40k_fp32` | 2 536 | 158 |
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k` (fp16) | 19 140 | 598 |
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k_fp32` | 29 604 | 463 |
+| `4x_..._FDAT_M_40k_fp16` (64 and 128 px only) | 14 788 | 462 |
+| `4x_..._FDAT_M_40k_fp32` | 37 751 | 590 |
+| `4x_..._FDAT_XL_27k_fp32` | 56 452 | 882 |
+| `4x_..._DAT2_28k_fp32` | 74 709 | 1 167 |
+| `4x_..._HAT_L_28k_fp32` | 131 524 | 2 055 |
 
-Every `C_arch` is the value at which the predicted footprint matches the measured VRAM peak of a
-real single-tile inference. Verification for `4x_...HAT_L_28k_bf16` (the heaviest model),
-`isFp16: true`:
-
-| tile | predicted `A(n)` | measured Δ VRAM |
-|---|---|---|
-| 128 px | 0.95 GB | 0.95 GB |
-| 256 px | 3.80 GB | 3.80 GB |
-| 384 px | 8.55 GB | 8.53 GB |
-
-Predictions sit within a few percent of measurement at every size, for every architecture. The
-end-to-end table in §4.1 is the stronger check: those runs use the derived tile sizes.
+Predictions sit within a few percent of measurement at every size. The end-to-end table in §4.1 is
+the stronger check for the fp16 conv nets; the fp32 transformers are checked in §6.2.
 
 The unknown-architecture fallback is deliberately elastic: it scales with `sqrt(modelSize)` so a
 model nobody has classified still lands in the right ballpark, and the engine halves the tile on

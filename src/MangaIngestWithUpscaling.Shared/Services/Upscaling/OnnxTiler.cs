@@ -457,7 +457,8 @@ public static class OnnxTiler
     }
 
     /// <summary>
-    /// Live activation channels at a model's output resolution, per architecture.
+    /// Live activation channels at a model's output resolution, for the fp16 and fp32 export of the
+    /// architecture.
     /// <para>
     /// These numbers come from a graph-level working-set analysis of every model shipped in
     /// <see cref="MangaJaNaiUpscaler"/> (see <c>docs/UPSCALING_MEMORY_MODEL.md</c>): a sequential
@@ -469,43 +470,76 @@ public static class OnnxTiler
     /// (fp32 casts, NCHWc re-packing and a non-shrinking arena keep ~5x that set resident), so
     /// <see cref="EstimateActivationBytes"/> matches observed VRAM footprints within a few percent.
     /// </para>
+    /// <para>
+    /// The two precisions are stored rather than derived from the element size, because the fp16 and
+    /// fp32 exports of one architecture are not related by it: the fp16 graphs cast to fp32 around the
+    /// upsampler, so their peak is already partly fp32-sized, while an fp32 graph keeps fp32 tensors
+    /// throughout. Measured bytes per input pixel on an RX 9070 XT / WebGPU EP, the fp32/fp16 ratio of
+    /// this coefficient is 0.50 (SPAN), 0.77 (ESRGAN), 1.28 (FDAT_M), 1.34 (FDAT_XL), 1.10 (DAT2) and
+    /// 1.08 (HAT_L). A single fp16-fitted column therefore under-estimated every transformer export
+    /// that actually runs on WebGPU — the fp16 ones need bf16 and are skipped — by up to 34%, which is
+    /// what let the fp32 FDAT_M fill a 16 GB card.
+    /// </para>
+    /// <para>
+    /// The fp16 column for FDAT_XL, DAT2 and HAT_L is the original measurement: those exports cannot be
+    /// re-measured on WebGPU because they need bf16 and return NaN there, the same reason the engine
+    /// falls back to their fp32 export.
+    /// </para>
     /// </summary>
-    public static double GetOutputLiveChannels(
+    public static (double Fp16, double Fp32) GetOutputLiveChannels(
         ModelArchitecture architecture,
         long modelSizeBytes = 0
-    )
-    {
-        double channels = architecture switch
+    ) =>
+        architecture switch
         {
-            ModelArchitecture.Span => 310.0,
-            ModelArchitecture.Esrgan => 660.0,
-            ModelArchitecture.FdatM => 460.0,
-            ModelArchitecture.FdatXl => 660.0,
-            ModelArchitecture.Dat2 => 1060.0,
-            ModelArchitecture.HatL => 1900.0,
-            // Unknown models: scale from the parameter count. The exponent sits between the pure
-            // conv nets (sqrt(params) ~ footprint) and the attention models (attention maps add a
-            // fixed multiple), so an unrecognised model is never under-estimated.
-            _ => 310.0 + 620.0 * Math.Sqrt(Math.Max(modelSizeBytes, 0L) / 1048576.0 / 100.0),
+            ModelArchitecture.Span => (315.0, 158.0),
+            ModelArchitecture.Esrgan => (598.0, 463.0),
+            ModelArchitecture.FdatM => (462.0, 590.0),
+            ModelArchitecture.FdatXl => (660.0, 882.0),
+            ModelArchitecture.Dat2 => (1060.0, 1167.0),
+            ModelArchitecture.HatL => (1900.0, 2055.0),
+            _ => UnknownChannels(modelSizeBytes),
         };
-        return channels;
+
+    /// <summary>
+    /// Fallback coefficient for a model whose architecture is not recognised: scale from the parameter
+    /// count. The exponent sits between the pure conv nets (sqrt(params) ~ footprint) and the
+    /// attention models (attention maps add a fixed multiple), so an unrecognised model is never
+    /// under-estimated. The same value is used for both precisions, which over-estimates an fp32 model
+    /// — conservative — and an fp32 export is also about twice the file size, which the sqrt reflects.
+    /// </summary>
+    private static (double Fp16, double Fp32) UnknownChannels(long modelSizeBytes)
+    {
+        double channels =
+            310.0 + 620.0 * Math.Sqrt(Math.Max(modelSizeBytes, 0L) / 1048576.0 / 100.0);
+        return (channels, channels);
     }
 
     /// <summary>
     /// Activation footprint of a model as a coefficient set, so the same numbers can be used for
     /// estimation, for the device benchmark, and for diagnostics.
     /// </summary>
-    public readonly record struct ActivationCoefficients(double OutputLiveChannels)
+    public readonly record struct ActivationCoefficients(double Fp16Channels, double Fp32Channels)
     {
+        /// <summary>
+        /// The fp16 coefficient, the single value the tables and diagnostics quote. Planning goes
+        /// through <see cref="BytesPerPixel"/>, which selects by precision.
+        /// </summary>
+        public double OutputLiveChannels => Fp16Channels;
+
         public static ActivationCoefficients For(string modelNameOrPath, long modelSizeBytes = 0)
         {
             var arch = DetectArchitecture(modelNameOrPath);
-            return new ActivationCoefficients(GetOutputLiveChannels(arch, modelSizeBytes));
+            (double fp16, double fp32) = GetOutputLiveChannels(arch, modelSizeBytes);
+            return new ActivationCoefficients(fp16, fp32);
         }
 
         /// <summary>Activation bytes per input pixel for a given scale and precision.</summary>
         public double BytesPerPixel(int scale, bool isFp16) =>
-            OutputLiveChannels * Math.Max(1, scale) * Math.Max(1, scale) * (isFp16 ? 2 : 4);
+            (isFp16 ? Fp16Channels : Fp32Channels)
+            * Math.Max(1, scale)
+            * Math.Max(1, scale)
+            * (isFp16 ? 2 : 4);
     }
 
     /// <summary>

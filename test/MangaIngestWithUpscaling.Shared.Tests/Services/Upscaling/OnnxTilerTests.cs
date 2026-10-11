@@ -415,7 +415,8 @@ public class OnnxTilerTests : IDisposable
     [Fact]
     public void EstimatePeakMemoryBytes_CalculatesRealisticRequirements()
     {
-        // 1600x2400 on 4x ESRGAN (FP32): the whole page at once is genuinely enormous
+        // 1600x2400 on 4x ESRGAN (FP32): the whole page at once is genuinely enormous — ~111 GiB at
+        // the measured fp32 coefficient (463 live channels at output resolution)
         long esrgan4xPeak = OnnxTiler.EstimatePeakMemoryBytes(
             1600,
             2400,
@@ -423,9 +424,9 @@ public class OnnxTilerTests : IDisposable
             "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
             isFp16: false
         );
-        Assert.InRange(esrgan4xPeak, 140L * 1024 * 1024 * 1024, 200L * 1024 * 1024 * 1024);
+        Assert.InRange(esrgan4xPeak, 100L * 1024 * 1024 * 1024, 130L * 1024 * 1024 * 1024);
 
-        // 1600x2400 on 2x SPAN (FP16): 8 MB of activations at 310 live channels, not gigabytes
+        // 1600x2400 on 2x SPAN (FP16): ~10 GiB of activations at 315 live channels
         long span2xPeak = OnnxTiler.EstimatePeakMemoryBytes(
             1600,
             2400,
@@ -493,9 +494,9 @@ public class OnnxTilerTests : IDisposable
     [Fact]
     public void PlanTileSplit_Esrgan4x_DerivesGridFromBudget()
     {
-        // 5 GiB budget on a 1600x2400 4x ESRGAN page in FP32: 267x267 tiles in a 6x9 grid. The
-        // smaller side is 267 px, the largest any grid can give at this budget once the session
-        // reservation comes off it, and 6x9 is the cheapest of the grids that tie there.
+        // 5 GiB budget on a 1600x2400 4x ESRGAN page in FP32: 320x343 tiles in a 5x7 grid. The
+        // smaller side is 320 px, the largest any grid can give at this budget once the session
+        // reservation comes off it, and 5x7 is the cheapest of the grids that tie there.
         OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             1600,
             2400,
@@ -505,9 +506,9 @@ public class OnnxTilerTests : IDisposable
             isFp16: false
         );
 
-        Assert.Equal(6, split.Columns);
-        Assert.Equal(9, split.Rows);
-        Assert.Equal(320, OnnxTiler.UniformTileTensorShape(split).Width);
+        Assert.Equal(5, split.Columns);
+        Assert.Equal(7, split.Rows);
+        Assert.Equal(384, OnnxTiler.UniformTileTensorShape(split).Width);
     }
 
     [Fact]
@@ -574,7 +575,7 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
-    public void PlanTileSplit_MangaJaNai_FP16_HalvesPeakMemoryAndExpandsGrid()
+    public void PlanTileSplit_MangaJaNai_FP16_UsesLessPeakMemoryAndExpandsGrid()
     {
         long actFp32 = OnnxTiler.EstimateActivationBytes(
             1125 * 1600,
@@ -588,8 +589,15 @@ public class OnnxTilerTests : IDisposable
             "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
             isFp16: true
         );
-        // The activation working set halves exactly; the weight term is precision-independent
-        Assert.Equal(actFp32 / 2, actFp16);
+        // The fp16 working set is smaller, but by *less* than the element-size ratio: the fp16
+        // export casts to fp32 around the upsampler, so its peak is already partly fp32-sized
+        // (measured 0.65x the fp32 footprint here, where halving would be 0.50x). The old table
+        // assumed an exact halving and therefore under-estimated the fp32 transformer exports.
+        Assert.True(actFp16 < actFp32, $"fp16 should cost less: {actFp16} vs {actFp32}");
+        Assert.True(
+            actFp16 > actFp32 / 2,
+            $"fp16 should cost more than half the fp32 set: {actFp16} vs {actFp32 / 2}"
+        );
 
         // Under a constrained 3 GiB budget, FP16 yields strictly larger tiles than FP32
         OnnxTiler.TileSplit splitFp32 = OnnxTiler.PlanTileSplit(
@@ -795,8 +803,8 @@ public class OnnxTilerTests : IDisposable
     [Fact]
     public void PlanTileSplit_ElongatedImage_DoesNotOomOrAssumeZeroWhenPaddingIsSignificant()
     {
-        // 8000x200 has 1.6 MP raw, but 4x ESRGAN needs ~34 GB of activations for it, so it must
-        // tile instead of running it in one pass.
+        // 8000x200 has 1.6 MP raw, but 4x ESRGAN needs ~100 GB of activations for it in one pass, so
+        // it must tile instead of running it whole.
         long budget = 2L * 1024 * 1024 * 1024; // 2 GB budget
         OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             8000,
@@ -812,16 +820,24 @@ public class OnnxTilerTests : IDisposable
             "a 1.6 MP 4x ESRGAN page cannot be one pass"
         );
 
+        // The strip is followed along its long axis: one row, many columns.
         Assert.Equal(1, split.Rows);
+        Assert.True(split.Columns > 1, "the long axis has to be split");
 
-        // With the session reservation off the 2 GB budget, not even a 256 px floor tile fits this
-        // page — that is the point of subtracting it: the budget genuinely does not hold the tile
-        // plus the session's arenas. So the planner falls back to the floor grid rather than to a
-        // grid it cannot honour, and the engine halves the tiles again when the driver refuses the
-        // allocation. What must hold either way is that it tiles and follows the long axis.
-        Assert.Equal(
-            OnnxTiler.TileSplit.For(8000, 200, OnnxTiler.MinimumTileSize).Columns,
-            split.Columns
+        // 28 columns is the cheapest grid whose padded tile still fits the budget. The padding is
+        // what decides it: 28 columns give a 286 px tile whose padded width is 320, while 27 give a
+        // 297 px tile that rounds up to 384 and costs more. A planner that ignored the overlap would
+        // pick a grid it cannot honour on a strip this thin.
+        Assert.Equal(28, split.Columns);
+        Assert.True(
+            OnnxTiler.PredictTilePeakBytes(
+                split,
+                4,
+                "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+                0,
+                isFp16: true
+            ) <= budget,
+            "the planned grid must fit the budget, padding included"
         );
     }
 
@@ -1192,11 +1208,13 @@ public class OnnxTilerTests : IDisposable
     [Theory]
     // A budget that can afford a side at or past the quality target must not settle for less. The
     // fp32 transformer model is the case this came from: it used to plan 282x800 tiles — the smaller
-    // side was 282, well under the target — while 563x534 was affordable all along.
-    [InlineData(13429, 534)]
+    // side was 282, well under the target — while a 563-wide grid was affordable all along. (The
+    // smaller side is 400 rather than 512 here because the fp32 coefficient is now the measured 590,
+    // not the fp16 460 that under-estimated this export.)
+    [InlineData(13429, 400)]
     // Below the target the smaller side is whatever the budget allows, and it must be the largest
     // available rather than the one that minimises work.
-    [InlineData(7111, 375)]
+    [InlineData(7111, 320)]
     public void PlanTileSplit_ReachesForTheQualityTargetBeforeSpendingOnSize(
         int budgetMb,
         int expectedSmallerSide
