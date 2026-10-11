@@ -88,7 +88,7 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         Assert.Equal(3, factory.InferenceScopeCalls);
     }
 
-    private static string CreateTestJpeg(int width, int height)
+    private string CreateTestJpeg(int width, int height)
     {
         byte[] rgb = new byte[width * height * 3];
         for (int y = 0; y < height; y++)
@@ -103,7 +103,9 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         }
 
         using var image = Image.NewFromMemory(rgb, width, height, 3, Enums.BandFormat.Uchar);
-        string path = Path.Combine(Path.GetTempPath(), $"engine_retry_{Guid.NewGuid():N}.jpg");
+        // Written under the test's own temp directory, which Dispose deletes, rather than the system
+        // temp root: a run used to leave this JPEG behind in Path.GetTempPath() every time.
+        string path = Path.Combine(_tempDir, $"engine_retry_{Guid.NewGuid():N}.jpg");
         image.WriteToFile(path, new VOption());
         return path;
     }

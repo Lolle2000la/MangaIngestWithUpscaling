@@ -116,6 +116,84 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WhenDetectorOutputIsNonFinite_ReportsAnErrorInsteadOfZeroSplits()
+    {
+        // A mis-executing execution provider returns NaN instead of failing, and every comparison
+        // against NaN is false — so without the guard the mask is all-false and the page is reported
+        // as a SUCCESSFUL detection with zero splits. That is the silent miss this pins, and the
+        // session that produced the NaN has to be dropped just like any other inference failure.
+        string modelsDir = Path.Combine(_root, "nonfinite_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx",
+            nonFiniteProbabilities: true
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        // A black page makes the row mean 0, so the injected division is 0/0 — a NaN in
+        // probabilities with an all-false peak_mask, exactly the silent-zero-split shape.
+        List<SplitDetectionResult> results = await service.DetectSplitsAsync(
+            WriteDecodableImage("nonfinite.png", fill: 0),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        SplitDetectionResult result = Assert.Single(results);
+        Assert.NotNull(result.Error);
+        Assert.Empty(result.Splits);
+        factory.Received(1).InvalidateSession(modelPath);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WhenImageDecodeFails_DoesNotInvalidateTheSession()
+    {
+        // A corrupt page fails during decode, before the service ever asks the factory for a
+        // session. Invalidating there would drop a perfectly healthy model and force a rebuild for
+        // every remaining page of the chapter, so the invalidation is gated on the failure actually
+        // coming out of the session.
+        string modelsDir = Path.Combine(_root, "decode_models");
+        Directory.CreateDirectory(modelsDir);
+        TinyOnnxModel.WritePeakMaskDetector(modelsDir, fileName: "page_break_detector.onnx");
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        string corrupt = Path.Combine(_root, "corrupt.png");
+        await File.WriteAllTextAsync(
+            corrupt,
+            "this is not an image",
+            TestContext.Current.CancellationToken
+        );
+
+        List<SplitDetectionResult> results = await service.DetectSplitsAsync(
+            corrupt,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        SplitDetectionResult result = Assert.Single(results);
+        Assert.NotNull(result.Error);
+        factory.DidNotReceive().InvalidateSession(Arg.Any<string>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task DetectSplitsAsync_WhenFileDoesNotExist_ThrowsFileNotFoundException()
     {
         var factory = Substitute.For<IOnnxSessionFactory>();
@@ -170,14 +248,15 @@ public class SplitDetectionServiceTests : IDisposable
     /// factory, so a test that needs the operation to get past the pre-flight checks has to hand it
     /// a real image, not a few arbitrary bytes.
     /// </summary>
-    private string WriteDecodableImage(string fileName)
+    private string WriteDecodableImage(string fileName, byte fill = 128)
     {
         // 768 wide so the detector's fixed-width resize is a no-op, and short so the packed tensor
-        // stays small. The content is irrelevant: none of these tests reach the model output.
+        // stays small. The content is irrelevant except where a test makes it matter through the
+        // model: a black page drives the row mean to 0, which is how the non-finite test reaches 0/0.
         const int width = 768;
         const int height = 4;
         var pixels = new byte[width * height * 3];
-        Array.Fill(pixels, (byte)128);
+        Array.Fill(pixels, fill);
 
         string path = Path.Combine(_root, fileName);
         using var image = Image.NewFromMemory(pixels, width, height, 3, Enums.BandFormat.Uchar);

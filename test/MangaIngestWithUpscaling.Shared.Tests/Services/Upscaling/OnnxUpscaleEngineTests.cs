@@ -592,6 +592,121 @@ public class OnnxUpscaleEngineTests : IDisposable
         Assert.Equal((32 * scale, 40 * scale), ReadEntrySize(page));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task UpscaleCbzAsync_ArchiveOfOnlyUnsafeEntries_ProducesAnEmptyArchive()
+    {
+        // An entry name that could escape the archive must never reach the output. With no safe page
+        // there is nothing to upscale, so this exercises the guard without needing a model.
+        string input = CreateImageCbz(_tempDir, "unsafe-only.cbz", ("../evil.png", 8, 8));
+        string output = Path.Combine(_tempDir, "unsafe-only-out.cbz");
+
+        var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+        var config = Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir });
+        var engine = new OnnxUpscaleEngine(
+            sessionFactory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        await engine.UpscaleCbzAsync(
+            input,
+            output,
+            scale: 2,
+            CompressionFormat.Webp,
+            quality: 80,
+            progress: null,
+            CancellationToken.None
+        );
+
+        Assert.True(File.Exists(output));
+        using ZipArchive archive = ZipFile.OpenRead(output);
+        Assert.Empty(archive.Entries);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleCbzAsync_DropsEntriesThatCouldEscapeTheArchive()
+    {
+        // "../evil.*" and an absolute path would be preserved verbatim by
+        // Path.ChangeExtension/CreateEntry, and a reader extracting the result could be made to write
+        // outside its target. Only the safe page and the safe non-image entry may survive.
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string input = CreateImageCbz(
+            _tempDir,
+            "unsafe.cbz",
+            ("../evil.png", 20, 30),
+            ("/absolute.png", 20, 30),
+            ("ok/001.png", 20, 30)
+        );
+        using (ZipArchive update = ZipFile.Open(input, ZipArchiveMode.Update))
+        {
+            WriteTextEntry(update, "../evil.xml", "<evil/>");
+            WriteTextEntry(update, "ComicInfo.xml", "<ComicInfo/>");
+        }
+
+        string output = Path.Combine(_tempDir, "unsafe-out.cbz");
+        using OnnxSessionFactory sessionFactory = CreateCpuSessionFactory(_tempDir);
+        OnnxUpscaleEngine engine = CreateEngine(sessionFactory, _tempDir);
+        await engine.UpscaleCbzAsync(
+            input,
+            output,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            progress: null,
+            CancellationToken.None
+        );
+
+        using ZipArchive archive = ZipFile.OpenRead(output);
+        List<string> names = archive.Entries.Select(e => e.FullName).ToList();
+        Assert.Equal(2, names.Count);
+        Assert.Contains("ok/001.webp", names);
+        Assert.Contains("ComicInfo.xml", names);
+        Assert.DoesNotContain(names, n => n.Contains("..", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, n => Path.IsPathRooted(n));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleCbzAsync_PreservesAPageNameWithAWindowsIllegalCharacter()
+    {
+        // The source image is extracted to a temp file named by its page index, not by the entry
+        // name, so a name Windows cannot create ("a:b.jpg") neither fails on Windows nor changes the
+        // output name (which the archive can hold on any OS).
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string input = CreateImageCbz(_tempDir, "colon.cbz", ("a:b.png", 20, 30));
+        string output = Path.Combine(_tempDir, "colon-out.cbz");
+
+        using OnnxSessionFactory sessionFactory = CreateCpuSessionFactory(_tempDir);
+        OnnxUpscaleEngine engine = CreateEngine(sessionFactory, _tempDir);
+        await engine.UpscaleCbzAsync(
+            input,
+            output,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            progress: null,
+            CancellationToken.None
+        );
+
+        using ZipArchive archive = ZipFile.OpenRead(output);
+        ZipArchiveEntry page = Assert.Single(archive.Entries, e => e.Name.Length > 0);
+        Assert.Equal("a:b.webp", page.FullName);
+        Assert.Equal((20 * scale, 30 * scale), ReadEntrySize(page));
+    }
+
+    private static void WriteTextEntry(ZipArchive archive, string name, string content)
+    {
+        ZipArchiveEntry entry = archive.CreateEntry(name);
+        using Stream stream = entry.Open();
+        using var writer = new StreamWriter(stream);
+        writer.Write(content);
+    }
+
     /// <summary>
     /// Builds a CPU engine against a real <see cref="OnnxSessionFactory"/> so the whole path —
     /// decode, probe, inference, encode — runs, as it does in production.

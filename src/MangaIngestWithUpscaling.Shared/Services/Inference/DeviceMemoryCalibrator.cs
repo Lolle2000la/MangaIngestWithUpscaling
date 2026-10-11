@@ -249,18 +249,26 @@ public sealed class DeviceMemoryCalibrator(
             sessionFactory.InvalidateSession(modelPath);
 
             long baseline = DeviceMemorySampler.Read(deviceId);
-            var session = sessionFactory.GetOrCreateSession(modelPath);
+
+            // The scope is taken before the fetch so a concurrent eviction cannot free the session
+            // between the lookup and the measurement — the read scope keeps the session alive for the
+            // whole benchmark. It is released explicitly before the finally below, because that
+            // invalidates the session and its drain takes the write lock this thread would otherwise
+            // still be holding.
+            IDisposable scope = sessionFactory.EnterInferenceScope();
+            InferenceSession session;
+            try
+            {
+                session = sessionFactory.GetOrCreateSession(modelPath);
+            }
+            catch
+            {
+                scope.Dispose();
+                throw;
+            }
 
             try
             {
-                // The session has to survive the whole measurement: a concurrent upscale can evict
-                // it at capacity or invalidate it on its own failure, and disposing it while Run is
-                // executing would make the benchmark read device memory for a session that no longer
-                // runs. This using declaration sits inside the try so the read lock is released
-                // before the finally invalidates the session below — InvalidateSession takes the
-                // write lock this thread would otherwise still be holding.
-                using var scope = sessionFactory.EnterInferenceScope();
-
                 bool isFp16 =
                     session.InputMetadata.TryGetValue("input", out var meta)
                     && meta.ElementType == typeof(Float16);
@@ -338,6 +346,7 @@ public sealed class DeviceMemoryCalibrator(
             }
             finally
             {
+                scope.Dispose();
                 sessionFactory.InvalidateSession(modelPath);
             }
         }

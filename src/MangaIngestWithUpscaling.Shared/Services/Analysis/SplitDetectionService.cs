@@ -105,6 +105,11 @@ public class SplitDetectionService(
 
         logger.LogInformation("Running in-process ONNX split detection on {ImagePath}", imagePath);
 
+        // Only a failure that came out of the session itself should drop the cached session. The
+        // image is decoded before any session is requested, so whether this was ever assigned is
+        // what separates an inference failure from a decode failure of an unrelated, healthy model.
+        InferenceSession? session = null;
+
         try
         {
             return await Task.Run(
@@ -163,9 +168,17 @@ public class SplitDetectionService(
                     // The session is fetched before the scope is entered, so a concurrent
                     // invalidation/eviction in that narrow window could still dispose it. The scope
                     // does enclose the Run below, which is the part that must not run on a session
-                    // another thread is disposing.
-                    InferenceSession session = onnxSessionFactory.GetOrCreateSession(modelPath);
+                    // another thread is disposing. The local is non-null for the compiler and for
+                    // the Run; the captured field is what the catch reads to decide whether the
+                    // failure came out of the session.
+                    // The scope is taken before the fetch: an eviction on another thread otherwise
+                    // finds no reader yet and can dispose the session between the lookup and the Run.
                     using var inferenceScope = onnxSessionFactory.EnterInferenceScope();
+
+                    InferenceSession localSession = onnxSessionFactory.GetOrCreateSession(
+                        modelPath
+                    );
+                    session = localSession;
 
                     var inputTensor = new DenseTensor<float>(
                         tensorData,
@@ -174,12 +187,26 @@ public class SplitDetectionService(
                     var inputs = new[] { NamedOnnxValue.CreateFromTensor("input", inputTensor) };
 
                     using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs =
-                        session.Run(inputs);
+                        localSession.Run(inputs);
 
                     var peakMaskTensor = outputs.First(o => o.Name == "peak_mask").AsTensor<bool>();
-                    var probsTensor = outputs
-                        .First(o => o.Name == "probabilities")
-                        .AsTensor<float>();
+                    var probsTensor =
+                        (DenseTensor<float>)
+                            outputs.First(o => o.Name == "probabilities").AsTensor<float>();
+
+                    // A mis-executing execution provider can return an all-NaN output instead of
+                    // failing (the same failure class OnnxTiler rejects for the upscaler). Every
+                    // comparison against NaN is false, so without this the mask is all-false and the
+                    // page is reported as a successful detection with zero splits — a silent miss.
+                    if (OnnxTiler.ContainsNonFinite(probsTensor.Buffer.Span))
+                    {
+                        throw new NonFiniteModelOutputException();
+                    }
+
+                    // Both outputs must be one score per resized row. A longer output would be
+                    // silently truncated by the loop below and a shorter one read past its end, so
+                    // an unexpected geometry is rejected rather than quietly mis-detected.
+                    EnsureDetectorOutputGeometry(peakMaskTensor, probsTensor, actualHeight);
 
                     const int edgeMargin = 100;
                     bool applyEdgeMargin = edgeMargin > 0 && actualHeight > edgeMargin * 2;
@@ -228,10 +255,45 @@ public class SplitDetectionService(
 
             // Only one session is cached at a time (OnnxSessionFactory.MaxCachedSessions), so a
             // session that keeps failing would be reused, and fail again, for every remaining page
-            // of the chapter. Drop it so the next page rebuilds a fresh one.
-            onnxSessionFactory.InvalidateSession(modelPath);
+            // of the chapter. Drop it so the next page rebuilds a fresh one. A decode-time failure
+            // never fetched a session, so it must leave a healthy cached one in place.
+            if (session is not null)
+            {
+                onnxSessionFactory.InvalidateSession(modelPath);
+            }
 
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
         }
+    }
+
+    /// <summary>
+    /// Rejects a detector output whose geometry is not "one score per resized row" in both the
+    /// <c>peak_mask</c> and <c>probabilities</c> outputs, so the row loop cannot silently truncate a
+    /// longer output or read past a shorter one.
+    /// </summary>
+    private static void EnsureDetectorOutputGeometry(
+        Tensor<bool> peakMaskTensor,
+        Tensor<float> probsTensor,
+        int expectedRows
+    )
+    {
+        if (
+            peakMaskTensor.Dimensions.Length == 2
+            && probsTensor.Dimensions.Length == 2
+            && peakMaskTensor.Dimensions[0] == 1
+            && probsTensor.Dimensions[0] == 1
+            && peakMaskTensor.Dimensions[1] == expectedRows
+            && probsTensor.Dimensions[1] == expectedRows
+        )
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"The detector returned an unexpected output shape: peak_mask is "
+                + $"[{string.Join(", ", peakMaskTensor.Dimensions.ToArray())}] and probabilities is "
+                + $"[{string.Join(", ", probsTensor.Dimensions.ToArray())}], but one row per row of "
+                + $"the {expectedRows}-row resized page was expected."
+        );
     }
 }

@@ -98,8 +98,7 @@ public sealed class PageStreamClient(
 
         try
         {
-            // Source-generated context: the RemoteWorker is AOT-published, so reflection-based
-            // deserialization is not available.
+            // Deserialize through the source-generated context rather than reflection-based metadata.
             return JsonSerializer.Deserialize(
                     manifest.PreprocessingJson,
                     WorkerJsonContext.Default.ImagePreprocessingOptions
@@ -287,12 +286,15 @@ public sealed class PageStreamClient(
                 }
                 else
                 {
-                    // Match the whole-CBZ path, which copies a page the engine could not decode (or
-                    // upscale) through unchanged rather than failing the chapter: upload the fetched
-                    // source bytes and let the upload loop delete the file once it is sent.
-                    uploads.Writer.TryWrite(
-                        new PageUpload(doneIndex, sourcePagePath, DeleteAfterUpload: true)
-                    );
+                    // A page the engine could not upscale. Record it and do NOT upload the fetched
+                    // source in its place: the server assembles and marks the chapter upscaled as
+                    // soon as it has received every page index, so uploading the original here is
+                    // what would commit a chapter that is labelled upscaled while this page is not.
+                    // Leaving the index missing fails the chapter's completeness check, and the
+                    // recorded error fails the run — the whole-CBZ path fails the chapter the same
+                    // way, so the two agree.
+                    pageErrors.Add($"{file.Input}: {file.Status}");
+                    TryDeleteFile(sourcePagePath, doneIndex);
                 }
             }
 

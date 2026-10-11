@@ -58,6 +58,24 @@ public class ByteSizeTests
     }
 
     [Fact]
+    public void Parse_RejectsAValueOneAboveLongMaxValue()
+    {
+        // 2^63: the old double bound compared equal to it (long.MaxValue converts to 2^63), so it
+        // slipped through and the cast wrapped it to a negative value. It must be rejected like any
+        // other value that does not fit a long.
+        Assert.False(ByteSize.TryParse("9223372036854775808", out _));
+        Assert.Throws<FormatException>(() => ByteSize.Parse("9223372036854775808"));
+    }
+
+    [Fact]
+    public void Parse_AcceptsLongMaxValueExactly()
+    {
+        Assert.True(ByteSize.TryParse("9223372036854775807", out ByteSize result));
+        Assert.Equal(long.MaxValue, result.Bytes);
+        Assert.Equal(long.MaxValue, ByteSize.Parse("9223372036854775807").Bytes);
+    }
+
+    [Fact]
     public void Parse_Null_IsNotASize()
     {
         Assert.False(ByteSize.TryParse(null, out _));
@@ -86,6 +104,17 @@ public class ByteSizeTests
             string text = new ByteSize(bytes).ToString();
             Assert.Equal(bytes, ByteSize.Parse(text).Bytes);
         }
+    }
+
+    [Fact]
+    public void ToString_IsHumanReadableButNotLosslessAtAUnitBoundary()
+    {
+        // One byte below 1 MiB: the "0.##" format rounds the 1023.999 KiB quotient up to "1024 KiB",
+        // which re-parses one byte higher. This is a deliberate readability trade-off, not a Parse
+        // bug: a lossless encoding would have to give up the whole-number rendering the logs expect
+        // (1500000000 -> "1.4 GiB"). Pinned so a future format change has to decide consciously.
+        Assert.Equal("1024 KiB", new ByteSize(1048575).ToString());
+        Assert.Equal(1048576L, ByteSize.Parse("1024 KiB").Bytes);
     }
 
     [Fact]

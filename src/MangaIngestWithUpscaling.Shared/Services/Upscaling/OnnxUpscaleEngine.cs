@@ -35,11 +35,43 @@ public class OnnxUpscaleEngine(
     private const int ModelProbeTilePixels = 256;
 
     /// <summary>
-    /// Verdict per model for this device, keyed by full path. Scoped to the process: whether a
-    /// model runs is a property of the execution provider and the accelerator, neither of which
-    /// changes while the process runs.
+    /// Upper bound on the probe-verdict cache. The number of models times the scales in play is
+    /// small, but candidate selection also probes unrelated <c>.onnx</c> files as a last resort, so
+    /// the cache is capped rather than trusted to stay bounded. Overflow clears it and restarts,
+    /// which only costs the next page a re-probe — never a wrong answer.
     /// </summary>
-    private readonly Dictionary<string, bool> _modelUsable = new(StringComparer.OrdinalIgnoreCase);
+    private const int ModelUsableCacheCapacity = 256;
+
+    /// <summary>
+    /// Verdict per model <em>and scale</em> for this device, keyed by path and scale. Scoped to the
+    /// process: whether a model runs is a property of the execution provider and the accelerator,
+    /// neither of which changes while the process runs. The scale is part of the key because the
+    /// probe runs through the decode, which rejects an output whose geometry does not match the
+    /// requested scale: a 4x page can probe a 2x model (candidate selection appends every
+    /// <c>.onnx</c> as a last resort), and that verdict must not disable the model for a 2x page.
+    /// </summary>
+    private readonly Dictionary<ModelScaleKey, bool> _modelUsable = new(
+        ModelScaleKeyComparer.Instance
+    );
+
+    /// <summary>Path and scale a probe verdict applies to.</summary>
+    private readonly record struct ModelScaleKey(string Path, int Scale);
+
+    /// <summary>
+    /// Compares keys case-insensitively on the path, matching how the rest of the engine resolves
+    /// model paths (candidate selection and the model-file checks are all
+    /// <see cref="StringComparison.OrdinalIgnoreCase"/>).
+    /// </summary>
+    private sealed class ModelScaleKeyComparer : IEqualityComparer<ModelScaleKey>
+    {
+        public static readonly ModelScaleKeyComparer Instance = new();
+
+        public bool Equals(ModelScaleKey x, ModelScaleKey y) =>
+            x.Scale == y.Scale && string.Equals(x.Path, y.Path, StringComparison.OrdinalIgnoreCase);
+
+        public int GetHashCode(ModelScaleKey obj) =>
+            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Path), obj.Scale);
+    }
 
     private readonly record struct UpscaledPage(
         byte[] Bytes,
@@ -282,16 +314,31 @@ public class OnnxUpscaleEngine(
             using (var inArchive = ZipFile.OpenRead(inputCbzPath))
             using (var outArchive = ZipFile.Open(tempOutCbz, ZipArchiveMode.Create))
             {
-                string targetExt = format switch
-                {
-                    CompressionFormat.Avif => ".avif",
-                    CompressionFormat.Webp => ".webp",
-                    CompressionFormat.Jpg => ".jpg",
-                    CompressionFormat.Png => ".png",
-                    _ => ".webp",
-                };
+                // The one extension mapping both upscale paths share, so a format never resolves to
+                // ".jpg" here and ".jpeg" on the streamed path.
+                string targetExt = MangaJaNaiWorkerClient.ToExtension(format);
 
-                var entries = inArchive.Entries.ToList();
+                var entries = new List<ZipArchiveEntry>(inArchive.Entries.Count);
+                foreach (var entry in inArchive.Entries)
+                {
+                    // An entry name that escapes the archive (absolute or parent-traversing) must
+                    // never be written into the output: Path.ChangeExtension/CreateEntry preserve
+                    // it verbatim, so a reader extracting the result could be made to write outside
+                    // its target. Directory entries (empty Name) carry no name to escape with and
+                    // are skipped by the copy loop below. The streamed path applies the same guard
+                    // in PageStreamSpool.IsSafeEntryName, which this Shared assembly cannot reach.
+                    if (string.IsNullOrEmpty(entry.Name) || IsSafeEntryName(entry.FullName))
+                    {
+                        entries.Add(entry);
+                        continue;
+                    }
+
+                    logger.LogWarning(
+                        "Skipping archive entry {Entry} of {InputPath}: its name could escape the output archive.",
+                        entry.FullName,
+                        Path.GetFileName(inputCbzPath)
+                    );
+                }
                 // Natural order, not ordinal: page order is content-critical and an ordinal
                 // comparison would place "10" before "2".
                 var imageEntries = entries
@@ -403,7 +450,15 @@ public class OnnxUpscaleEngine(
                         );
 
                         string pageId = (current + (pending.HasValue ? 1 : 0)).ToString();
-                        string tempInPage = Path.Combine(tempDir, $"in_{pageId}_{entry.Name}");
+                        // Index-only input name: a source entry's stem can contain characters the
+                        // host OS cannot put in a filename ("a:b.jpg" is legal on Linux and not on
+                        // Windows), and building that path would fail the chapter permanently. The
+                        // extension is kept so the decoder still gets a format hint; it is always a
+                        // supported image extension because the entry was filtered on it.
+                        string tempInPage = Path.Combine(
+                            tempDir,
+                            $"in_{pageId}{Path.GetExtension(entry.Name)}"
+                        );
                         string tempOutPage = Path.Combine(tempDir, $"out_{pageId}{targetExt}");
 
                         entry.ExtractToFile(tempInPage, overwrite: true);
@@ -811,7 +866,7 @@ public class OnnxUpscaleEngine(
             }
             catch (NonFiniteModelOutputException ex)
             {
-                MarkModelUnusable(modelPath);
+                MarkModelUnusable(modelPath, scale);
                 unusable.Add(Path.GetFileName(modelPath));
                 logger.LogWarning(
                     ex,
@@ -906,14 +961,17 @@ public class OnnxUpscaleEngine(
                     try
                     {
                         // Fetched per iteration, not once outside the loop: the memory-pressure path
-                        // below invalidates the cached session, which disposes the very instance this
+                        // below invalidates the cached session, which retires the very instance this
                         // variable holds. InferenceSession has no disposed guard, so a Run on that
                         // handle surfaces as an opaque native error that is not a memory exception —
                         // it would land in the generic catch and lose the page instead of recovering
                         // at the halved tile. The lookup itself is a dictionary hit on the warm path.
-                        session = sessionFactory.GetOrCreateSession(modelPath);
+                        // The scope is taken BEFORE the fetch so an eviction on another thread cannot
+                        // free the session between the two statements; the drain that disposes evicted
+                        // sessions takes the write lock and therefore waits for this scope to end.
                         using (sessionFactory.EnterInferenceScope())
                         {
+                            session = sessionFactory.GetOrCreateSession(modelPath);
                             upscaledBytes = OnnxTiler.UpscaleRgb(
                                 inputBytes,
                                 width,
@@ -955,8 +1013,8 @@ public class OnnxUpscaleEngine(
         );
 
     /// <summary>
-    /// Whether this model can run on the configured device, remembered for the process after the
-    /// first answer.
+    /// Whether this model can run on the configured device at this scale, remembered for the
+    /// process after the first answer.
     /// <para>
     /// The question is asked with one small tile through the real path, because there is no other
     /// way to know: an execution provider that does not implement a model's kernels does not say
@@ -970,25 +1028,30 @@ public class OnnxUpscaleEngine(
         CancellationToken cancellationToken
     )
     {
+        var key = new ModelScaleKey(modelPath, scale);
+
         lock (_modelUsable)
         {
-            if (_modelUsable.TryGetValue(modelPath, out bool known))
+            if (_modelUsable.TryGetValue(key, out bool known))
             {
                 return known;
             }
         }
 
         bool usable;
+        bool cacheVerdict = true;
         try
         {
             usable = await Task.Run(
                 () =>
                 {
-                    InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
-
-                    // The decode is what rejects a broken model, so the probe goes through it.
+                    // The scope is taken before the fetch so an eviction cannot dispose the session
+                    // between the lookup and the Run below.
                     using (sessionFactory.EnterInferenceScope())
                     {
+                        InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+
+                        // The decode is what rejects a broken model, so the probe goes through it.
                         OnnxTiler.UpscaleTile(
                             CreateProbeTile(ModelProbeTilePixels),
                             ModelProbeTilePixels,
@@ -1010,7 +1073,8 @@ public class OnnxUpscaleEngine(
         }
         catch (NonFiniteModelOutputException ex)
         {
-            // The provider ran the model but produced NaN/Inf: it cannot be used on this device.
+            // Structural: the provider ran the model but produced NaN/Inf, so the model itself
+            // cannot serve this scale on this device. Cache the verdict.
             sessionFactory.InvalidateSession(modelPath);
             logger.LogWarning(
                 ex,
@@ -1019,12 +1083,27 @@ public class OnnxUpscaleEngine(
             );
             usable = false;
         }
+        catch (Exception ex) when (IsTransientProbeFailure(ex))
+        {
+            // Transient: a resource hiccup (out of memory, a lost device) or an IO error, not a
+            // property of the model. Skip the model for this attempt but do NOT cache the verdict,
+            // so a later page retries it once the resource is available again.
+            sessionFactory.InvalidateSession(modelPath);
+            logger.LogWarning(
+                ex,
+                "Model {Model} could not be probed because of a transient failure; it will be retried.",
+                Path.GetFileName(modelPath)
+            );
+            usable = false;
+            cacheVerdict = false;
+        }
         catch (Exception ex)
         {
-            // Anything else — a graph that does not expose "input"/"output", a corrupt or non-ONNX
-            // file, a provider that refuses it — also means "cannot run here". Candidate selection
-            // deliberately appends every .onnx as a last resort, so a single bad file must be
-            // skipped rather than abort the page while a working candidate follows.
+            // Structural: a graph that does not expose "input"/"output", a corrupt or non-ONNX
+            // file, an output at a different scale, or a provider that refuses it — the model
+            // cannot serve this scale here. Candidate selection deliberately appends every .onnx as
+            // a last resort, so a single bad file must be skipped rather than abort the page while
+            // a working candidate follows.
             sessionFactory.InvalidateSession(modelPath);
             logger.LogDebug(
                 ex,
@@ -1034,13 +1113,20 @@ public class OnnxUpscaleEngine(
             usable = false;
         }
 
-        lock (_modelUsable)
+        if (cacheVerdict)
         {
-            _modelUsable[modelPath] = usable;
+            RecordUsable(key, usable);
         }
 
         return usable;
     }
+
+    /// <summary>
+    /// True for a probe failure that says nothing about the model itself: a resource error (memory,
+    /// a lost device) or an IO error. Such a failure must not become a permanent "unusable" verdict.
+    /// </summary>
+    private static bool IsTransientProbeFailure(Exception ex) =>
+        OnnxTiler.IsMemoryException(ex) || ex is IOException;
 
     /// <summary>
     /// A deterministic RGB gradient. Content does not matter for the probe — it only asks whether
@@ -1064,12 +1150,61 @@ public class OnnxUpscaleEngine(
         return tile;
     }
 
-    private void MarkModelUnusable(string modelPath)
+    private void MarkModelUnusable(string modelPath, int scale) =>
+        RecordUsable(new ModelScaleKey(modelPath, scale), false);
+
+    /// <summary>
+    /// Stores a probe verdict, clearing the cache first when it is full so an unbounded set of
+    /// unrelated <c>.onnx</c> files cannot grow it without limit.
+    /// </summary>
+    private void RecordUsable(ModelScaleKey key, bool usable)
     {
         lock (_modelUsable)
         {
-            _modelUsable[modelPath] = false;
+            if (_modelUsable.Count >= ModelUsableCacheCapacity && !_modelUsable.ContainsKey(key))
+            {
+                _modelUsable.Clear();
+            }
+
+            _modelUsable[key] = usable;
         }
+    }
+
+    /// <summary>
+    /// Rejects archive entry names that could escape the output archive on extraction (absolute or
+    /// parent-traversing paths). Mirrors <c>PageStreamSpool.IsSafeEntryName</c> in the main app;
+    /// that type is not reachable from this Shared assembly, so the guard is duplicated rather than
+    /// shared. Only a component made of dots and spaces is rejected ("..", ".. ", "..."), and a
+    /// colon is left alone: it is legal on Linux, and rejecting it silently dropped legitimate pages.
+    /// </summary>
+    private static bool IsSafeEntryName(string name) =>
+        !string.IsNullOrEmpty(name)
+        && !Path.IsPathRooted(name)
+        && !name.StartsWith('/')
+        && !name.StartsWith('\\')
+        && !IsWindowsDriveForm(name)
+        && !name.Split('/', '\\').Any(IsUnsafeSegment);
+
+    /// <summary>
+    /// True for a Windows absolute drive prefix ("C:\", "C:/"), which must not be interpreted as a
+    /// drive path even when the host is Linux.
+    /// </summary>
+    private static bool IsWindowsDriveForm(string name) =>
+        name.Length >= 3
+        && char.IsAsciiLetter(name[0])
+        && name[1] == ':'
+        && (name[2] == '/' || name[2] == '\\');
+
+    private static bool IsUnsafeSegment(string segment)
+    {
+        // Anything with a non-dot/space character is an ordinary name.
+        if (segment.TrimEnd(' ', '.').Length > 0)
+        {
+            return false;
+        }
+
+        // Only dots and spaces: a parent traversal when it has at least two dots ("..", ".. ", "...").
+        return segment.Count(c => c == '.') >= 2;
     }
 
     private static void SaveImage(

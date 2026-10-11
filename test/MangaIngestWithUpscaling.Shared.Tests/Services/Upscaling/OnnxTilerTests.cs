@@ -1,3 +1,4 @@
+using System.Reflection;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.ML.OnnxRuntime;
@@ -550,8 +551,10 @@ public class OnnxTilerTests : IDisposable
     [Fact]
     public void PlanTileSplit_TightBudget_SplitsAtTheQualityFloor()
     {
-        // Even under a very low budget (e.g. 500 MB) the grid is the one the quality floor produces:
-        // never finer than MinimumTileSize tiles, even though they do not fit the budget.
+        // Even under a very low budget (e.g. 500 MB) the fallback the quality floor produces is
+        // returned: TileSplit.For at MinimumTileSize. It shrinks its tiles to cover the page exactly,
+        // so they can land below the floor (229x240 here), and the engine halves them again if the
+        // driver refuses the allocation. The enumeration itself never offers a sub-floor candidate.
         OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
             1600,
             2400,
@@ -660,6 +663,59 @@ public class OnnxTilerTests : IDisposable
                         $"{model} @ {budgetMb} MB budget planned {split.Columns}x{split.Rows} of {split.TileWidth}x{split.TileHeight} needing {tileFootprint / 1048576} MB"
                     );
                 }
+            }
+        }
+    }
+
+    [Fact]
+    public void PlanTileSplit_NeverPlansASubFloorGridExceptTheEmergencyFallback()
+    {
+        // Every planned grid keeps both tile sides at or above MinimumTileSize. The one exception is
+        // the fallback returned when no affordable grid exists: it is TileSplit.For at the floor,
+        // which shrinks its tiles to cover the page exactly and can therefore land below it, and the
+        // engine halves it again when the driver refuses the allocation. Before the enumeration used
+        // floor division it could select a sub-floor grid instead (800x5685 planned 4x20 of
+        // 200x285), which is the defect this pins.
+        (int Width, int Height)[] pages =
+        {
+            (1125, 1600),
+            (1600, 2400),
+            (800, 5685),
+            (1000, 1000),
+            (300, 300),
+        };
+        long[] budgetsMb = { 512, 1024, 2048, 2176, 3072, 4096, 8192, 16384 };
+
+        foreach ((int width, int height) in pages)
+        {
+            OnnxTiler.TileSplit fallback = OnnxTiler.TileSplit.For(
+                width,
+                height,
+                OnnxTiler.MinimumTileSize
+            );
+            foreach (long budgetMb in budgetsMb)
+            {
+                OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+                    width,
+                    height,
+                    4,
+                    "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+                    budgetMb * 1024L * 1024L,
+                    isFp16: true
+                );
+
+                if (split == fallback)
+                {
+                    continue;
+                }
+
+                Assert.True(
+                    split.TileWidth >= OnnxTiler.MinimumTileSize
+                        && split.TileHeight >= OnnxTiler.MinimumTileSize,
+                    $"{width}x{height} @ {budgetMb} MB planned {split.Columns}x{split.Rows} of "
+                        + $"{split.TileWidth}x{split.TileHeight}, below the "
+                        + $"{OnnxTiler.MinimumTileSize} px floor"
+                );
             }
         }
     }
@@ -831,6 +887,171 @@ public class OnnxTilerTests : IDisposable
         }
     }
 
+    [Theory]
+    // A square split: both axes double and the tile side halves exactly.
+    [InlineData(1024, 1024, 2, 2, 512, 512)]
+    // The larger side is 563, so TileSplit.For is asked for 281 (integer floor, not 282).
+    [InlineData(1125, 1600, 2, 3, 563, 534)]
+    [InlineData(1600, 2400, 6, 9, 267, 267)]
+    [InlineData(8000, 200, 32, 1, 250, 200)]
+    // A single pass halves into a 2x2 grid rather than staying whole.
+    [InlineData(300, 300, 1, 1, 300, 300)]
+    public void HalveSplit_HalvesTheLargestSideAndStillCoversThePage(
+        int width,
+        int height,
+        int columns,
+        int rows,
+        int tileWidth,
+        int tileHeight
+    )
+    {
+        var split = new OnnxTiler.TileSplit(columns, rows, tileWidth, tileHeight);
+
+        OnnxTiler.TileSplit halved = OnnxTiler.HalveSplit(width, height, split);
+
+        int previousLargestSide = Math.Max(split.TileWidth, split.TileHeight);
+        int halvedLargestSide = Math.Max(halved.TileWidth, halved.TileHeight);
+        Assert.True(
+            halvedLargestSide <= previousLargestSide / 2,
+            $"{previousLargestSide} px side halved to {halvedLargestSide} px"
+        );
+
+        // Never a zero-sized tile: the division floors and TileSplit.For clamps to at least one.
+        Assert.True(halved.TileWidth >= 1 && halved.TileHeight >= 1);
+
+        // The new grid still covers the page exactly once, the contract TileSplit.For upholds.
+        Assert.True(halved.Columns * halved.TileWidth >= width);
+        Assert.True((halved.Columns - 1) * halved.TileWidth < width);
+        Assert.True(halved.Rows * halved.TileHeight >= height);
+        Assert.True((halved.Rows - 1) * halved.TileHeight < height);
+    }
+
+    [Fact]
+    public void HalveSplit_RepeatedlyHalvesUntilTheEngineStopsRetrying()
+    {
+        // The engine halves while a tile side is above 128 px, so the loop has to keep shrinking
+        // rather than settling or oscillating before it gets there.
+        var split = new OnnxTiler.TileSplit(1, 1, 1125, 1600);
+        int previous = Math.Max(split.TileWidth, split.TileHeight);
+        while (previous > 128)
+        {
+            split = OnnxTiler.HalveSplit(1125, 1600, split);
+            int current = Math.Max(split.TileWidth, split.TileHeight);
+            Assert.True(current < previous, $"{previous} px did not shrink");
+            Assert.True(current >= 1);
+            previous = current;
+        }
+
+        Assert.True(previous <= 128);
+    }
+
+    [Fact]
+    public void HalveSplit_WhenTheLargestSideIsOne_FallsBackToTheWholePageRatherThanZero()
+    {
+        // Math.Max(side) / 2 floors to zero, and TileSplit.For reads a non-positive bound as "one
+        // tile", so the degenerate one-pixel split comes back as the whole page instead of a
+        // zero-width tile. The retry loop stops far above this, but the helper must not divide a tile
+        // out of existence if it is ever reached.
+        OnnxTiler.TileSplit halved = OnnxTiler.HalveSplit(
+            1125,
+            1600,
+            new OnnxTiler.TileSplit(1, 1, 1, 1)
+        );
+
+        Assert.Equal(new OnnxTiler.TileSplit(1, 1, 1125, 1600), halved);
+    }
+
+    [Fact]
+    public void IsMemoryException_AcceptsOutOfMemoryException()
+    {
+        Assert.True(
+            OnnxTiler.IsMemoryException(new OutOfMemoryException("device memory exhausted"))
+        );
+    }
+
+    [Theory]
+    // One representative per recognised provider/allocator substring; the check is case-insensitive.
+    [InlineData("Could not allocate memory")]
+    [InlineData("CUDA failure: out of memory")]
+    [InlineData("cudaMalloc failed")]
+    [InlineData("hipMalloc returned an error")]
+    [InlineData("vkQueueSubmit failed with VK_ERROR_OUT_OF_DEVICE_MEMORY")]
+    [InlineData("VK_ERROR_DEVICE_LOST")]
+    [InlineData("command submission failed")]
+    [InlineData("raw_hash_map allocation failed")]
+    [InlineData("DXGI_ERROR_DEVICE_REMOVED")]
+    [InlineData("CL_MEM_OBJECT_ALLOCATION_FAILURE")]
+    public void IsMemoryException_AcceptsRecognisedOnnxRuntimeMessages(string message)
+    {
+        Assert.True(OnnxTiler.IsMemoryException(OnnxRuntimeExceptionWithMessage(message)));
+    }
+
+    [Fact]
+    public void IsMemoryException_RejectsUnrelatedOnnxRuntimeMessages()
+    {
+        Assert.False(
+            OnnxTiler.IsMemoryException(
+                OnnxRuntimeExceptionWithMessage("Input name: 'image' is not in the metadata")
+            )
+        );
+    }
+
+    [Fact]
+    public void IsMemoryException_RejectsUnrelatedExceptions()
+    {
+        Assert.False(
+            OnnxTiler.IsMemoryException(new InvalidOperationException("not a memory error"))
+        );
+        Assert.False(OnnxTiler.IsMemoryException(new IOException("disk full")));
+    }
+
+    [Fact]
+    public void IsMemoryException_LooksThroughWrappingInnerExceptions()
+    {
+        // A plain wrapper around either kind is what the call sites actually see, since ONNX Runtime
+        // and the engine both rethrow with context.
+        Assert.True(
+            OnnxTiler.IsMemoryException(
+                new InvalidOperationException(
+                    "tile failed",
+                    OnnxRuntimeExceptionWithMessage("cudaMalloc failed")
+                )
+            )
+        );
+        Assert.True(
+            OnnxTiler.IsMemoryException(
+                new Exception("outer", new Exception("inner", new OutOfMemoryException()))
+            )
+        );
+        Assert.False(
+            OnnxTiler.IsMemoryException(
+                new InvalidOperationException("outer", new InvalidOperationException("inner"))
+            )
+        );
+    }
+
+    /// <summary>
+    /// Builds an <see cref="OnnxRuntimeException"/> carrying a chosen message. Its only constructor
+    /// and the <c>ErrorCode</c> it takes are internal to Microsoft.ML.OnnxRuntime, so binding them is
+    /// the only way to put a specific message — the allocator substrings the classifier keys on — in
+    /// front of it without provoking a real out-of-memory on a device.
+    /// </summary>
+    private static OnnxRuntimeException OnnxRuntimeExceptionWithMessage(string message)
+    {
+        Type errorCode =
+            typeof(OnnxRuntimeException).Assembly.GetType("Microsoft.ML.OnnxRuntime.ErrorCode")
+            ?? throw new InvalidOperationException("ErrorCode type not found");
+        ConstructorInfo constructor =
+            typeof(OnnxRuntimeException).GetConstructor(
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null,
+                [errorCode, typeof(string)],
+                modifiers: null
+            ) ?? throw new InvalidOperationException("OnnxRuntimeException constructor not found");
+        object code = Enum.Parse(errorCode, "RuntimeException");
+        return (OnnxRuntimeException)constructor.Invoke([code, message]);
+    }
+
     [Fact]
     public void PlanTileSplit_GivesTheSmallerSideAllTheContextTheBudgetAllows()
     {
@@ -872,8 +1093,10 @@ public class OnnxTilerTests : IDisposable
                     .ActivationCoefficients.For(model)
                     .BytesPerPixel(scale, isFp16: true);
 
-                int maxColumns = (1125 + OnnxTiler.MinimumTileSize - 1) / OnnxTiler.MinimumTileSize;
-                int maxRows = (1600 + OnnxTiler.MinimumTileSize - 1) / OnnxTiler.MinimumTileSize;
+                // The same bound the planner enumerates: floor division, so no candidate falls below
+                // the MinimumTileSize floor. A ceil bound would consider 1125 -> 5 columns -> 225.
+                int maxColumns = Math.Max(1, 1125 / OnnxTiler.MinimumTileSize);
+                int maxRows = Math.Max(1, 1600 / OnnxTiler.MinimumTileSize);
                 for (int columns = 1; columns <= maxColumns; columns++)
                 {
                     for (int rows = 1; rows <= maxRows; rows++)

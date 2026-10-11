@@ -5,6 +5,7 @@ using System.Text;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using SharedUpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile;
 
@@ -24,9 +25,7 @@ public static class PageManifestBuilder
         string extension = FormatExtension(profile.CompressionFormat);
         var pages = new List<SpoolPageDescriptor>();
         using ZipArchive archive = ZipFile.OpenRead(sourcePath);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var outputNames = new HashSet<string>(StringComparer.Ordinal);
-        int index = 0;
+        var eligible = new List<ZipArchiveEntry>();
         foreach (ZipArchiveEntry entry in archive.Entries)
         {
             if (string.IsNullOrEmpty(entry.Name))
@@ -45,6 +44,22 @@ public static class PageManifestBuilder
                 continue;
             }
 
+            eligible.Add(entry);
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var outputNames = new HashSet<string>(StringComparer.Ordinal);
+        int index = 0;
+        // Natural order, matching the whole-CBZ path: page sequence is content-critical and an
+        // ordinal comparison would place "10" before "2". The per-page index is derived from this
+        // order, so the streamed manifest and the whole-CBZ archive agree on page sequence.
+        foreach (
+            ZipArchiveEntry entry in eligible.OrderBy(
+                e => e.FullName,
+                NaturalEntryNameComparer.Instance
+            )
+        )
+        {
             // A malformed archive can repeat an entry name; keep the first so the spool's
             // source-name mapping stays unique.
             if (!seen.Add(entry.FullName))
@@ -280,13 +295,11 @@ public static class PageManifestBuilder
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 
+    /// <summary>
+    /// The output extension for a compression format, without the dot. Delegates to the one shared
+    /// mapping (<see cref="MangaJaNaiWorkerClient.ToExtension"/>) so the streamed and whole-CBZ
+    /// paths cannot disagree — one writing ".jpg" while the other writes ".jpeg".
+    /// </summary>
     internal static string FormatExtension(SharedCompressionFormat format) =>
-        format switch
-        {
-            SharedCompressionFormat.Avif => "avif",
-            SharedCompressionFormat.Png => "png",
-            SharedCompressionFormat.Webp => "webp",
-            SharedCompressionFormat.Jpg => "jpeg",
-            _ => "webp",
-        };
+        MangaJaNaiWorkerClient.ToExtension(format).TrimStart('.');
 }

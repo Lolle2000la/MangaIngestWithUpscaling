@@ -1,0 +1,208 @@
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.ML.OnnxRuntime;
+using NetVips;
+using NSubstitute;
+using Xunit;
+
+namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
+
+/// <summary>
+/// Pins the scope of the device-probe verdict. The probe runs through the decode, which rejects an
+/// output whose geometry is at a different scale, and it can also fail for a transient reason
+/// (memory, IO). Neither may disable a good model for the whole process.
+/// </summary>
+public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
+{
+    private readonly string _tempDir;
+
+    public OnnxUpscaleEngineProbeVerdictTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"onnx_probe_verdict_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_tempDir))
+            {
+                Directory.Delete(_tempDir, true);
+            }
+        }
+        catch { }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task WrongScaleProbe_DoesNotDisableTheModelForItsOwnScale()
+    {
+        // A 4x page resolves to the 2x model through the last-resort candidate selection. Its probe
+        // at 4x is rejected by the decode (the output is at a different scale), and that verdict must
+        // be scoped to 4x: the same model is the only one a 2x page can use.
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale, fileName: "2x_tiny.onnx");
+        string input = CreateTestJpeg(64, 90);
+
+        using OnnxSessionFactory sessionFactory = CreateCpuSessionFactory();
+        OnnxUpscaleEngine engine = CreateEngine(sessionFactory);
+
+        string wrongScaleOutput = Path.Combine(_tempDir, "wrong-scale.webp");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            engine.UpscaleFileAsync(
+                input,
+                wrongScaleOutput,
+                scale: 4,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.False(File.Exists(wrongScaleOutput));
+
+        string output = Path.Combine(_tempDir, "right-scale.webp");
+        await engine.UpscaleFileAsync(
+            input,
+            output,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            TestContext.Current.CancellationToken
+        );
+
+        using var outImg = Image.NewFromFile(output);
+        Assert.Equal(64 * scale, outImg.Width);
+        Assert.Equal(90 * scale, outImg.Height);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task TransientProbeFailure_IsRetriedOnTheNextPage()
+    {
+        // The first probe fails with an OutOfMemoryException, which says nothing about the model. It
+        // must skip the model for that attempt without caching "unusable", so a later page retries it
+        // and succeeds.
+        const int scale = 2;
+        TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale, fileName: "2x_tiny.onnx");
+        string input = CreateTestJpeg(64, 90);
+
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        using var flaky = new TransientProbeSessionFactory(
+            new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance)
+        );
+        var engine = new OnnxUpscaleEngine(
+            flaky,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        string firstOutput = Path.Combine(_tempDir, "transient-first.webp");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            engine.UpscaleFileAsync(
+                input,
+                firstOutput,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        string output = Path.Combine(_tempDir, "transient-second.webp");
+        await engine.UpscaleFileAsync(
+            input,
+            output,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.True(File.Exists(output));
+        Assert.True(
+            flaky.ScopeCalls >= 2,
+            "the probe was not retried on the second page; the transient failure was cached"
+        );
+    }
+
+    private OnnxUpscaleEngine CreateEngine(OnnxSessionFactory sessionFactory)
+    {
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        return new OnnxUpscaleEngine(
+            sessionFactory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+    }
+
+    private OnnxSessionFactory CreateCpuSessionFactory()
+    {
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        return new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+    }
+
+    /// <summary>
+    /// Writes a non-uniform JPEG so the decoded bytes are not all identical.
+    /// </summary>
+    private string CreateTestJpeg(int width, int height)
+    {
+        using var noise = Image
+            .Gaussnoise(width, height, mean: 128, sigma: 40)
+            .Cast(Enums.BandFormat.Uchar);
+        using var rgb = noise.Bandjoin(noise).Bandjoin(noise);
+        string path = Path.Combine(_tempDir, "input.jpg");
+        rgb.WriteToFile(path);
+        return path;
+    }
+
+    /// <summary>
+    /// Delegates to a real factory, but makes the first <see cref="EnterInferenceScope"/> call fail
+    /// with an <see cref="OutOfMemoryException"/> — the probe's failure mode on a transient device
+    /// hiccup, without needing to exhaust a device.
+    /// </summary>
+    private sealed class TransientProbeSessionFactory(IOnnxSessionFactory inner)
+        : IOnnxSessionFactory
+    {
+        private int _scopeCalls;
+
+        public int ScopeCalls => Volatile.Read(ref _scopeCalls);
+
+        public InferenceSession GetOrCreateSession(string modelPath) =>
+            inner.GetOrCreateSession(modelPath);
+
+        public InferenceSession CreateSession(string modelPath) => inner.CreateSession(modelPath);
+
+        public void InvalidateSession(string modelPath) => inner.InvalidateSession(modelPath);
+
+        public void InvalidateAllSessions() => inner.InvalidateAllSessions();
+
+        public GpuBackend GetEffectiveBackend() => inner.GetEffectiveBackend();
+
+        public IDisposable EnterInferenceScope()
+        {
+            // #1 is the first page's probe; it fails. #2 is the retried probe on the second page.
+            if (Interlocked.Increment(ref _scopeCalls) == 1)
+            {
+                throw new OutOfMemoryException("simulated transient device memory pressure");
+            }
+
+            return inner.EnterInferenceScope();
+        }
+
+        public void Dispose() => inner.Dispose();
+    }
+}

@@ -57,7 +57,6 @@ public class MangaJaNaiWorkerClientTests
             OutputFilename = "chapter-1",
             Format = CompressionFormat.Webp,
             Scale = ScaleFactor.TwoX,
-            Overwrite = true,
         };
 
         var result = await client.RunJobAsync(
@@ -124,7 +123,6 @@ public class MangaJaNaiWorkerClientTests
             OutputFilename = "chapter-1",
             Format = CompressionFormat.Webp,
             Scale = ScaleFactor.TwoX,
-            Overwrite = true,
         };
 
         await Assert.ThrowsAsync<TimeoutException>(() =>
@@ -327,7 +325,7 @@ public class MangaJaNaiWorkerClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task RunChapterAsync_WhenEncodeFails_ReportsPageErrorAndContinues()
+    public async Task RunChapterAsync_WhenAPageFails_ReportsItAndContinues()
     {
         var engine = Substitute.For<IOnnxUpscaleEngine>();
         var factory = Substitute.For<IOnnxSessionFactory>();
@@ -343,7 +341,11 @@ public class MangaJaNaiWorkerClientTests
             )
             .Returns(x =>
                 x.ArgAt<string>(0).EndsWith("001.png")
-                    ? Task.FromResult(Task.FromException(new IOException("disk full")))
+                    ? Task.FromResult(
+                        Task.FromException(
+                            new InvalidOperationException("page could not be decoded")
+                        )
+                    )
                     : Task.FromResult(Task.CompletedTask)
             );
 
@@ -383,6 +385,60 @@ public class MangaJaNaiWorkerClientTests
         Assert.Equal(
             [UpscaleJobStatus.Error, UpscaleJobStatus.Success],
             done.Select(f => f.Status)
+        );
+    }
+
+    [Fact]
+    public async Task RunChapterAsync_WhenAPageFailsWithAnInfrastructureError_Propagates()
+    {
+        // A disk-full or a device hiccup is classified Transient upstream so the worker is requeued.
+        // Turning it into a per-page error here would swallow that and commit a chapter whose page
+        // was never upscaled, so the producer must let it out.
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        var factory = Substitute.For<IOnnxSessionFactory>();
+
+        engine
+            .UpscaleFileStagedAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CompressionFormat>(),
+                Arg.Any<int?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(Task.FromResult(Task.FromException(new IOException("disk full"))));
+
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            factory,
+            NullLogger<MangaJaNaiWorkerClient>.Instance
+        );
+
+        var request = new ChapterJobRequest
+        {
+            Id = "ch-disk-full",
+            OutputFolder = "/out",
+            Scale = ScaleFactor.TwoX,
+            Format = CompressionFormat.Webp,
+            Quality = 90,
+            TotalPages = 1,
+        };
+
+        async IAsyncEnumerable<ChapterPage> GetPages()
+        {
+            yield return new ChapterPage(0, "001.png", "/data/001.png");
+            await Task.Yield();
+        }
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            client.RunChapterAsync(
+                request,
+                GetPages(),
+                null,
+                _ => { },
+                TestContext.Current.CancellationToken,
+                null
+            )
         );
     }
 

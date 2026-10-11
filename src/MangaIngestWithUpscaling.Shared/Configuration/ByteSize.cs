@@ -22,22 +22,22 @@ public readonly record struct ByteSize : IComparable<ByteSize>
     );
 
     // An empty unit and "b" are plain bytes, which is what existing configuration files use.
-    private static readonly Dictionary<string, double> Multipliers = new(
+    private static readonly Dictionary<string, decimal> Multipliers = new(
         StringComparer.OrdinalIgnoreCase
     )
     {
-        [""] = 1d,
-        ["b"] = 1d,
-        ["kb"] = 1_000d,
-        ["kib"] = 1_024d,
-        ["mb"] = 1_000_000d,
-        ["mib"] = 1_048_576d,
-        ["gb"] = 1_000_000_000d,
-        ["gib"] = 1_073_741_824d,
-        ["tb"] = 1_000_000_000_000d,
-        ["tib"] = 1_099_511_627_776d,
-        ["pb"] = 1_000_000_000_000_000d,
-        ["pib"] = 1_125_899_906_842_624d,
+        [""] = 1,
+        ["b"] = 1,
+        ["kb"] = 1_000,
+        ["kib"] = 1_024,
+        ["mb"] = 1_000_000,
+        ["mib"] = 1_048_576,
+        ["gb"] = 1_000_000_000,
+        ["gib"] = 1_073_741_824,
+        ["tb"] = 1_000_000_000_000,
+        ["tib"] = 1_099_511_627_776,
+        ["pb"] = 1_000_000_000_000_000,
+        ["pib"] = 1_125_899_906_842_624,
     };
 
     private static readonly (string Suffix, double Size)[] LargestFirst =
@@ -80,34 +80,55 @@ public readonly record struct ByteSize : IComparable<ByteSize>
             return false;
         }
 
-        if (!Multipliers.TryGetValue(match.Groups["unit"].Value, out double multiplier))
+        if (!Multipliers.TryGetValue(match.Groups["unit"].Value, out decimal multiplier))
         {
             return false;
         }
 
         if (
-            !double.TryParse(
+            !decimal.TryParse(
                 match.Groups["value"].Value,
-                NumberStyles.Float,
+                NumberStyles.AllowDecimalPoint,
                 CultureInfo.InvariantCulture,
-                out double value
+                out decimal value
             )
         )
         {
             return false;
         }
 
-        double bytes = value * multiplier;
-        if (double.IsNaN(bytes) || double.IsInfinity(bytes) || bytes is < 0 or > long.MaxValue)
+        decimal bytes;
+        try
+        {
+            bytes = value * multiplier;
+        }
+        catch (OverflowException)
         {
             return false;
         }
 
-        result = new ByteSize((long)Math.Round(bytes));
+        // long.MaxValue is not exactly representable as a double, so a double bound compared equal
+        // to 2^63 and let "9223372036854775808" through, where the cast wrapped it to a negative
+        // value. Decimal holds the boundary exactly, so a value that does not fit a long is rejected
+        // like any other bad input.
+        if (bytes < 0 || bytes > long.MaxValue)
+        {
+            return false;
+        }
+
+        result = new ByteSize((long)Math.Round(bytes, MidpointRounding.ToEven));
         return true;
     }
 
-    /// <summary>Formats with the largest unit that keeps the value at least 1, e.g. <c>1 GiB</c>.</summary>
+    /// <summary>
+    /// Formats with the largest unit that keeps the value at least 1, e.g. <c>1 GiB</c>.
+    /// <para>
+    /// This is a human-readable rendering, not a lossless encoding: a value just below a unit
+    /// boundary rounds up across it (1048575 bytes renders as "1024 KiB", which parses back one byte
+    /// higher). The logs only need it readable, and the whole-number rendering is what makes them so;
+    /// use <see cref="Bytes"/> where the exact value matters.
+    /// </para>
+    /// </summary>
     public override string ToString()
     {
         if (Bytes == 0)

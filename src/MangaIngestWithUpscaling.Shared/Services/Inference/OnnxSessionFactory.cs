@@ -25,6 +25,21 @@ public sealed class OnnxSessionFactory(
         StringComparer.OrdinalIgnoreCase
     );
     private readonly LinkedList<string> _lruOrder = new();
+
+    /// <summary>
+    /// Sessions removed from the cache (evicted or invalidated) that a caller may still be running
+    /// under an inference scope. They are disposed by <see cref="DrainRetired"/>, which takes the
+    /// write lock and therefore waits for every scope to drain, so a caller can never Run a session
+    /// this factory has already freed.
+    /// <para>
+    /// Eviction cannot dispose inline: it happens while the evicting caller holds its own read scope
+    /// (the fetch is taken inside the scope, see <see cref="AcquireSessionOrFetch"/> docs on call
+    /// sites), and taking the write lock from inside a read scope would deadlock the same thread.
+    /// </para>
+    /// </summary>
+    private readonly HashSet<InferenceSession> _retired = new(ReferenceEqualityComparer.Instance);
+    private int _drainScheduled;
+
     private readonly ReaderWriterLockSlim _activeExecutionLock = new(
         LockRecursionPolicy.SupportsRecursion
     );
@@ -82,23 +97,10 @@ public sealed class OnnxSessionFactory(
                         MaxCachedSessions
                     );
 
-                    _activeExecutionLock.EnterWriteLock();
-                    try
-                    {
-                        oldSession.Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(
-                            ex,
-                            "Failed to cleanly dispose evicted session for {Model}",
-                            Path.GetFileName(oldestPath)
-                        );
-                    }
-                    finally
-                    {
-                        _activeExecutionLock.ExitWriteLock();
-                    }
+                    // Retired rather than disposed here: this runs while the caller holds its read
+                    // scope, and the write lock a synchronous dispose needs would deadlock the same
+                    // thread.
+                    RetireLocked(oldSession);
                 }
             }
 
@@ -114,7 +116,6 @@ public sealed class OnnxSessionFactory(
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         string fullPath = Path.GetFullPath(modelPath);
-        InferenceSession? sessionToDispose = null;
 
         lock (_lock)
         {
@@ -123,24 +124,59 @@ public sealed class OnnxSessionFactory(
             if (_sessions.Remove(fullPath, out var session))
             {
                 _lruOrder.Remove(fullPath);
-                sessionToDispose = session;
+                RetireLocked(session);
             }
         }
+    }
 
-        if (sessionToDispose != null)
+    /// <summary>
+    /// Removes a session from the cache's ownership and disposes it once no inference scope holds it.
+    /// Called under <see cref="_lock"/>.
+    /// </summary>
+    private void RetireLocked(InferenceSession session)
+    {
+        _retired.Add(session);
+        ScheduleRetiredDrain();
+    }
+
+    private void ScheduleRetiredDrain()
+    {
+        if (Interlocked.CompareExchange(ref _drainScheduled, 1, 0) != 0)
         {
+            return;
+        }
+
+        ThreadPool.QueueUserWorkItem(
+            static state => ((OnnxSessionFactory)state!).DrainRetired(),
+            this
+        );
+    }
+
+    private void DrainRetired()
+    {
+        while (true)
+        {
+            List<InferenceSession> batch;
+            lock (_lock)
+            {
+                if (_retired.Count == 0)
+                {
+                    Volatile.Write(ref _drainScheduled, 0);
+                    return;
+                }
+
+                batch = [.. _retired];
+                _retired.Clear();
+            }
+
+            // The write lock waits for every read scope to drain, so nothing can be Running these.
             _activeExecutionLock.EnterWriteLock();
             try
             {
-                sessionToDispose.Dispose();
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(
-                    ex,
-                    "Failed to cleanly dispose invalidated session for {Model}",
-                    Path.GetFileName(modelPath)
-                );
+                foreach (var session in batch)
+                {
+                    DisposeSession(session, "retired");
+                }
             }
             finally
             {
@@ -149,44 +185,34 @@ public sealed class OnnxSessionFactory(
         }
     }
 
+    private void DisposeSession(InferenceSession session, string context)
+    {
+        try
+        {
+            session.Dispose();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to cleanly dispose {Context} session", context);
+        }
+    }
+
     public void InvalidateAllSessions()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        List<InferenceSession> sessionsToDispose;
         lock (_lock)
         {
             if (_disposed)
                 return;
-            sessionsToDispose = [.. _sessions.Values];
+
+            foreach (var session in _sessions.Values)
+            {
+                RetireLocked(session);
+            }
+
             _sessions.Clear();
             _lruOrder.Clear();
-        }
-
-        if (sessionsToDispose.Count > 0)
-        {
-            _activeExecutionLock.EnterWriteLock();
-            try
-            {
-                foreach (var session in sessionsToDispose)
-                {
-                    try
-                    {
-                        session.Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(
-                            ex,
-                            "Failed to cleanly dispose session during InvalidateAllSessions"
-                        );
-                    }
-                }
-            }
-            finally
-            {
-                _activeExecutionLock.ExitWriteLock();
-            }
         }
     }
 
@@ -684,9 +710,10 @@ public sealed class OnnxSessionFactory(
         List<InferenceSession> sessionsToDispose;
         lock (_lock)
         {
-            sessionsToDispose = [.. _sessions.Values];
+            sessionsToDispose = [.. _sessions.Values, .. _retired];
             _sessions.Clear();
             _lruOrder.Clear();
+            _retired.Clear();
         }
 
         _activeExecutionLock.EnterWriteLock();

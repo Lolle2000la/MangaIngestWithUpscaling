@@ -14,7 +14,7 @@ Hardware acceleration is achieved through native ONNX **Execution Providers (EP)
 | Image Tag | Execution Provider | Target Hardware | Requirements | Pre-configured `PreferredGpuBackend` |
 |---|---|---|---|---|
 | `:latest` / `:latest-dev` | **WebGPU** (Vulkan via Mesa RADV / ANV) + CPU fallback | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback | Host GPU device access (`/dev/dri`) | `WebGPU` *(built-in default)* |
-| `:latest-cuda` / `:latest-dev-cuda` | **CUDA** & **TensorRT** | NVIDIA GeForce GTX/RTX, Quadro, Tesla | NVIDIA driver + `nvidia-container-toolkit` | `CUDA` *(built-in default)* |
+| `:latest-cuda` / `:latest-dev-cuda` | **CUDA** | NVIDIA GeForce GTX/RTX, Quadro, Tesla | NVIDIA driver + `nvidia-container-toolkit` | `CUDA` *(built-in default)* |
 
 Both flavor tags are published for both the main web application (`manga-ingest-with-upscaling`) and the standalone remote worker (`manga-ingest-with-upscaling-remote-worker`). Each container image already has `Ingest_Upscaler__PreferredGpuBackend` pre-set to its matching provider, so you do not need to configure it in Docker Compose unless overriding it.
 
@@ -32,7 +32,7 @@ Controls which execution provider is attempted:
 |---|---|
 | `Auto` *(default)* | Automatically selects the best available accelerator for your image and platform (CUDA → WebGPU → CPU on Linux, WebGPU → DirectML → CUDA on Windows) |
 | `WebGPU` | Universal GPU accelerator — Mesa RADV/ANV on Linux, Metal on macOS, Direct3D 12 on Windows (the primary path on `:latest`) |
-| `CUDA` | NVIDIA — CUDA & TensorRT (in `:latest-cuda`) |
+| `CUDA` | NVIDIA — CUDA (in `:latest-cuda`) |
 | `DirectML` | Windows — DirectX 12 machine learning execution provider |
 | `OpenVINO` | Intel — OpenVINO execution provider |
 | `MIGraphX` | AMD — MIGraphX execution provider (needs a build that ships the EP) |
@@ -114,7 +114,7 @@ services:
 
 ### NVIDIA GPU (CUDA)
 
-Use the `:latest-cuda` (or `:latest-dev-cuda`) image for native NVIDIA CUDA & TensorRT acceleration. `PreferredGpuBackend` defaults to `CUDA` inside this container:
+Use the `:latest-cuda` (or `:latest-dev-cuda`) image for native NVIDIA CUDA acceleration. `PreferredGpuBackend` defaults to `CUDA` inside this container:
 
 ```yaml
 services:

@@ -74,7 +74,6 @@ public sealed record UpscaleJobRequest
     public string OutputFilename { get; init; } = "%filename%";
     public required CompressionFormat Format { get; init; }
     public required ScaleFactor Scale { get; init; }
-    public bool Overwrite { get; init; } = true;
 
     /// <summary>Lossy compression quality; null uses the worker's workflow default.</summary>
     public int? Quality { get; init; }

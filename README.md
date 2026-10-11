@@ -31,16 +31,16 @@ which is deprecated in favour of that environment variable.
 
 ## Installation
 
-The preferred way to run the application is through Docker. The standard image supports all GPU backends — you select the backend via an environment variable.
+The preferred way to run the application is through Docker. Two images cover the supported hardware — the standard image uses the WebGPU execution provider (with CPU fallback), and `:latest-cuda` uses the CUDA execution provider; you select the backend via an environment variable.
 
 ### ONNX Runtime and Model Storage
 
 The application runs pure C# using ONNX Runtime for ML inference. There is no Python or PyTorch deployment needed:
 
 - **Ultra-lightweight footprint** — no multi-gigabyte PyTorch/CUDA wheels downloaded
-- **Native Hardware Acceleration** — two shipped images: a universal image using the WebGPU execution provider (Vulkan on AMD Radeon and Intel GPUs) with CPU fallback, and a CUDA image for NVIDIA GPUs; other execution providers (DirectML, MIGraphX, OpenVINO) are selectable in configuration, but only where the shipped runtime build includes them
-- **Automatic Model Provisioning** — optimized ONNX models are downloaded on demand into the `/models` directory from GitHub releases
-- **Persistent models** — models are cached in `/models` across updates
+- **Native Hardware Acceleration** — two shipped images: a universal image using the WebGPU execution provider (Vulkan on AMD Radeon and Intel GPUs) with CPU fallback, and a CUDA image for NVIDIA GPUs. Each runtime ships only its own execution providers (WebGPU + CPU, plus CUDA in the CUDA image); other providers (`DirectML`, `OpenVINO`, `MIGraphX`) are selectable in configuration, but only where the ONNX Runtime build ships them — the shipped images do not
+- **Automatic Model Provisioning** — optimized ONNX models are downloaded on demand into the `/models/MangaJaNai` directory from GitHub releases
+- **Persistent models** — models are cached in `/models/MangaJaNai` across updates
 
 ### Docker Image Flavors & Hardware Acceleration
 
@@ -49,7 +49,7 @@ Only two images are needed to cover all hardware:
 | Image Tag | Hardware / Execution Provider | Target Hardware |
 |---|---|---|
 | `:latest` / `:latest-dev` | **Universal** (ONNX WebGPU EP via Vulkan + CPU fallback) | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback |
-| `:latest-cuda` / `:latest-dev-cuda` | **NVIDIA CUDA** & TensorRT Execution Providers | NVIDIA GeForce GTX/RTX, Quadro, Tesla (requires nvidia-container-toolkit) |
+| `:latest-cuda` / `:latest-dev-cuda` | **NVIDIA CUDA** Execution Provider | NVIDIA GeForce GTX/RTX, Quadro, Tesla (requires nvidia-container-toolkit) |
 
 Both flavor tags are available for both the main application (`manga-ingest-with-upscaling`) and the remote worker (`manga-ingest-with-upscaling-remote-worker`).
 
@@ -85,7 +85,7 @@ services:
 
 ### NVIDIA GPU (CUDA)
 
-For NVIDIA GPUs (e.g. RTX 3060, RTX 40-series), use the `:latest-cuda` image for maximum performance with TensorRT and CUDA:
+For NVIDIA GPUs (e.g. RTX 3060, RTX 40-series), use the `:latest-cuda` image for maximum performance with CUDA:
 
 ```yaml
 services:

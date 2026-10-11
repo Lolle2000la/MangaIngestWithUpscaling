@@ -44,6 +44,7 @@ public static class EngineIdentity
     /// Hashed instead of <see cref="UpscalerConfig.PreferredGpuBackend"/> because the preference defaults to
     /// <see cref="GpuBackend.Auto"/>: two default deployments on different hardware would otherwise hash the same
     /// and be allowed to blend pages. Falls back to the preference when the backend has not been probed yet.
+    /// It also selects which backend's FP16 answer is hashed when <see cref="UpscalerConfig.UseFp16"/> is unset.
     /// </param>
     /// <param name="engineVersion">
     /// Overrides <see cref="CurrentEngineVersion"/>; intended for tests. Production callers omit it so
@@ -62,13 +63,15 @@ public static class EngineIdentity
         // the spool there. Hashing the worker's local copy would be wrong in both directions: it would
         // miss a server-side change and spuriously reject a worker whose local config differs.
         material
-            // The configured precision, not the detected one: an explicit setting is the only part
-            // of this the operator controls, and it is what the model download is driven by. Hashing
-            // the hardware probe instead would let a worker whose detection transiently fails
-            // produce a different identity for the same configuration and re-stream the chapter.
-            // With UseFp16 = null the precision genuinely follows the device, so the probe is part
-            // of the answer and there is nothing to fall back to.
-            .Append(config.UseFp16 ?? config.ResolvedUseFp16)
+            // The precision the model set is actually chosen from. With UseFp16 set, the operator's
+            // explicit choice wins; with it unset, the probe answers for the *resolved* backend,
+            // exactly as MangaJaNaiUpscaler.GetModelPackages resolves it for the download. Hashing
+            // the preference's answer instead (ResolvedUseFp16 resolves against PreferredGpuBackend)
+            // would describe a model set that was never downloaded whenever Auto resolved elsewhere.
+            .Append(
+                config.UseFp16
+                    ?? config.ResolveUseFp16(resolvedBackend ?? config.PreferredGpuBackend)
+            )
             .Append('|')
             // The effective compute mode, not just UseCPU: the worker maps
             // SelectedDeviceIndex = UseCPU ? 0 : SelectedDeviceIndex, and device 0 is the CPU switch.

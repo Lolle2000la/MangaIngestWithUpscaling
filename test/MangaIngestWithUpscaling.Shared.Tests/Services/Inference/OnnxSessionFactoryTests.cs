@@ -1,11 +1,15 @@
+using System.Reflection;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using Xunit;
+using Float16 = Microsoft.ML.OnnxRuntime.Float16;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Inference;
 
@@ -204,12 +208,15 @@ public class OnnxSessionFactoryTests : IDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
-    public void GetOrCreateSession_EvictsTheLeastRecentlyUsedSessionAtCapacity()
+    public async Task GetOrCreateSession_EvictsTheLeastRecentlyUsedSessionAtCapacity()
     {
         // MaxCachedSessions is 1, so the second model displaces the first instead of joining it.
-        // This is what keeps split detection and upscaling from holding two models on a
-        // VRAM-limited card at once, and the eviction disposes the outgoing session while holding
-        // the write lock — the part of the factory with the most moving parts to get wrong.
+        // At that capacity recency ordering cannot be distinguished from any other eviction policy —
+        // the single resident entry is the least recently used by definition — so what is pinned
+        // beyond the capacity behaviour is that the evicted sessions are actually disposed. The
+        // factory retires them and drains the retiral on the thread pool, because disposing inline
+        // would need the write lock from inside the evicting caller's read scope, so their release
+        // has to be waited for rather than inspected immediately.
         string first = TinyOnnxModel.WriteNearestUpscaler(_dir, 2, fileName: "first.onnx");
         string second = TinyOnnxModel.WriteNearestUpscaler(_dir, 3, fileName: "second.onnx");
         var config = Options.Create(new UpscalerConfig { UseCPU = true });
@@ -226,9 +233,88 @@ public class OnnxSessionFactoryTests : IDisposable
         // The resident model is served from the cache rather than reloaded.
         Assert.Same(reloaded, factory.GetOrCreateSession(first));
 
-        // Never assert on an instance the factory has evicted: xUnit formats the arguments of a
-        // failing assertion, and InferenceSession.ToString() dereferences the native session, so a
-        // disposed object turns a test failure into a crash instead of a message.
-        Assert.NotNull(secondSession);
+        // The first session was evicted when the second was fetched and the second when the first was
+        // re-fetched; both have to be released. Asserted on a bool so a failure never formats a
+        // disposed session, whose ToString dereferences the native handle.
+        Assert.True(
+            await WaitUntilDisposedAsync(firstSession, TestContext.Current.CancellationToken),
+            "the evicted session was never disposed"
+        );
+        Assert.True(
+            await WaitUntilDisposedAsync(secondSession, TestContext.Current.CancellationToken),
+            "the evicted session was never disposed"
+        );
+    }
+
+    /// <summary>
+    /// Waits for ONNX Runtime to release <paramref name="session"/>'s native handle. The only public
+    /// disposed state <c>InferenceSession</c> offers is <see cref="IDisposable.Dispose"/> itself, and
+    /// it does not guard its members afterwards, so the native handle that <c>Dispose</c> zeroes is
+    /// the reliable signal. It is read by reflection because the field is private.
+    /// </summary>
+    private static async Task<bool> WaitUntilDisposedAsync(
+        InferenceSession session,
+        CancellationToken cancellationToken
+    )
+    {
+        for (int attempt = 0; attempt < 1000; attempt++)
+        {
+            if (IsDisposed(session))
+            {
+                return true;
+            }
+
+            await Task.Delay(10, cancellationToken);
+        }
+
+        return IsDisposed(session);
+    }
+
+    private static bool IsDisposed(InferenceSession session)
+    {
+        FieldInfo handle =
+            typeof(InferenceSession).GetField(
+                "_nativeHandle",
+                BindingFlags.Instance | BindingFlags.NonPublic
+            )
+            ?? throw new InvalidOperationException(
+                "InferenceSession._nativeHandle was not found; the disposal probe needs updating."
+            );
+
+        return (IntPtr)handle.GetValue(session)! == IntPtr.Zero;
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task SessionIsNotDisposedByInvalidationWhileItsScopeIsHeld()
+    {
+        // The engine takes the scope BEFORE the fetch, so an eviction or invalidation on another
+        // thread cannot free the session between the lookup and the Run. This proves the deferral:
+        // while the scope is held the session must still be runnable, and only after the scope drains
+        // may the invalidation dispose it.
+        string modelPath = ModelPath();
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        InferenceSession session;
+        using (factory.EnterInferenceScope())
+        {
+            session = factory.GetOrCreateSession(modelPath);
+
+            // Same thread, so this cannot deadlock on the scope; a concurrent invalidate takes the
+            // same path. The disposal must be deferred, not performed here.
+            factory.InvalidateSession(modelPath);
+
+            Assert.False(
+                IsDisposed(session),
+                "the invalidated session was disposed while its scope was still held"
+            );
+        }
+
+        // Once the scope is gone the deferred drain may dispose it.
+        Assert.True(
+            await WaitUntilDisposedAsync(session, TestContext.Current.CancellationToken),
+            "the invalidated session was never disposed after its scope ended"
+        );
     }
 }

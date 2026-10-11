@@ -6,6 +6,12 @@ namespace MangaIngestWithUpscaling.Shared.Services.GPU;
 
 /// <summary>
 /// Represents GPU memory metrics queried directly from the Vulkan graphics driver.
+/// <para>
+/// <see cref="DeviceIndex"/> is the accelerator index the caller asked about — the same index space
+/// the rest of this class uses, not the Vulkan physical-device index that
+/// <see cref="VulkanMemoryProvider.ResolveGpuIndex"/> resolves it to. The two differ whenever a
+/// software rasterizer is enumerated before the GPUs.
+/// </para>
 /// </summary>
 public record VulkanGpuMemory(
     int DeviceIndex,
@@ -44,8 +50,8 @@ public static class VulkanMemoryProvider
     private static VkGetPhysicalDeviceFeatures2Delegate? _vkGetPhysicalDeviceFeatures2;
 
     // Vulkan constants
-    private const uint VK_STRUCTURE_TYPE_APPLICATION_INFO = 1;
-    private const uint VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 10;
+    private const uint VK_STRUCTURE_TYPE_APPLICATION_INFO = 0;
+    private const uint VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 1;
     private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 = 1000059000;
     private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 = 1000059006;
     private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES = 1000082000;
@@ -284,9 +290,11 @@ public static class VulkanMemoryProvider
     }
 
     /// <summary>
-    /// Queries memory metrics for every accelerator, indexed by accelerator index so that
-    /// <c>QueryAllDevices()[i]</c> is <c>QueryDevice(i)</c>. Software rasterizers are not listed:
-    /// they are not accelerators and are not selectable as a device.
+    /// Queries memory metrics for every accelerator that reported memory-budget information, indexed
+    /// by accelerator index. Accelerators whose driver reported none are omitted, and
+    /// <see cref="QueryDevice"/> returns null for them so the caller falls back to a source that can
+    /// measure usage (DRM sysfs / nvidia-smi). Software rasterizers are never listed: they are not
+    /// accelerators and are not selectable as a device.
     /// </summary>
     public static IReadOnlyList<VulkanGpuMemory> QueryAllDevices()
     {
@@ -310,14 +318,47 @@ public static class VulkanMemoryProvider
 
     /// <summary>
     /// Queries memory metrics (total VRAM, driver budget, used VRAM) for the specified accelerator.
-    /// Returns null if Vulkan is unavailable or no accelerator exists at all.
+    /// Returns null if Vulkan is unavailable, no accelerator exists at all, or the driver reported no
+    /// memory-budget information. The last case is deliberate: a zeroed budget is not an idle card,
+    /// and returning null makes <c>OnnxTiler.GetAvailableVramBudget</c> fall through to DRM sysfs /
+    /// nvidia-smi instead of budgeting the card as quasi-exclusive.
     /// </summary>
     public static VulkanGpuMemory? QueryDevice(int deviceIndex = 0)
     {
         EnsureInitialized();
 
         int targetIndex = ResolveGpuIndex(deviceIndex);
-        return targetIndex < 0 ? null : QueryDeviceInternal(targetIndex);
+        if (targetIndex < 0)
+        {
+            return null;
+        }
+
+        return QueryDeviceInternal(targetIndex, AcceleratorIndexFor(targetIndex));
+    }
+
+    /// <summary>
+    /// The accelerator index of an already-resolved Vulkan physical device, so
+    /// <see cref="VulkanGpuMemory.DeviceIndex"/> reports the accelerator the caller asked about rather
+    /// than the physical device it resolved to. The two differ whenever a software rasterizer is
+    /// enumerated before the GPUs.
+    /// </summary>
+    private static int AcceleratorIndexFor(int physicalIndex)
+    {
+        if (_deviceTypes == null)
+        {
+            return 0;
+        }
+
+        int accelerator = 0;
+        for (int i = 0; i < physicalIndex && i < _deviceTypes.Length; i++)
+        {
+            if (_deviceTypes[i] != VK_PHYSICAL_DEVICE_TYPE_CPU)
+            {
+                accelerator++;
+            }
+        }
+
+        return accelerator;
     }
 
     /// <summary>
@@ -464,14 +505,34 @@ public static class VulkanMemoryProvider
         return vendor is 0x10DE or 0x1002 or 0x8086 or 0x106B;
     }
 
-    private static unsafe VulkanGpuMemory? QueryDeviceInternal(int index)
+    /// <summary>
+    /// One memory heap, as read from <c>vkGetPhysicalDeviceMemoryProperties2</c>, together with the
+    /// budget/usage the driver filled into the chained
+    /// <c>VkPhysicalDeviceMemoryBudgetPropertiesEXT</c> (both zero when it did not). Extracted so the
+    /// heap-selection decision can be exercised without a GPU.
+    /// </summary>
+    internal readonly record struct VulkanHeapInfo(
+        ulong SizeBytes,
+        uint Flags,
+        ulong BudgetBytes,
+        ulong UsageBytes
+    );
+
+    private static unsafe VulkanGpuMemory? QueryDeviceInternal(
+        int physicalIndex,
+        int acceleratorIndex
+    )
     {
-        if (_physicalDevices == null || index < 0 || index >= _physicalDevices.Length)
+        if (
+            _physicalDevices == null
+            || physicalIndex < 0
+            || physicalIndex >= _physicalDevices.Length
+        )
         {
             return null;
         }
 
-        IntPtr dev = _physicalDevices[index];
+        IntPtr dev = _physicalDevices[physicalIndex];
         if (dev == IntPtr.Zero || _vkGetPhysicalDeviceMemoryProperties2 == null)
         {
             return null;
@@ -493,80 +554,131 @@ public static class VulkanMemoryProvider
 
             _vkGetPhysicalDeviceMemoryProperties2(dev, ref memProps2);
 
-            uint heapCount = memProps2.memoryProperties.memoryHeapCount;
-            long bestVramTotal = 0;
-            long bestVramBudget = 0;
-            long bestVramUsed = 0;
-            long bestGttTotal = 0;
-            long bestGttUsed = 0;
-
+            int heapCount = (int)Math.Min(memProps2.memoryProperties.memoryHeapCount, 16u);
             var heaps = (VkMemoryHeap*)memProps2.memoryProperties.memoryHeaps;
-            for (int i = 0; i < heapCount && i < 16; i++)
+
+            Span<VulkanHeapInfo> heapInfos = stackalloc VulkanHeapInfo[heapCount];
+            for (int i = 0; i < heapCount; i++)
             {
-                var heap = heaps[i];
-                bool isDeviceLocal = (heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
-
-                // On discrete GPUs, the primary VRAM pool is the largest device-local heap.
-                // On integrated GPUs / unified memory, all heaps may share memory.
-                if (isDeviceLocal && (long)heap.size > bestVramTotal)
-                {
-                    bestVramTotal = (long)heap.size;
-                    bestVramBudget = (long)budgetProps.heapBudget[i];
-                    bestVramUsed = (long)budgetProps.heapUsage[i];
-                }
-                else if (!isDeviceLocal && (long)heap.size > bestGttTotal)
-                {
-                    bestGttTotal = (long)heap.size;
-                    bestGttUsed = (long)budgetProps.heapUsage[i];
-                }
+                heapInfos[i] = new VulkanHeapInfo(
+                    heaps[i].size,
+                    heaps[i].flags,
+                    budgetProps.heapBudget[i],
+                    budgetProps.heapUsage[i]
+                );
             }
-
-            // Fallback: If no heap was flagged DEVICE_LOCAL, pick the largest heap overall
-            if (bestVramTotal == 0)
-            {
-                for (int i = 0; i < heapCount && i < 16; i++)
-                {
-                    var heap = heaps[i];
-                    if ((long)heap.size > bestVramTotal)
-                    {
-                        bestVramTotal = (long)heap.size;
-                        bestVramBudget = (long)budgetProps.heapBudget[i];
-                        bestVramUsed = (long)budgetProps.heapUsage[i];
-                    }
-                }
-            }
-
-            long effectiveUsed =
-                bestVramUsed > 0
-                    ? bestVramUsed
-                    : (
-                        bestVramBudget > 0 && bestVramBudget < bestVramTotal
-                            ? bestVramTotal - bestVramBudget
-                            : 0
-                    );
 
             string name =
-                (_deviceNames != null && index < _deviceNames.Length)
-                    ? _deviceNames[index]
-                    : $"Vulkan Device {index}";
+                (_deviceNames != null && physicalIndex < _deviceNames.Length)
+                    ? _deviceNames[physicalIndex]
+                    : $"Vulkan Device {physicalIndex}";
             uint vendorId =
-                (_vendorIds != null && index < _vendorIds.Length) ? _vendorIds[index] : 0;
+                (_vendorIds != null && physicalIndex < _vendorIds.Length)
+                    ? _vendorIds[physicalIndex]
+                    : 0;
 
-            return new VulkanGpuMemory(
-                index,
-                name,
-                vendorId,
-                bestVramTotal,
-                bestVramBudget,
-                effectiveUsed,
-                bestGttTotal,
-                bestGttUsed
-            );
+            return BuildMemoryMetrics(acceleratorIndex, name, vendorId, heapInfos);
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Maps the raw heap table to <see cref="VulkanGpuMemory"/>, or returns null when the driver
+    /// reported no memory-budget information for any heap.
+    /// <para>
+    /// <c>VK_EXT_memory_budget</c> needs no enabling for the properties query, but a driver that does
+    /// not implement it leaves every chained <c>heapBudget</c> and <c>heapUsage</c> entry at zero.
+    /// Those zeros cannot be told apart from a genuinely idle card if they are reported as
+    /// <c>UsedVramBytes = 0</c>: <c>OnnxTiler.CalculateVramBudget</c> would then take its
+    /// quasi-exclusive branch and budget roughly <c>total − 256 MiB</c> on a desktop that is
+    /// actually holding several GB. Returning null instead is what makes
+    /// <c>OnnxTiler.GetAvailableVramBudget</c> treat the Vulkan source as having no usable
+    /// information and fall through to DRM sysfs / nvidia-smi, which measure actual usage.
+    /// </para>
+    /// </summary>
+    internal static VulkanGpuMemory? BuildMemoryMetrics(
+        int acceleratorIndex,
+        string deviceName,
+        uint vendorId,
+        ReadOnlySpan<VulkanHeapInfo> heaps
+    )
+    {
+        long bestVramTotal = 0;
+        long bestVramBudget = 0;
+        long bestVramUsed = 0;
+        long bestGttTotal = 0;
+        long bestGttUsed = 0;
+        bool anyBudgetInformation = false;
+
+        for (int i = 0; i < heaps.Length; i++)
+        {
+            VulkanHeapInfo heap = heaps[i];
+            if (heap.BudgetBytes != 0 || heap.UsageBytes != 0)
+            {
+                anyBudgetInformation = true;
+            }
+
+            bool isDeviceLocal = (heap.Flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+
+            // On discrete GPUs, the primary VRAM pool is the largest device-local heap.
+            // On integrated GPUs / unified memory, all heaps may share memory.
+            if (isDeviceLocal && (long)heap.SizeBytes > bestVramTotal)
+            {
+                bestVramTotal = (long)heap.SizeBytes;
+                bestVramBudget = (long)heap.BudgetBytes;
+                bestVramUsed = (long)heap.UsageBytes;
+            }
+            else if (!isDeviceLocal && (long)heap.SizeBytes > bestGttTotal)
+            {
+                bestGttTotal = (long)heap.SizeBytes;
+                bestGttUsed = (long)heap.UsageBytes;
+            }
+        }
+
+        // No heap carries a budget or a usage figure: the driver never populated the extension
+        // struct, so neither the used VRAM nor the free budget is known. Do not guess zero.
+        if (!anyBudgetInformation)
+        {
+            return null;
+        }
+
+        // Fallback: If no heap was flagged DEVICE_LOCAL, pick the largest heap overall
+        if (bestVramTotal == 0)
+        {
+            for (int i = 0; i < heaps.Length; i++)
+            {
+                VulkanHeapInfo heap = heaps[i];
+                if ((long)heap.SizeBytes > bestVramTotal)
+                {
+                    bestVramTotal = (long)heap.SizeBytes;
+                    bestVramBudget = (long)heap.BudgetBytes;
+                    bestVramUsed = (long)heap.UsageBytes;
+                }
+            }
+        }
+
+        long effectiveUsed =
+            bestVramUsed > 0
+                ? bestVramUsed
+                : (
+                    bestVramBudget > 0 && bestVramBudget < bestVramTotal
+                        ? bestVramTotal - bestVramBudget
+                        : 0
+                );
+
+        return new VulkanGpuMemory(
+            acceleratorIndex,
+            deviceName,
+            vendorId,
+            bestVramTotal,
+            bestVramBudget,
+            effectiveUsed,
+            bestGttTotal,
+            bestGttUsed
+        );
     }
 
     [MemberNotNullWhen(true, nameof(_physicalDevices))]

@@ -211,7 +211,7 @@ public class MangaJaNaiWorkerClient(
                 {
                     throw;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!IsInfrastructureFailure(ex))
                 {
                     logger.LogError(ex, "Failed to upscale page {PageName}", p.Page.Name);
                     jobFile = new UpscaleJobFile(p.Page.Name, p.OutPath, UpscaleJobStatus.Error);
@@ -278,7 +278,7 @@ public class MangaJaNaiWorkerClient(
                     {
                         throw;
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!IsInfrastructureFailure(ex))
                     {
                         logger.LogError(ex, "Failed to upscale page {PageName}", page.Name);
                         RecordPage(
@@ -349,6 +349,15 @@ public class MangaJaNaiWorkerClient(
             return Task.FromResult(false);
         }
     }
+
+    /// <summary>
+    /// True for failures that say something about the machine, not about this one page. They must
+    /// propagate rather than being turned into a per-page error: a device hiccup or a full disk is
+    /// classified Transient upstream precisely so the worker is requeued, and swallowing it here
+    /// would commit a chapter whose page was never upscaled.
+    /// </summary>
+    private static bool IsInfrastructureFailure(Exception ex) =>
+        ex is IOException or UnauthorizedAccessException || OnnxTiler.IsMemoryException(ex);
 
     public static string ToExtension(CompressionFormat format) =>
         format switch

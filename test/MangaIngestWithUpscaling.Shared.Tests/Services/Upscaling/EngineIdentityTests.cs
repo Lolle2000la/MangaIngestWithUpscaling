@@ -286,6 +286,33 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_UsesTheResolvedBackendsFp16AnswerNotTheAutoPreference()
+    {
+        // Auto is only a preference, so the FP16 probe must answer for the backend actually in use,
+        // exactly as the model set is chosen from that same resolved backend. The CPU and a
+        // non-WebGPU accelerator have a fixed answer (false and true), so an identity that hashed the
+        // Auto preference would use one probe answer for both and could not match both explicit
+        // settings at once.
+        UpscalerConfig autoPreference = Config();
+        Assert.Equal(GpuBackend.Auto, autoPreference.PreferredGpuBackend);
+
+        UpscalerConfig explicitFp16 = Config();
+        explicitFp16.UseFp16 = true;
+        UpscalerConfig explicitFp32 = Config();
+        explicitFp32.UseFp16 = false;
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(explicitFp32, GpuBackend.CPU),
+            EngineIdentity.ForUpscaler(autoPreference, GpuBackend.CPU)
+        );
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(explicitFp16, GpuBackend.CUDA),
+            EngineIdentity.ForUpscaler(autoPreference, GpuBackend.CUDA)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForUpscaler_ChangesWhenTheEngineVersionChanges()
     {
         // The engine code version is not part of the .NET assembly version, so it is hashed

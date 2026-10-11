@@ -635,7 +635,6 @@ public class MangaJaNaiUpscaler(
             Format = profile.CompressionFormat,
             Scale = profile.ScalingFactor,
             Quality = profile.Quality,
-            Overwrite = true,
         };
 
         try

@@ -312,9 +312,15 @@ public static class OnnxTiler
     public const int DefaultTilePad = 16;
 
     /// <summary>
-    /// Smallest tile dimension we will pick automatically. Below this the overlap/blending overhead
+    /// Smallest tile dimension the planner will enumerate. Below this the overlap/blending overhead
     /// per pixel and the loss of receptive-field context on manga screentones outweigh the memory
     /// saving, and driver overhead starts to dominate.
+    /// <para>
+    /// The emergency fallback returned when no affordable grid exists is not bound by this: it is
+    /// <see cref="TileSplit.For"/> at this size, which shrinks each tile to fit the page exactly and
+    /// can therefore land below the floor, and the engine halves it again when the driver refuses
+    /// the allocation.
+    /// </para>
     /// </summary>
     public const int MinimumTileSize = 256;
 
@@ -723,9 +729,17 @@ public static class OnnxTiler
             return singlePass;
         }
 
-        int maxColumns = (width + MinimumTileSize - 1) / MinimumTileSize;
-        int maxRows = (height + MinimumTileSize - 1) / MinimumTileSize;
+        // Floor division, not ceil: ceil(width / MinimumTileSize) columns still allowed the last
+        // column count to shrink a tile below the floor (1125 -> 5 columns -> 225), which is exactly
+        // the quality the constant exists to protect. Floor division bounds columns so
+        // ceil(width / columns) >= MinimumTileSize, and columns = 1 stays reachable, so the largest
+        // tile is still considered.
+        int maxColumns = Math.Max(1, width / MinimumTileSize);
+        int maxRows = Math.Max(1, height / MinimumTileSize);
 
+        // The seed doubles as the fallback returned when no affordable grid was found. Its tiles can
+        // be finer than MinimumTileSize (TileSplit.For shrinks them to cover the page exactly), which
+        // is the emergency the engine halves again on allocation failure.
         TileSplit best = TileSplit.For(width, height, MinimumTileSize);
         long bestWork = long.MaxValue;
         int bestContext = -1;

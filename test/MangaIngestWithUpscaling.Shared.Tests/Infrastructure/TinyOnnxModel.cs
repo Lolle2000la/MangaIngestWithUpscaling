@@ -306,6 +306,7 @@ internal static class TinyOnnxModel
     private const string ZeroInputName = "zero";
     private const string ReshapeShapeName = "shape";
     private const string ThresholdName = "threshold";
+    private const string RowMeanFlatName = "row_mean_flat";
 
     // The tensor is [1, 3, height, width], so width and channels are the axes these are indexed on.
     private const int WidthAxis = 3;
@@ -399,9 +400,17 @@ internal static class TinyOnnxModel
     /// round, so the pair of assertions pins the plane layout rather than just "it runs".
     /// </para>
     /// </summary>
+    /// <param name="fileName">The name to write the model under.</param>
+    /// <param name="nonFiniteProbabilities">
+    /// True to divide the row mean by zero after the reshape, so <c>probabilities</c> comes back
+    /// NaN/infinity and <c>peak_mask</c> — <c>Greater</c> against NaN — comes back all-false. That is
+    /// exactly what a mis-executing execution provider returns, and it exercises the detector's
+    /// non-finite guard instead of the silent zero-split it would otherwise produce.
+    /// </param>
     public static string WritePeakMaskDetector(
         string directory,
-        string fileName = "tiny-detector.onnx"
+        string fileName = "tiny-detector.onnx",
+        bool nonFiniteProbabilities = false
     ) =>
         Write(
             directory,
@@ -459,10 +468,38 @@ internal static class TinyOnnxModel
                             {
                                 WriteString(node, NodeInput, "row_mean");
                                 WriteString(node, NodeInput, ReshapeShapeName);
-                                WriteString(node, NodeOutput, ProbabilitiesName);
+                                WriteString(
+                                    node,
+                                    NodeOutput,
+                                    nonFiniteProbabilities ? RowMeanFlatName : ProbabilitiesName
+                                );
                                 WriteString(node, NodeOpType, "Reshape");
                             }
                         );
+                        if (nonFiniteProbabilities)
+                        {
+                            // x / 0 is an infinity and 0 / 0 is a NaN; either is non-finite, and a
+                            // consumer cannot tell them apart, so both have to be rejected.
+                            WriteMessage(
+                                graph,
+                                Node,
+                                node =>
+                                {
+                                    WriteString(node, NodeInput, RowMeanFlatName);
+                                    WriteString(node, NodeInput, ZeroInputName);
+                                    WriteString(node, NodeOutput, ProbabilitiesName);
+                                    WriteString(node, NodeOpType, "Div");
+                                }
+                            );
+                            WriteInitializer(
+                                graph,
+                                ZeroInputName,
+                                ElementTypeFp32,
+                                [1],
+                                BitConverter.GetBytes(0f)
+                            );
+                        }
+
                         WriteMessage(
                             graph,
                             Node,

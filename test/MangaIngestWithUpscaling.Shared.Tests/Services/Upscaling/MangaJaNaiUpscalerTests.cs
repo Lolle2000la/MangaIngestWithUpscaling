@@ -691,17 +691,6 @@ public class MangaJaNaiUpscalerTests : IDisposable
             );
     }
 
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void Constructor_ShouldNotThrow()
-    {
-        // This test validates that the constructor can be called with mocked dependencies
-        // without throwing exceptions due to missing dependencies
-
-        // Arrange, Act & Assert - Constructor is called in test setup
-        Assert.NotNull(_upscaler);
-    }
-
     [Theory]
     [Trait("Category", "Unit")]
     [InlineData(1_000_000L, 60.0)] // 1 MP → 1× base (1 min)
@@ -817,33 +806,27 @@ public class MangaJaNaiUpscalerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task DownloadModelsIfNecessary_ShouldComplete()
     {
-        // Arrange
-        var cancellationToken = CancellationToken.None;
+        // The configured models directory is a fresh guid directory, so nothing is installed and
+        // every package the resolved provider selects has to be fetched. The post-condition is the
+        // point: the previous version only checked the exception type and passed on a host that
+        // downloaded nothing, and its two guards contradicted each other over HttpRequestException.
+        IReadOnlyList<MangaJaNaiUpscaler.ModelPackage> packages = _upscaler.GetModelPackages();
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
 
-        // Act & Assert - This may download models
-        var exception = await Record.ExceptionAsync(() =>
-            _upscaler.DownloadModelsIfNecessary(cancellationToken)
-        );
+        await _upscaler.DownloadModelsIfNecessary(CancellationToken.None);
 
-        // Should either complete successfully or fail with expected exceptions
-        if (
-            exception != null
-            && exception is not FileNotFoundException
-            && exception is not InvalidOperationException
-        )
+        foreach (MangaJaNaiUpscaler.ModelPackage package in packages)
         {
-            Assert.Fail(
-                $"Unexpected exception type: {exception.GetType().Name}, Message: {exception.Message}"
-            );
+            foreach (string archiveFile in package.ExpectedFileHashes.Keys)
+            {
+                string onDisk = Path.Combine(
+                    modelsDirectory,
+                    ModelFileNames.Resolve(archiveFile, package.PrecisionSuffix)
+                );
+                Assert.True(File.Exists(onDisk), $"{package.ZipUrl} did not install {onDisk}");
+                Assert.True(new FileInfo(onDisk).Length > 0, $"{onDisk} was left empty");
+            }
         }
-
-        Assert.True(
-            exception
-                is null
-                    or FileNotFoundException
-                    or InvalidOperationException
-                    or HttpRequestException
-        );
     }
 
     [Fact]
