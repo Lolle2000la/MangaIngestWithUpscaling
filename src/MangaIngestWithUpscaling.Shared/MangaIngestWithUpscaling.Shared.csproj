@@ -5,15 +5,20 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
-    <!-- ONNX Runtime Backend Selection: Cpu (default), Cuda, Managed. The Managed flavor ships no
-         native execution providers beyond CPU and nothing in the repository selects it; it stays as
-         an escape hatch for callers that pass the property OnnxRuntimeFlavor=Managed, and shares the version default so the
-         flavors cannot drift into shipping different runtimes. The WebGPU EP is bundled into every
-         flavor but Managed on purpose: the CUDA image installs mesa-vulkan-drivers so a container
-         without GPU access can still fall back to WebGPU. -->
+    <!-- ONNX Runtime Backend Selection: Cpu (default), Cuda. Both ship the WebGPU EP as well, on
+         purpose: the CUDA image installs mesa-vulkan-drivers so a container without GPU access can
+         still fall back to WebGPU. An unknown value fails the build with the list of valid ones
+         rather than silently producing a build with no runtime package in it. -->
     <OnnxRuntimeFlavor Condition="'$(OnnxRuntimeFlavor)' == ''">Cpu</OnnxRuntimeFlavor>
     <OnnxRuntimeVersion Condition="'$(OnnxRuntimeVersion)' == ''">1.29.0</OnnxRuntimeVersion>
   </PropertyGroup>
+
+  <Target Name="ValidateOnnxRuntimeFlavor" BeforeTargets="Restore;Build">
+    <Error
+      Condition="'$(OnnxRuntimeFlavor)' != 'Cpu' And '$(OnnxRuntimeFlavor)' != 'Cuda'"
+      Text="Unknown OnnxRuntimeFlavor '$(OnnxRuntimeFlavor)'. Valid values are Cpu and Cuda."
+    />
+  </Target>
 
   <ItemGroup Condition="'$(OnnxRuntimeFlavor)' == 'Cpu'">
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="$(OnnxRuntimeVersion)" />
@@ -23,11 +28,7 @@
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="$(OnnxRuntimeVersion)" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(OnnxRuntimeFlavor)' == 'Managed'">
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="$(OnnxRuntimeVersion)" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(OnnxRuntimeFlavor)' != 'Managed'">
+  <ItemGroup>
     <PackageReference Include="Microsoft.ML.OnnxRuntime.EP.WebGpu" Version="0.4.0" />
   </ItemGroup>
 

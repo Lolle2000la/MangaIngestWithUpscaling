@@ -1,8 +1,10 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.ML.OnnxRuntime;
 using NSubstitute;
 using Xunit;
 
@@ -117,6 +119,104 @@ public class DeviceMemoryCalibratorTests
             Assert.Equal(4.5, profile!.ActivationScale);
             // A cache hit must not touch the GPU at all
             sessionFactory.DidNotReceiveWithAnyArgs().GetOrCreateSession(default!);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetOrCalibrate_AfterAFailedBenchmark_DoesNotRetryItForEveryPage()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+
+            // A models directory the profile cannot be written back to (a read-only volume, a
+            // container running as an arbitrary uid) makes the benchmark come back empty. _unsupported
+            // is meant to stop that from being re-learned on every page; without it being read, each
+            // page paid three benchmark inferences plus a session teardown to reach the same null.
+            // A session that cannot be created makes the benchmark fail the same way, without
+            // needing an unwritable volume to set up.
+            // A session the factory cannot produce is the same failure an unwritable models volume
+            // ends in, without needing one to set up.
+            sessionFactory
+                .GetOrCreateSession(Arg.Any<string>())
+                .Returns((InferenceSession)null!);
+
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig()),
+                store,
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            // Named for what the calibrator looks for (a small ESRGAN) and so the scale comes off the
+            // name, which is what makes it pick this file at all.
+            TinyOnnxModel.WriteNearestUpscaler(
+                dir,
+                scale: 4,
+                fileName: "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"
+            );
+
+            DeviceMemoryProfile? first = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+            DeviceMemoryProfile? second = await calibrator.GetOrCalibrateAsync(
+                0,
+                dir,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Null(first);
+            Assert.Null(second);
+            // The benchmark ran once, not once per page.
+            sessionFactory.Received(1).GetOrCreateSession(Arg.Any<string>());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetOrCalibrate_WithRecalibrateForced_RetriesAFailedBenchmark()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+            // A session the factory cannot produce is the same failure an unwritable models volume
+            // ends in, without needing one to set up.
+            sessionFactory.GetOrCreateSession(Arg.Any<string>()).Returns((InferenceSession)null!);
+
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig { RecalibrateDeviceMemory = true }),
+                store,
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            TinyOnnxModel.WriteNearestUpscaler(
+                dir,
+                scale: 4,
+                fileName: "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"
+            );
+
+            await calibrator.GetOrCalibrateAsync(0, dir, TestContext.Current.CancellationToken);
+            await calibrator.GetOrCalibrateAsync(0, dir, TestContext.Current.CancellationToken);
+
+            // Forcing recalibration means the "already tried" short-circuit must not apply, nor may
+            // the failure be remembered for it.
+            sessionFactory.Received(2).GetOrCreateSession(Arg.Any<string>());
         }
         finally
         {

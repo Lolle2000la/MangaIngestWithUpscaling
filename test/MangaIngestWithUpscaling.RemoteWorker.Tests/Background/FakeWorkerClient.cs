@@ -12,7 +12,7 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
 
     /// <summary>Exception thrown at the drop point; defaults to a simulated I/O drop.</summary>
     public Exception? DropException { get; init; }
-    public string PageStatus { get; init; } = "upscaled";
+    public UpscaleJobStatus PageStatus { get; init; } = UpscaleJobStatus.Success;
 
     /// <summary>True once the page enumeration was cancelled (the chapter was stopped mid-stream).</summary>
     public bool Canceled { get; private set; }

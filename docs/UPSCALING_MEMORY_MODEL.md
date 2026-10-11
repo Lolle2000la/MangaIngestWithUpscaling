@@ -91,6 +91,15 @@ A freshly created session reserves ~380 MB of VRAM on this card before any infer
 WebGPU EP arenas, Dawn/Vulkan driver-side allocations and pipeline caches). It is subtracted from
 the budget once, as `OnnxTiler.SessionReservationBytes` (384 MiB).
 
+### 1.4 One session at a time
+
+`OnnxSessionFactory` caches exactly one model (`MaxCachedSessions = 1`), because a second resident
+model doubles `C` for no gain while consecutive chapters are the common case. The page-break
+detector shares the same factory, so on a worker that runs detection and upscaling at the same time
+the two evict each other's model: every switch pays a reload. That is a throughput cost, not a
+correctness one — `EnterInferenceScope` serialises the two — and it is the deliberate price of
+keeping `C` to a single model.
+
 ---
 
 ## 2. How the split is derived

@@ -1034,9 +1034,17 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
     /// <summary>
     /// Writes a placeholder for every model the suite expects except <paramref name="missing"/>,
-    /// under the name each package stores its files under. With those in place only the package that
-    /// holds the missing file is fetched, which is what the test is about; the other packages are
-    /// not, and without the placeholders the test would pull down every archive in the release.
+    /// under the name each package stores its files under.
+    /// <para>
+    /// The placeholders make the files *exist*, which is what the existence check inside
+    /// <c>ShouldDownloadPackage</c> looks at — the package that holds <paramref name="missing"/> is
+    /// therefore the only one that is found missing outright. They cannot satisfy the hash
+    /// verification that follows, and no placeholder can: an expected SHA-256 is not something a
+    /// test can produce content for. So the seeded packages are still re-verified and re-downloaded,
+    /// which is why the tests that use this are <c>Category=Download</c>. What the placeholders buy
+    /// is that the download step is not pulling every archive just to reach the one this test is
+    /// about, and that a missing file is diagnosed rather than merely failing a hash.
+    /// </para>
     /// </summary>
     private void SeedEveryExpectedModelExcept(string missing) =>
         SeedEveryExpectedModelExcept(missing, MangaJaNaiUpscaler.ExpectedModelFiles());

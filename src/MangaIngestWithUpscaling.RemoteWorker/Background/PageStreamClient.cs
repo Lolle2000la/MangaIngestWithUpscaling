@@ -276,7 +276,7 @@ public sealed class PageStreamClient(
                     return;
                 }
 
-                if (file.Status == "upscaled" && !string.IsNullOrEmpty(file.Output))
+                if (file.Status == UpscaleJobStatus.Success)
                 {
                     uploads.Writer.TryWrite(
                         new PageUpload(doneIndex, file.Output, DeleteAfterUpload: true)

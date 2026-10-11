@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Xunit;
 
@@ -44,7 +45,7 @@ public class EngineIdentityTests
         string directory = Directory.CreateTempSubdirectory("engine_models").FullName;
         try
         {
-            string model = Path.Combine(directory, "model.pth");
+            string model = Path.Combine(directory, "model.onnx");
             File.WriteAllBytes(model, new byte[] { 1, 2, 3 });
             UpscalerConfig config = Config();
             config.ModelsDirectory = directory;
@@ -55,6 +56,42 @@ public class EngineIdentityTests
             string after = EngineIdentity.ForUpscaler(config);
 
             Assert.NotEqual(before, after);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void ForUpscaler_IgnoresTheCalibrationProfileAndDownloadMarkers()
+    {
+        // The models directory also carries state that has nothing to do with the weights: the
+        // per-device calibration profile, written the first time a device is calibrated, and a
+        // .verified_* marker per downloaded package. Neither may enter the identity, or two workers
+        // with byte-identical models land on different identities and discard each other's spool.
+        string directory = Directory.CreateTempSubdirectory("engine_models").FullName;
+        try
+        {
+            UpscalerConfig config = Config();
+            config.ModelsDirectory = directory;
+            string before = EngineIdentity.ForUpscaler(config);
+
+            File.WriteAllText(
+                Path.Combine(directory, DeviceMemoryProfileStore.FileName),
+                """{"activationScale": 1.5}"""
+            );
+            File.WriteAllText(
+                Path.Combine(directory, $".verified_{new string('a', 64)}"),
+                new string('a', 64)
+            );
+            string after = EngineIdentity.ForUpscaler(config);
+
+            Assert.Equal(before, after);
+
+            // The weights themselves still count, so the filter is not just hiding everything.
+            File.WriteAllBytes(Path.Combine(directory, "model.onnx"), new byte[] { 1, 2, 3 });
+            Assert.NotEqual(before, EngineIdentity.ForUpscaler(config));
         }
         finally
         {

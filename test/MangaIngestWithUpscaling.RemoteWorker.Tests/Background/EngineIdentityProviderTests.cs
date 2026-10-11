@@ -27,8 +27,8 @@ public class EngineIdentityProviderTests
         {
             // A broken symlink makes the directory walk throw (FileInfo.Length/File.OpenRead) without
             // relying on a permission change that a root CI would ignore.
-            string model = Path.Combine(directory, "model.pth");
-            File.CreateSymbolicLink(model, Path.Combine(directory, "missing-target.pth"));
+            string model = Path.Combine(directory, "model.onnx");
+            File.CreateSymbolicLink(model, Path.Combine(directory, "missing-target.onnx"));
 
             var provider = new EngineIdentityProvider(
                 Options.Create(new UpscalerConfig { ModelsDirectory = directory })

@@ -6,10 +6,15 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// Drives upscale execution. The worker is an in-process ONNX runtime rather than a separate
 /// process: a job and a chapter are the two shapes a caller can submit, and each keeps exactly one
 /// model session cached while it runs. The session cache is deliberately bounded
-/// (<see cref="OnnxSessionFactory.MaxCachedSessions"/>) and dropped after every chapter, so caching
-/// is per-job rather than across jobs — holding a second model resident would double the device
-/// memory budget for no gain, since consecutive chapters are the common case and reloading one
-/// session is a couple of seconds.
+/// (<see cref="OnnxSessionFactory.MaxCachedSessions"/>) and released when the job or chapter ends,
+/// so caching is per-unit-of-work rather than across units — holding a second model resident would
+/// double the device memory budget for no gain, since consecutive chapters are the common case and
+/// reloading one session is a couple of seconds.
+/// <para>
+/// <see cref="ReleaseGpuCacheAsync"/> is what performs that release for the streamed-chapter path.
+/// The whole-CBZ path drops its session the same way, so both end up in the same state; only the
+/// code that gets there differs.
+/// </para>
 /// </summary>
 public interface IMangaJaNaiWorkerClient
 {
@@ -19,7 +24,9 @@ public interface IMangaJaNaiWorkerClient
     /// <param name="request">The job to run.</param>
     /// <param name="progress">Optional sink for per-file progress events.</param>
     /// <param name="cancellationToken">Cancels the in-flight job. Cancellation is cooperative: the running tile finishes and no further tile is started.</param>
-    /// <param name="timeout">Optional inactivity timeout; when exceeded the job is cancelled. The clock resets on progress, so a slow model is not mistaken for a stuck one.</param>
+    /// <param name="timeout">Optional inactivity timeout; when exceeded the job is cancelled. The
+    /// clock resets on the job's own progress — per page of a CBZ — rather than on whether a
+    /// progress sink was passed, so a job submitted without one is not a hard wall-clock limit.</param>
     Task<UpscaleJobResult> RunJobAsync(
         UpscaleJobRequest request,
         IProgress<UpscaleProgress>? progress,
@@ -48,9 +55,10 @@ public interface IMangaJaNaiWorkerClient
     );
 
     /// <summary>
-    /// Releases the device memory the worker holds. With the session bounded to one model and
-    /// dropped after every chapter there is no steady-state holding to free, so this is a no-op
-    /// kept for callers that used to have to tear a worker process down before split detection.
+    /// Releases the device memory the worker holds, and returns it to the driver. This is what the
+    /// streamed-chapter path calls when a chapter ends; the whole-CBZ path drops its own session
+    /// instead. Reloading a session afterwards costs a couple of seconds, so this is not something
+    /// to call between pages — only between chapters.
     /// </summary>
     Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken);
 }
@@ -72,7 +80,26 @@ public sealed record UpscaleJobRequest
     public int? Quality { get; init; }
 }
 
-public sealed record UpscaleJobFile(string Input, string Output, string Status);
+/// <summary>
+/// Outcome of a single page in an upscale job, as reported by <see cref="UpscaleJobFile.Status"/>.
+/// <para>
+/// The distinction is the contract between the producer that runs the engine and the streamed-chapter
+/// consumer that decides what to upload: only <see cref="Success"/> means
+/// <see cref="UpscaleJobFile.Output"/> holds upscaled pixels. Note that <see cref="Output"/> is set
+/// even for a failure — the engine writes the fallback copy to the page's destination as it goes — so
+/// the status, not the presence of a path, is what separates the two.
+/// </para>
+/// </summary>
+public enum UpscaleJobStatus
+{
+    /// <summary>The page was decoded and upscaled; <see cref="UpscaleJobFile.Output"/> is the result.</summary>
+    Success,
+
+    /// <summary>The page could not be upscaled; the caller should pass its source bytes through.</summary>
+    Error,
+}
+
+public sealed record UpscaleJobFile(string Input, string Output, UpscaleJobStatus Status);
 
 /// <summary>Output settings for a streamed chapter. Pages arrive later via the page stream.</summary>
 public sealed record ChapterJobRequest

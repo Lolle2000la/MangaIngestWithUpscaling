@@ -32,7 +32,8 @@ public record UpscalerConfig
 
     /// <summary>
     ///     Index of the device to use for upscaling.
-    ///     The device list is ordered with CPU at index 0, followed by accelerators (CUDA, ROCm, XPU, MPS).
+    ///     The device list is ordered with CPU at index 0, followed by the accelerators the runtime
+    ///     discovers for the selected backend (see <see cref="PreferredGpuBackend"/>).
     ///     Defaults to 1 (the first available GPU/accelerator).
     ///     Set to 0 to force CPU mode (equivalent to <see cref="UseCPU"/>).
     /// </summary>

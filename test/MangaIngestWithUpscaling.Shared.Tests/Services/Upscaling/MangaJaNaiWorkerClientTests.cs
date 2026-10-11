@@ -79,7 +79,9 @@ public class MangaJaNaiWorkerClientTests
                 2,
                 CompressionFormat.Webp,
                 null,
-                null,
+                // Not null any more: the inactivity clock is reset by the work's own progress, so the
+                // client wraps it even when the caller passed no sink of its own.
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 TestContext.Current.CancellationToken
             );
 
@@ -317,7 +319,7 @@ public class MangaJaNaiWorkerClientTests
 
         Assert.True(secondInferenceStarted.Task.IsCompletedSuccessfully);
         Assert.Equal(["/data/001.png", "/data/002.png"], done.Select(f => f.Input));
-        Assert.All(done, f => Assert.Equal("success", f.Status));
+        Assert.All(done, f => Assert.Equal(UpscaleJobStatus.Success, f.Status));
         Assert.Equal(2, result.Files.Count);
     }
 
@@ -376,7 +378,10 @@ public class MangaJaNaiWorkerClientTests
             null
         );
 
-        Assert.Equal(["error", "success"], done.Select(f => f.Status));
+        Assert.Equal(
+            [UpscaleJobStatus.Error, UpscaleJobStatus.Success],
+            done.Select(f => f.Status)
+        );
     }
 
     [Fact]

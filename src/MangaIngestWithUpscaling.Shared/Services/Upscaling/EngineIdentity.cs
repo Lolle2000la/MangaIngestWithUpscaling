@@ -18,6 +18,12 @@ public static class EngineIdentity
     /// <summary>
     /// Version of the upscaler engine. Increment when engine implementation changes. It must be
     /// hashed explicitly so changes invalidate cached engine spools across workers.
+    /// <para>
+    /// The value is not a gate on its own: the identity also hashes the build version and the
+    /// backend, so the whole engine change that came with this migration is already distinguished
+    /// without bumping this. It exists for a future change that keeps the build version and the
+    /// backend the same — and then it is the only thing that can separate them.
+    /// </para>
     /// </summary>
     public const int CurrentEngineVersion = 1;
 
@@ -106,11 +112,17 @@ public static class EngineIdentity
             return;
         }
 
+        // Only the ONNX weights go in. The same directory also holds the per-device calibration
+        // profile (device-memory-profile.json) and a .verified_* marker per downloaded package, and
+        // both change on a worker without the models changing at all — the profile is written the
+        // first time a device is calibrated, which is after an identity was typically already
+        // computed. Hashing those would give two workers with byte-identical models different
+        // identities, which is exactly what this fingerprint promises not to do.
         // Normalize separators and casing so the fingerprint agrees across operating systems (two
         // workers with the same models must not discard the spool), and sort by the normalized
         // relative path so enumeration order does not matter.
         IEnumerable<(string Relative, long Length, string File)> files = Directory
-            .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+            .EnumerateFiles(directory, "*.onnx", SearchOption.AllDirectories)
             .Select(file =>
                 (
                     Relative: Path.GetRelativePath(directory, file)

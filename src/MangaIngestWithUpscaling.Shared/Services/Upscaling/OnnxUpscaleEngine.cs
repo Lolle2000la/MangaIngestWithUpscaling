@@ -834,7 +834,10 @@ public class OnnxUpscaleEngine(
                 {
                     try
                     {
-                        session = sessionFactory.GetOrCreateSession(modelPath);
+                        // Not re-fetched from the factory: the one above is still the cached session
+                        // for this model, and a second lookup could only evict it for nothing — the
+                        // cache holds a single model, so anything evicting it here would be another
+                        // model's, and it would then be rebuilt on the retry below.
                         using (sessionFactory.EnterInferenceScope())
                         {
                             upscaledBytes = OnnxTiler.UpscaleRgb(

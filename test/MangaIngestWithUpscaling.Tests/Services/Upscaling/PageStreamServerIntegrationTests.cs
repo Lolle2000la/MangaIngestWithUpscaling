@@ -1697,7 +1697,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                     cancellationToken
                 );
 
-                var file = new UpscaleJobFile(page.Name, outputPath, "upscaled");
+                var file = new UpscaleJobFile(page.Name, outputPath, UpscaleJobStatus.Success);
                 files.Add(file);
                 onPageDone(file);
                 ProcessedPages++;

@@ -39,21 +39,23 @@ public class MangaJaNaiWorkerClient(
 
         CancellationToken effectiveToken = timeoutCts?.Token ?? cancellationToken;
 
-        IProgress<UpscaleProgress>? wrappedProgress =
-            progress == null
-                ? null
-                : new Progress<UpscaleProgress>(p =>
+        // The inactivity clock has to be reset by the work itself, not by whether the caller happens
+        // to want progress. Wrapping only the caller's sink left a job submitted without one running
+        // on a hard wall-clock timeout, even though the CBZ path reports a page at a time — the exact
+        // thing the timeout is documented not to do.
+        var resetProgress = new Progress<UpscaleProgress>(p =>
+        {
+            if (timeoutCts != null && timeout.HasValue && timeout.Value > TimeSpan.Zero)
+            {
+                try
                 {
-                    if (timeoutCts != null && timeout.HasValue && timeout.Value > TimeSpan.Zero)
-                    {
-                        try
-                        {
-                            timeoutCts.CancelAfter(timeout.Value);
-                        }
-                        catch (ObjectDisposedException) { }
-                    }
-                    progress.Report(p);
-                });
+                    timeoutCts.CancelAfter(timeout.Value);
+                }
+                catch (ObjectDisposedException) { }
+            }
+
+            progress?.Report(p);
+        });
 
         int scale = (int)request.Scale;
         List<UpscaleJobFile> files = [];
@@ -82,11 +84,11 @@ public class MangaJaNaiWorkerClient(
                     scale,
                     request.Format,
                     request.Quality,
-                    wrappedProgress,
+                    resetProgress,
                     effectiveToken
                 );
 
-                files.Add(new UpscaleJobFile(request.InputPath, outCbz, "success"));
+                files.Add(new UpscaleJobFile(request.InputPath, outCbz, UpscaleJobStatus.Success));
             }
             else if (File.Exists(request.InputPath))
             {
@@ -104,7 +106,7 @@ public class MangaJaNaiWorkerClient(
                     effectiveToken
                 );
 
-                files.Add(new UpscaleJobFile(request.InputPath, outPath, "success"));
+                files.Add(new UpscaleJobFile(request.InputPath, outPath, UpscaleJobStatus.Success));
             }
             else
             {
@@ -199,7 +201,7 @@ public class MangaJaNaiWorkerClient(
                 try
                 {
                     await p.Write;
-                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, "success");
+                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, UpscaleJobStatus.Success);
                 }
                 catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
                 {
@@ -208,7 +210,7 @@ public class MangaJaNaiWorkerClient(
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Failed to upscale page {PageName}", p.Page.Name);
-                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, "error");
+                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, UpscaleJobStatus.Error);
                 }
                 RecordPage(jobFile, p.Page.Name);
             }
@@ -275,7 +277,10 @@ public class MangaJaNaiWorkerClient(
                     catch (Exception ex)
                     {
                         logger.LogError(ex, "Failed to upscale page {PageName}", page.Name);
-                        RecordPage(new UpscaleJobFile(page.Path, outPath, "error"), page.Name);
+                        RecordPage(
+                            new UpscaleJobFile(page.Path, outPath, UpscaleJobStatus.Error),
+                            page.Name
+                        );
                     }
                 }
 
@@ -315,6 +320,13 @@ public class MangaJaNaiWorkerClient(
             request.Id,
             sw.Elapsed.TotalSeconds
         );
+
+        // Hand the device memory back before the next chapter. The whole-CBZ path does the same
+        // after a chapter; without it here, a worker that streams chapter after chapter keeps every
+        // buffer the execution provider grew for the last one, and the budget the next chapter is
+        // planned against is no longer what it thinks it is.
+        await ReleaseGpuCacheAsync(effectiveToken);
+
         return new UpscaleJobResult(request.Id, "success", files, sw.Elapsed.TotalSeconds);
     }
 

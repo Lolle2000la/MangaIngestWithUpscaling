@@ -343,7 +343,7 @@ public class PageStreamClientTests
             string destination = Path.Combine(directory, "out.cbz");
             var server = new FakePageServer(source, destination);
             var client = server.CreateClient();
-            var sut = CreateClient(new FakeWorkerClient { PageStatus = "error" });
+            var sut = CreateClient(new FakeWorkerClient { PageStatus = UpscaleJobStatus.Error });
 
             // Matching the whole-CBZ path, a page the engine cannot process is copied through
             // unchanged rather than failing the whole chapter.

@@ -102,6 +102,16 @@ public sealed class DeviceMemoryCalibrator(
                 return null;
             }
 
+            // The benchmark already came back empty for this fingerprint in this process, so there is
+            // nothing to learn by trying again: a models directory the profile cannot be written back
+            // to would otherwise pay three inferences plus a session teardown on every page. A
+            // measurement that worked is deliberately not in here (see below), so a fingerprint in
+            // this set always skipped the benchmark, never a successful one.
+            if (!config.Value.RecalibrateDeviceMemory && _unsupported.Contains(fingerprint))
+            {
+                return null;
+            }
+
             DeviceMemoryProfile? profile;
             try
             {
