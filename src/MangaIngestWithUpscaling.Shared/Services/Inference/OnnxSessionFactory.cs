@@ -463,7 +463,7 @@ public sealed class OnnxSessionFactory(
 
         try
         {
-            logger.LogInformation(
+            logger.LogDebug(
                 "Configuring CUDA execution provider (device {DeviceId}) for {Model}",
                 deviceId,
                 modelName
@@ -507,7 +507,7 @@ public sealed class OnnxSessionFactory(
         try
         {
             string targetDevice = deviceId > 0 ? $"GPU.{deviceId}" : "GPU";
-            logger.LogInformation(
+            logger.LogDebug(
                 "Configuring OpenVINO execution provider ({Device}) for {Model}",
                 targetDevice,
                 modelName
@@ -550,7 +550,7 @@ public sealed class OnnxSessionFactory(
 
         try
         {
-            logger.LogInformation(
+            logger.LogDebug(
                 "Configuring MIGraphX execution provider (device {DeviceId}) for {Model}",
                 deviceId,
                 modelName
@@ -593,7 +593,7 @@ public sealed class OnnxSessionFactory(
 
         try
         {
-            logger.LogInformation(
+            logger.LogDebug(
                 "Configuring DirectML execution provider (device {DeviceId}) for {Model}",
                 deviceId,
                 modelName
@@ -672,7 +672,7 @@ public sealed class OnnxSessionFactory(
                 return false;
             }
 
-            logger.LogInformation(
+            logger.LogDebug(
                 "Configuring WebGPU execution provider ({Device}) for {Model}",
                 webGpuDevice.EpName,
                 modelName
