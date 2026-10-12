@@ -984,7 +984,7 @@ public class OnnxUpscaleEngine(
             $"No model in {ModelsDirectory} can upscale {width}x{height} at {scale}x: "
                 + (
                     unusable.Count > 0
-                        ? $"{string.Join(", ", unusable)} produced non-finite output."
+                        ? $"{string.Join(", ", unusable)} failed on this device — a load, kernel or output-geometry fault, or non-finite output."
                         : "every candidate model is already known to be unusable on this device."
                 )
         );
@@ -1030,10 +1030,17 @@ public class OnnxUpscaleEngine(
                 }
                 catch { }
 
-                InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
-                bool isFp16 =
-                    session.InputMetadata.TryGetValue("input", out var inputMeta)
-                    && inputMeta.ElementType == typeof(Float16);
+                // Scoped like the inference path below: with MaxCachedSessions == 1 a concurrent job
+                // could evict and dispose this session between the fetch and the metadata read, and
+                // reading InputMetadata off a disposed session is a native call.
+                bool isFp16;
+                using (sessionFactory.EnterInferenceScope())
+                {
+                    InferenceSession probeSession = sessionFactory.GetOrCreateSession(modelPath);
+                    isFp16 =
+                        probeSession.InputMetadata.TryGetValue("input", out var inputMeta)
+                        && inputMeta.ElementType == typeof(Float16);
+                }
 
                 OnnxTiler.TileSplit split =
                     config.Value.TileSize > 0
@@ -1098,7 +1105,7 @@ public class OnnxUpscaleEngine(
                         // sessions takes the write lock and therefore waits for this scope to end.
                         using (sessionFactory.EnterInferenceScope())
                         {
-                            session = sessionFactory.GetOrCreateSession(modelPath);
+                            InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
                             upscaledBytes = OnnxTiler.UpscaleRgb(
                                 inputBytes,
                                 width,
@@ -1133,13 +1140,28 @@ public class OnnxUpscaleEngine(
                         // This is also the only halving loop: the tiler used to halve internally on
                         // the same session, which hid the failure from here and kept the arena
                         // resident, so the two descended through the same sizes twice.
-                        sessionFactory.ReleaseCachedSessions();
-                        attempt = OnnxTiler.HalveSplit(width, height, attempt);
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
+                        try
+                        {
+                            sessionFactory.ReleaseCachedSessions();
+                            attempt = OnnxTiler.HalveSplit(width, height, attempt);
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // Shutdown raced the retry: the factory is already freeing what it owns, so
+                            // there is nothing left to do here. The memory failure is what the caller's
+                            // classification should describe, not the teardown artefact — surfaced
+                            // as-is it would be neither transient nor restartable.
+                            System
+                                .Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex)
+                                .Throw();
+                        }
                     }
-                    catch (Exception)
+                    catch (Exception ex) when (ex is not OperationCanceledException)
                     {
+                        // A cancelled page says nothing about the model, and dropping the session
+                        // would make the next page rebuild it for nothing.
                         sessionFactory.InvalidateSession(modelPath);
                         throw;
                     }
@@ -1154,6 +1176,12 @@ public class OnnxUpscaleEngine(
     /// <summary>
     /// Releases the cached session when the next page needs a padded tensor shape this model has not
     /// run on it yet. See <see cref="_sessionShape"/> for why.
+    /// <para>
+    /// An unknown <see cref="_sessionShapeModel"/> also counts as a change: the session the caller is
+    /// about to fetch is the one the device probe ran a 64x64 tile on, so the probe's buffers would
+    /// otherwise be kept alongside the page's shape — the accumulation this exists to prevent. It
+    /// costs one session rebuild per model per process.
+    /// </para>
     /// </summary>
     private void ReleaseSessionForShapeChange(string modelPath, int paddedWidth, int paddedHeight)
     {
@@ -1161,8 +1189,9 @@ public class OnnxUpscaleEngine(
         lock (_sessionShapeGate)
         {
             changed =
-                string.Equals(_sessionShapeModel, modelPath, StringComparison.OrdinalIgnoreCase)
-                && _sessionShape != (paddedWidth, paddedHeight);
+                _sessionShapeModel is null
+                || !string.Equals(_sessionShapeModel, modelPath, StringComparison.OrdinalIgnoreCase)
+                || _sessionShape != (paddedWidth, paddedHeight);
             _sessionShapeModel = modelPath;
             _sessionShape = (paddedWidth, paddedHeight);
         }
@@ -1326,6 +1355,7 @@ public class OnnxUpscaleEngine(
         ex
             is OnnxRuntimeException
                 or NonFiniteModelOutputException
+                or NotSupportedException
                 or ArgumentException
                 or InvalidOperationException;
 

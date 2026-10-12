@@ -187,6 +187,27 @@ public class DeviceMemoryProfileStoreTests : IDisposable
         Assert.True(File.Exists(DeviceMemoryProfileStore.PathFor(tempDir)));
     }
 
+    [Fact]
+    public void Save_WhenTheProfileCannotBePersisted_ServesTheMeasurementFromMemory()
+    {
+        // A regression test for the property, not a fix for a bug: Save hands Read's dictionary
+        // straight back to the cache (Read assigns `cache = profiles` before returning it) and then
+        // mutates that same instance in place, so the measurement is cached whether or not the file
+        // could be written. It is pinned anyway because the failure mode is silent and expensive — a
+        // cache that missed it would make the caller re-run the multi-second benchmark for every page
+        // — and because it would break the moment Save started from a copy of Read's result.
+        // A directory standing in for the profile file makes the move fail without depending on
+        // filesystem permissions, which a root test run would bypass.
+        Directory.CreateDirectory(DeviceMemoryProfileStore.PathFor(tempDir));
+
+        var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        store.Save(tempDir, NewProfile("fp-unwritable", "gpu"));
+
+        DeviceMemoryProfile? loaded = store.Load(tempDir, "fp-unwritable");
+        Assert.NotNull(loaded);
+        Assert.Equal(5.0, loaded!.ActivationScale);
+    }
+
     private static DeviceMemoryProfile NewProfile(string fingerprint, string deviceName) =>
         new()
         {

@@ -1841,6 +1841,18 @@ public static class OnnxTiler
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        // Rejected here rather than left to ONNX Runtime: a quantized export (int8/uint8) would be
+        // handed a float tensor, the runtime would refuse the binding, and the engine would report the
+        // model as generically "unusable on this device" with nothing pointing at the dtype. This is
+        // the first place the input element type is known, and only float32 and float16 are supported.
+        if (elementType != typeof(float) && elementType != typeof(Float16))
+        {
+            throw new NotSupportedException(
+                $"The model's input tensor is {elementType.Name}; only float32 and float16 inputs are supported. "
+                    + "A quantized (int8/uint8) export cannot be used — ship the model's fp16 or fp32 copy instead."
+            );
+        }
+
         int padH = (16 - (tileH % 16)) % 16;
         int padW = (16 - (tileW % 16)) % 16;
         int paddedW = Math.Max(targetW, tileW + padW);
@@ -2068,13 +2080,9 @@ public static class OnnxTiler
                             int pIdx = rowOffset + ox;
                             int dstIdx = dstRowOffset + ox * 3;
 
-                            float r = span[outROff + pIdx] * 255.0f;
-                            float g = span[outGOff + pIdx] * 255.0f;
-                            float b = span[outBOff + pIdx] * 255.0f;
-
-                            outCrop[dstIdx] = (byte)Math.Clamp((int)(r + 0.5f), 0, 255);
-                            outCrop[dstIdx + 1] = (byte)Math.Clamp((int)(g + 0.5f), 0, 255);
-                            outCrop[dstIdx + 2] = (byte)Math.Clamp((int)(b + 0.5f), 0, 255);
+                            outCrop[dstIdx] = FloatToByte(span[outROff + pIdx]);
+                            outCrop[dstIdx + 1] = FloatToByte(span[outGOff + pIdx]);
+                            outCrop[dstIdx + 2] = FloatToByte(span[outBOff + pIdx]);
                         }
                     }
                 );
@@ -2082,6 +2090,21 @@ public static class OnnxTiler
 
             return outCrop;
         }
+    }
+
+    /// <summary>
+    /// A 0-1 model output as a byte. The clamp happens in float space on purpose: casting a float
+    /// outside the int range to int is undefined in C#, so a large finite overshoot — which the models
+    /// produce legitimately at high-contrast edges — could come back as <c>int.MinValue</c> and clamp
+    /// to 0, a black pixel where the value means "brighter than white". The fp16 path saturates
+    /// through <see cref="Float16ToByteLut"/>; this is its float counterpart.
+    /// </summary>
+    private static byte FloatToByte(float value)
+    {
+        float scaled = value * 255.0f;
+        return scaled <= 0f ? (byte)0
+            : scaled >= 255f ? (byte)255
+            : (byte)(scaled + 0.5f);
     }
 
     /// <summary>

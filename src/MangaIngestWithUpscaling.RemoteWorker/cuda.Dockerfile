@@ -12,12 +12,12 @@ COPY ["src/MangaIngestWithUpscaling.Shared/MangaIngestWithUpscaling.Shared.cspro
 RUN dotnet restore "./src/MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj" -p:OnnxRuntimeFlavor=Cuda
 COPY . .
 WORKDIR "/src/src/MangaIngestWithUpscaling.RemoteWorker"
-RUN dotnet build "./MangaIngestWithUpscaling.RemoteWorker.csproj" -c Release -o /app/build -p:OnnxRuntimeFlavor=Cuda
+RUN dotnet build "./MangaIngestWithUpscaling.RemoteWorker.csproj" -c $BUILD_CONFIGURATION -o /app/build -p:OnnxRuntimeFlavor=Cuda
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
-RUN dotnet publish "./MangaIngestWithUpscaling.RemoteWorker.csproj" -c Release -a $TARGETARCH -o /app/publish /p:UseAppHost=false /p:PublishAot=false -p:OnnxRuntimeFlavor=Cuda
+RUN dotnet publish "./MangaIngestWithUpscaling.RemoteWorker.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/publish /p:UseAppHost=false /p:PublishAot=false -p:OnnxRuntimeFlavor=Cuda
 
 FROM ${BASE_IMAGE} AS final
 WORKDIR /app

@@ -23,9 +23,7 @@ public sealed class OnnxSessionFactory(
     private readonly Lock _lock = new();
     private readonly Lock _backendGate = new();
     private GpuBackend? _resolvedBackend;
-    private readonly Dictionary<string, InferenceSession> _sessions = new(
-        StringComparer.OrdinalIgnoreCase
-    );
+    private readonly Dictionary<string, InferenceSession> _sessions = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _lruOrder = new();
 
     /// <summary>

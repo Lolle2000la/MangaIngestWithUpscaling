@@ -699,9 +699,11 @@ public class MangaJaNaiUpscaler(
     }
 
     /// <summary>
-    /// Downloads the model packages. The timeout bounds a stalled transfer, not the total: the largest
-    /// package is a couple of gigabytes, which a slow link needs well over an hour for, and a first
-    /// run that hit the old one-hour cap could never finish booting.
+    /// Downloads the model packages. The timeout bounds the whole transfer, not the silence on the
+    /// socket: the largest package is a couple of gigabytes, which a slow link needs well over an hour
+    /// for, and a first run that hit the old one-hour cap could never finish booting. A stalled
+    /// connection is therefore bounded by that cap and by the per-attempt retry, not by a shorter
+    /// idle timer.
     /// </summary>
     private static readonly HttpClient SharedHttpClient = new() { Timeout = TimeSpan.FromHours(6) };
 
@@ -914,6 +916,12 @@ public class MangaJaNaiUpscaler(
         {
             await File.WriteAllTextAsync(markerPath, BuildMarker(package), cancellationToken);
         }
+        catch (OperationCanceledException)
+        {
+            // Shutdown, not a marker problem: swallowing it here would make the caller treat a
+            // cancelled run as a completed one. TryReadMarkerAsync propagates it for the same reason.
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogWarning(
@@ -1089,7 +1097,12 @@ public class MangaJaNaiUpscaler(
             if (hashString != expectedHash)
             {
                 throw new Exception(
-                    localizer["Error_ModelHashMismatch", fileName, expectedHash, hashString]
+                    localizer[
+                        "Error_ModelHashMismatch",
+                        ModelFileNames.Resolve(fileName, package.PrecisionSuffix),
+                        expectedHash,
+                        hashString
+                    ]
                 );
             }
         }

@@ -116,6 +116,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 return StreamingFailureKind.Transient;
             }
 
+            if (current is NonFiniteModelOutputException or ObjectDisposedException)
+            {
+                // The detector rethrows these instead of reporting a per-page error, precisely so the
+                // spool survives: a non-finite output is a mis-executing provider that a freshly built
+                // session can change (and the detector has no second model to fall back to), and an
+                // ObjectDisposedException is a shutdown racing the page. Without a case here the chain
+                // falls through to Permanent, the server clears the spool and fails the task — which
+                // would defeat the detector's rethrow and make its commit message false.
+                return StreamingFailureKind.Transient;
+            }
+
             if (current is IOException or UnauthorizedAccessException)
             {
                 // A local I/O failure (computing the engine identity, reading a fetched page, or

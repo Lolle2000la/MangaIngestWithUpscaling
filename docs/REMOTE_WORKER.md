@@ -56,6 +56,6 @@ The remote worker will then connect to the main application and be ready to rece
 
 There are prebuilt binaries available in AppImage format for Linux and a Windows executable. You can find these in the GitHub Release assets.
 
-The universal worker image ships only the CPU and WebGPU execution providers, so an NVIDIA GPU in that image falls back to WebGPU (or CPU); use the CUDA worker image to get the NVIDIA providers (see [GPU Backend Configuration & Docker Flavors](./GPU_BACKEND_CONFIGURATION.md)).
+The universal worker image ships only the CPU and WebGPU execution providers, so an NVIDIA GPU in that image falls back to WebGPU (or CPU); use the CUDA worker image to get the NVIDIA providers (see [GPU Backend Configuration & Docker Flavors](./GPU_BACKEND_CONFIGURATION.md)). The **Velopack/release worker builds** (the AppImage and Windows executable above) are published the same way — `velopack-release.yml` does not pass `-p:OnnxRuntimeFlavor=Cuda` — so they also ship CPU + WebGPU only. A CUDA host running one of those uses WebGPU; use the CUDA image when you need the NVIDIA providers.
 
 Note that you need to configure the remote worker either with a `appsettings.json` file in the same directory as the executable or by using environment variables as described above.

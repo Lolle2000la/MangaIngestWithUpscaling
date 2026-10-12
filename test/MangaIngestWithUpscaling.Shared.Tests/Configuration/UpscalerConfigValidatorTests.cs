@@ -222,6 +222,18 @@ public class UpscalerConfigValidatorTests
     }
 
     [Fact]
+    public void Validate_RejectsInvalidPreprocessingSettings()
+    {
+        // The preprocessing half has to be *wired into* Validate, not merely available: asserting on
+        // FindInvalidPreprocessingSettings alone would stay green if the AddRange inside Validate were
+        // dropped, and startup would then accept a value ImageResizeService rejects on the first image
+        // of the first task instead of at boot.
+        var config = new UpscalerConfig { SmartDownscaleFactor = 0.0 };
+
+        Assert.False(new UpscalerConfigValidator().Validate(null, config).Succeeded);
+    }
+
+    [Fact]
     public void OptionsCreate_BypassesValidation()
     {
         // Many call sites construct a config directly; those must not be affected by validation.

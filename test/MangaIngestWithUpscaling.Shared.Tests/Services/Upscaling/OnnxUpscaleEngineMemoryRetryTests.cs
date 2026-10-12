@@ -83,17 +83,21 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
             factory.SessionsRequestedAfterInvalidation > 0,
             "the retry did not fetch a new session after the invalidation"
         );
-        // The engine used the synchronous flush, and it had a live session to free: without it the
-        // OOM-causing session would stay resident through the whole retry (the background drain
-        // waits for the retry's own scope to end), doubling peak VRAM in the path meant to reduce it.
-        Assert.Equal(1, factory.ReleaseCachedSessionsCalls);
+        // Two flushes: ReleaseSessionForShapeChange drops the probe's 64x64 session before the page's
+        // own shape is run (an unknown _sessionShapeModel counts as a change), and the memory-pressure
+        // retry flushes again. Without the second the OOM-causing session would stay resident through
+        // the whole retry — the background drain waits for the retry's own scope to end — doubling peak
+        // VRAM in the path meant to reduce it.
+        Assert.Equal(2, factory.ReleaseCachedSessionsCalls);
         Assert.True(
             factory.ReleasedALiveSession,
             "the synchronous flush did not free the live session before the retry"
         );
-        // The probe's scope, the scope that threw, and the one the retry succeeded under. Pinned
-        // exactly so that a change in how often the probe scopes breaks this test loudly.
-        Assert.Equal(3, factory.InferenceScopeCalls);
+        // The probe's scope, the scope the input metadata is read under, the scope that threw, and the
+        // one the retry succeeded under. Pinned exactly so that a change in how often the probe scopes
+        // breaks this test loudly — the metadata read used to run outside any scope, where a concurrent
+        // eviction could dispose the session under it.
+        Assert.Equal(4, factory.InferenceScopeCalls);
     }
 
     private string CreateTestJpeg(int width, int height)
@@ -226,8 +230,12 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
 
         public IDisposable EnterInferenceScope()
         {
-            // #1 is the device probe; #2 is the first tile attempt in the retry loop.
-            if (Interlocked.Increment(ref _scopeCalls) == 2)
+            // #1 is the device probe, #2 the input-metadata read (which the engine scopes too, so a
+            // concurrent eviction cannot dispose the session under it), and #3 the first tile attempt
+            // in the retry loop. Pinned exactly, together with the InferenceScopeCalls assertion, so
+            // adding or removing a scope breaks this loudly instead of silently moving the failure to a
+            // place the retry does not cover.
+            if (Interlocked.Increment(ref _scopeCalls) == 3)
             {
                 throw new OutOfMemoryException("simulated device memory pressure");
             }

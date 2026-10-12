@@ -14,6 +14,11 @@ configuration surface. Nothing here requires a data migration; the database sche
   (`nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04`), which needs a newer NVIDIA driver than the
   previous CUDA 12.x image. On an older driver the container will not start; update the driver or stay
   on the previous release.
+* Only **two** flavours are published from this release on: the universal image (WebGPU + CPU) and
+  the CUDA image. The `-rocm`, `-xpu` and CUDA-12 tags are **gone**. A deployment pinned to one of
+  them (`:latest-rocm`, `:latest-xpu`, …) will keep pulling the last PyTorch-era image, which no
+  longer speaks the current worker/server protocol; re-point it at `:latest` (WebGPU — it runs on AMD
+  through Vulkan) or `:latest-cuda`.
 
 ## Configuration
 
@@ -41,6 +46,12 @@ configuration surface. Nothing here requires a data migration; the database sche
 * The legacy backend aliases `ROCm`, `ROCm_GFX120X`, `XPU` and `CUDA_12_8` are still accepted and are
   remapped to `WebGPU` / `CUDA`, but the remap is not logged. They carry `[Obsolete]` on the
   `GpuBackend` enum; prefer `WebGPU` / `CUDA` directly.
+* Set `PreferredGpuBackend` (and any other `GpuBackend` value) **by name, not by number**: the enum
+  was reordered in this release, so a numeric value such as `2` selects a different provider than it
+  did before. The names are stable.
+* `ShutdownWorkerBeforeSplitDetection` is gone with the worker subprocess it controlled. A value left
+  in an existing `appsettings.json` is silently ignored; split detection runs in-process before
+  upscaling the chapter, so there is nothing to shut down.
 * The PyTorch-era settings — `PythonEnvironmentDirectory`, `WorkerIdleTimeout`,
   `DetectServerRequestTimeout` and the other detect-server/Python-worker options — are **gone**.
   Nothing reads them any more, so a value left in an existing `appsettings.json` is silently ignored

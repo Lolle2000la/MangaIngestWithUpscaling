@@ -17,12 +17,12 @@ RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.cspr
 RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -p:OnnxRuntimeFlavor=Cuda
 COPY . .
 WORKDIR "/src/src/MangaIngestWithUpscaling"
-RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c Release -o /app/build -p:OnnxRuntimeFlavor=Cuda
+RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -o /app/build -p:OnnxRuntimeFlavor=Cuda
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c Release -a $TARGETARCH -o /app/publish /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cuda
-RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c Release -a $TARGETARCH -o /app/migrator /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cuda
+RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/publish /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cuda
+RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/migrator /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cuda
 RUN cp -rn /app/migrator/. /app/publish/
 
 FROM ${BASE_IMAGE} AS final
