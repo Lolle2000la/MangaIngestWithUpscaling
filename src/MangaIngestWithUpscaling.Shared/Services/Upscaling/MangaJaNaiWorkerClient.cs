@@ -1,7 +1,6 @@
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -396,15 +395,5 @@ public class MangaJaNaiWorkerClient(
             CompressionFormat.Jpg => ".jpg",
             CompressionFormat.Png => ".png",
             _ => ".webp",
-        };
-
-    public static string ToFormatString(CompressionFormat format) =>
-        format switch
-        {
-            CompressionFormat.Avif => "avif",
-            CompressionFormat.Webp => "webp",
-            CompressionFormat.Jpg => "jpeg",
-            CompressionFormat.Png => "png",
-            _ => "webp",
         };
 }

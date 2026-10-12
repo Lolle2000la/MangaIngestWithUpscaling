@@ -44,6 +44,13 @@ test_data/
 # representative of CI and prevents baking a developer environment into images.
 **/.cache
 
+# Model weights and their PyTorch-era leftovers. A checkout that has run the app can hold gigabytes
+# of these next to the source, and the Dockerfile never needs them (the container downloads its own
+# into the mounted models directory).
+**/*.onnx
+**/*.pth
+**/*.safetensors
+
 # Databases, their sidecars and startup markers created by running the app from a checkout. In the
 # container these live on the /data volume instead.
 **/*.db

@@ -84,8 +84,15 @@ public class OnnxTilerNonFiniteDecodeTests : IDisposable
         // with the wrong stride: a lower real scale runs off the end of the tensor, a higher one stays
         // in bounds and decodes finite values — assembling the page from the wrong-scale tensors at
         // the requested size, which is the silent direction. The element count catches both.
-        Assert.Throws<InvalidOperationException>(() => DecodeAtRequestedScale(2, requested: Scale));
-        Assert.Throws<InvalidOperationException>(() => DecodeAtRequestedScale(Scale, requested: 2));
+        // ModelContractMismatchException, not InvalidOperationException: the model's geometry is at
+        // fault, and only that dedicated type becomes a permanent "unusable on this device" verdict —
+        // an InvalidOperationException is our own configuration's type and must not condemn a model.
+        Assert.Throws<ModelContractMismatchException>(() =>
+            DecodeAtRequestedScale(2, requested: Scale)
+        );
+        Assert.Throws<ModelContractMismatchException>(() =>
+            DecodeAtRequestedScale(Scale, requested: 2)
+        );
 
         // The matched scale still decodes, so the check is not simply rejecting everything.
         Assert.Equal(

@@ -85,6 +85,20 @@ public static class EngineIdentity
             // keeps the spool.
             .Append(resolvedBackend ?? config.PreferredGpuBackend)
             .Append('|')
+            // The architecture preference order, because it decides *which weights run* for a page
+            // (OnnxUpscaleEngine.SelectModelCandidates): two workers with the same models directory
+            // but a different order produce different pixels. It is worker-local configuration and
+            // does not travel in the job request, so without hashing it here the server would happily
+            // assemble one chapter out of both — the seam this identity exists to prevent. The
+            // resolved order is hashed, not the raw string, so an equivalent spelling
+            // ("fdat_xl,FDAT_M" and "FDAT_XL,FDAT_M") is the same engine.
+            .Append(
+                string.Join(
+                    ',',
+                    ModelArchitecturePreference.Resolve(config.PreferredModelArchitectures)
+                )
+            )
+            .Append('|')
             // The engine code version: changes to engine execution code can be bumped explicitly
             // or two different engines would hash the same.
             .Append(engineVersion ?? CurrentEngineVersion)

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Logging;
@@ -130,19 +131,20 @@ public sealed class OnnxSessionFactory(
     }
 
     /// <summary>
-    /// Removes <paramref name="fullPath"/> from the LRU list regardless of casing.
+    /// Removes <paramref name="fullPath"/> from the LRU list.
     /// <para>
-    /// <see cref="_sessions"/> compares paths case-insensitively but the list compares ordinally, so a
-    /// differently-cased spelling of the same path finds the session and then fails to match its own
-    /// entry. The list would accumulate one duplicate per spelling, and the eviction order would no
-    /// longer describe the sessions it exists to order.
+    /// Ordinal, matching <see cref="_sessions"/>: both are keyed by the same full paths, so an ordinal
+    /// removal finds the entry the cache holds. A case-insensitive match would remove the wrong node on
+    /// a case-sensitive filesystem, where two paths differing only in case are different models — the
+    /// list would lose an entry the cache still has, and the eviction order would no longer describe
+    /// the sessions it exists to order.
     /// </para>
     /// </summary>
     private void RemoveFromLru(string fullPath)
     {
         for (LinkedListNode<string>? node = _lruOrder.First; node is not null; node = node.Next)
         {
-            if (string.Equals(node.Value, fullPath, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(node.Value, fullPath, StringComparison.Ordinal))
             {
                 _lruOrder.Remove(node);
                 return;
@@ -328,8 +330,15 @@ public sealed class OnnxSessionFactory(
             EnableMemoryPattern = false,
             LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
         };
-        options.AddSessionConfigEntry("session.arena_extend_strategy", "kSameAsRequested");
-        options.AddSessionConfigEntry("memory.enable_memory_arena_shrinkage", "cpu:0;gpu:0");
+
+        // The arena settings are deliberately NOT session config entries. "arena_extend_strategy" is a
+        // CUDA provider option and "memory.enable_memory_arena_shrinkage" is a RunOptions key; ONNX
+        // Runtime reads neither from SessionOptions, and AddSessionConfigEntry accepts unknown keys, so
+        // setting them here was a silent no-op (verified against ORT 1.29: inference_session.cc never
+        // looks either up). The extension strategy is passed to the CUDA provider below; the shrinkage
+        // is applied where a RunOptions is already in play (SplitDetectionService), and the upscaler
+        // does not need it at all — it releases the whole session at the chapter boundary and whenever
+        // the tile shape changes, which frees the arena outright rather than shrinking it.
 
         if (forceCpu)
         {
@@ -367,8 +376,6 @@ public sealed class OnnxSessionFactory(
                 ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
                 EnableMemoryPattern = false,
             };
-            cpuOptions.AddSessionConfigEntry("session.arena_extend_strategy", "kSameAsRequested");
-            cpuOptions.AddSessionConfigEntry("memory.enable_memory_arena_shrinkage", "cpu:0;gpu:0");
             return new InferenceSession(modelPath, cpuOptions);
         }
     }
@@ -489,7 +496,20 @@ public sealed class OnnxSessionFactory(
                 deviceId,
                 modelName
             );
-            options.AppendExecutionProvider_CUDA(deviceId);
+
+            // The BFC arena's default extension strategy doubles each allocation, so a run can reserve
+            // far more VRAM than it asks for. kSameAsRequested allocates what was requested; it is a
+            // provider option, which is why it is passed here and not through
+            // SessionOptions.AddSessionConfigEntry (see CreateSession).
+            using var cudaOptions = new OrtCUDAProviderOptions();
+            cudaOptions.UpdateOptions(
+                new Dictionary<string, string>
+                {
+                    ["device_id"] = deviceId.ToString(CultureInfo.InvariantCulture),
+                    ["arena_extend_strategy"] = "kSameAsRequested",
+                }
+            );
+            options.AppendExecutionProvider_CUDA(cudaOptions);
             _cudaAvailable = true;
             return true;
         }

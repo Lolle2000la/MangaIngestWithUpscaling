@@ -380,6 +380,27 @@ public sealed class NonFiniteModelOutputException : Exception
 }
 
 /// <summary>
+/// Raised when a model does not satisfy the contract the engine requires of it: an input named
+/// <c>input</c>, output geometry matching the requested scale, and a supported input element type.
+/// <para>
+/// The dedicated type is what lets the engine condemn the <em>model</em> without also condemning its
+/// own configuration. The failures that reach the same catch by their general types —
+/// <see cref="ArgumentException"/> from a tiler invariant, <see cref="InvalidOperationException"/>
+/// from the tile-too-large guard — say "this run was set up wrongly", and treating those as model
+/// faults took a working model out of service for the rest of the process, with a misleading "no
+/// model can upscale this page" error at the end.
+/// </para>
+/// </summary>
+public sealed class ModelContractMismatchException : Exception
+{
+    public ModelContractMismatchException(string message)
+        : base(message) { }
+
+    public ModelContractMismatchException(string message, Exception innerException)
+        : base(message, innerException) { }
+}
+
+/// <summary>
 /// Provides tiling, reflect padding, and output reconstruction for ONNX upscaling models.
 /// </summary>
 public static class OnnxTiler
@@ -1407,6 +1428,12 @@ public static class OnnxTiler
         return files;
     }
 
+    /// <summary>
+    /// How long the <c>nvidia-smi</c> probe may take. The process is killed once it expires: a query
+    /// against a wedged driver must not outlive the call that asked for it.
+    /// </summary>
+    private const int NvidiaSmiTimeoutMs = 1000;
+
     private static (long Total, long Used)? TryGetNvidiaGpuMemory(int deviceId)
     {
         try
@@ -1428,8 +1455,31 @@ public static class OnnxTiler
                 return null;
             }
 
-            string output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(1000);
+            // Both pipes are drained concurrently and the wait is bounded. Draining only stdout let a
+            // chatty nvidia-smi fill the stderr pipe and block inside ReadToEnd — with the child never
+            // exiting, the wait below was never reached and the caller hung on a wedged driver. The
+            // child is killed when the bound expires so it cannot outlive the call, and ExitCode is only
+            // read once it has actually exited: reading it after a timed-out wait throws, which the
+            // outer catch would have swallowed while leaving the process running.
+            Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(NvidiaSmiTimeoutMs))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Already gone, or not killable from here; nothing useful left to do.
+                }
+
+                return null;
+            }
+
+            string output = stdout.GetAwaiter().GetResult();
+            stderr.GetAwaiter().GetResult();
+
             if (process.ExitCode != 0)
             {
                 return null;
@@ -1961,7 +2011,7 @@ public static class OnnxTiler
         // the first place the input element type is known, and only float32 and float16 are supported.
         if (elementType != typeof(float) && elementType != typeof(Float16))
         {
-            throw new NotSupportedException(
+            throw new ModelContractMismatchException(
                 $"The model's input tensor is {elementType.Name}; only float32 and float16 inputs are supported. "
                     + "A quantized (int8/uint8) export cannot be used — ship the model's fp16 or fp32 copy instead."
             );
@@ -2130,7 +2180,7 @@ public static class OnnxTiler
                     return;
                 }
 
-                throw new InvalidOperationException(
+                throw new ModelContractMismatchException(
                     $"Model output is {actualElements} elements but {3L * outPaddedW * outPaddedH} "
                         + $"were expected for a {paddedW}x{paddedH} tile at {scale}x. The loaded model "
                         + "is at a different scale than the requested one; the models directory is "
@@ -2277,7 +2327,7 @@ public static class OnnxTiler
             return metadata;
         }
 
-        throw new InvalidOperationException(
+        throw new ModelContractMismatchException(
             $"Model has no input named '{ModelInputName}'; its inputs are "
                 + $"{FormatNames(session.InputMetadata.Keys)}. The upscaler requires a model whose "
                 + "input is named 'input'."
@@ -2299,7 +2349,7 @@ public static class OnnxTiler
             return named;
         }
 
-        throw new InvalidOperationException(
+        throw new ModelContractMismatchException(
             $"Model has no output named '{ModelOutputName}'; its outputs are "
                 + $"{FormatNames(outputs.Select(o => o.Name))}. The upscaler requires a model whose "
                 + "output is named 'output'."

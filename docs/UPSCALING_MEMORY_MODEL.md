@@ -67,9 +67,13 @@ a pure dataflow sweep does not model:
   same large tensor (fp16 + fp32);
 * ORT re-packs activations to NCHWc layout (`InsertedPrecisionFreeCast` kernels), which allocates
   a second buffer per repack;
-* the session is created with `memory.enable_memory_arena_shrinkage: cpu:0;gpu:0` and
-  `session.arena_extend_strategy: kSameAsRequested`, so freed blocks are pooled rather than
-  returned and the arena keeps its high-water mark.
+* the owners of those buffers do not release them promptly: the ONNX Runtime arenas keep their
+  high-water mark, and on the CUDA provider the BFC arena's default extension strategy doubles each
+  allocation. (`arena_extend_strategy` is set to `kSameAsRequested` on the CUDA provider; the
+  session-level equivalent that used to be set here did nothing, because `AddSessionConfigEntry` does
+  not feed provider options. The shrinkage key is a `RunOptions` key and is only passed where a
+  `RunOptions` already exists — the detector — while the upscaler frees the whole session at the
+  chapter boundary and on a tile-shape change.)
 
 Measured against the analytic sweep, the observed footprint is a stable multiple:
 

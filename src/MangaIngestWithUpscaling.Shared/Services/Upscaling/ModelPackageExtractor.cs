@@ -47,12 +47,12 @@ public static class ModelPackageExtractor
             // deleted with the scratch tree instead of installed. The packages shipped today are
             // flat, so that guard is theoretical; if an archive ever nests two entries under the
             // same file name, the overwriting move makes whichever is enumerated last win.
+            // Materialised before the moves below: EnumerateFiles is lazy, and moving a file out of the
+            // directory being walked mutates that directory — an entry can be skipped, and the caller's
+            // verify then throws FileNotFoundException outside its retry loop. GetFiles snapshots the
+            // listing first.
             foreach (
-                string extracted in Directory.EnumerateFiles(
-                    scratch,
-                    "*",
-                    SearchOption.AllDirectories
-                )
+                string extracted in Directory.GetFiles(scratch, "*", SearchOption.AllDirectories)
             )
             {
                 string target = Path.Combine(

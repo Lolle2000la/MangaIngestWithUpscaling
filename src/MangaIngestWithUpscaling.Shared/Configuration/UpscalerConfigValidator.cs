@@ -36,6 +36,14 @@ public static class UpscalerConfigSizeValidation
                 yield return $"{UpscalerConfig.Position}:{setting.Name} = \"{setting.Value}\": expected a byte count or a size such as 4GiB, 700MiB or 1024";
             }
         }
+
+        // A non-finite number is not a plausible one and does not survive CalculateVramBudget's clamp:
+        // NaN compares false against everything, so it would poison the budget instead of being clamped
+        // into range.
+        if (config.VramUtilizationFraction is double utilization && !double.IsFinite(utilization))
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a finite fraction such as 0.97, or unset for automatic";
+        }
     }
 }
 
@@ -121,12 +129,23 @@ public static class UpscalerConfigPreprocessingValidation
             yield break;
         }
 
-        if (config.SmartDownscaleThreshold <= 0)
+        // A non-finite double is not a plausible number and does not behave like one: every comparison
+        // against NaN is false, so the range checks below would let it through, and an infinite
+        // threshold would classify every image as a cheap upscale.
+        if (!double.IsFinite(config.SmartDownscaleThreshold))
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.SmartDownscaleThreshold)} = {config.SmartDownscaleThreshold}: expected a finite Laplacian standard deviation";
+        }
+        else if (config.SmartDownscaleThreshold <= 0)
         {
             yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.SmartDownscaleThreshold)} = {config.SmartDownscaleThreshold}: expected a positive Laplacian standard deviation";
         }
 
-        if (config.SmartDownscaleFactor is <= 0 or >= 1)
+        if (!double.IsFinite(config.SmartDownscaleFactor))
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.SmartDownscaleFactor)} = {config.SmartDownscaleFactor}: expected a finite fraction strictly between 0 and 1";
+        }
+        else if (config.SmartDownscaleFactor is <= 0 or >= 1)
         {
             yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.SmartDownscaleFactor)} = {config.SmartDownscaleFactor}: expected a fraction strictly between 0 and 1";
         }

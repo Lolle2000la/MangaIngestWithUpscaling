@@ -20,7 +20,17 @@ public class SplitDetectionService(
     IOptions<UpscalerConfig>? upscalerConfig = null
 ) : ISplitDetectionService
 {
-    public const int CURRENT_DETECTOR_VERSION = 1;
+    /// <summary>
+    ///     Version of the split-detection algorithm whose findings are stored per chapter. Bumped when
+    ///     the detector changes shape or behaviour, so a chapter detected by the previous algorithm is
+    ///     re-detected instead of being treated as current.
+    ///     <para>
+    ///     2 = the in-process ONNX page-break detector. It replaced the PyTorch peak-mask algorithm in
+    ///     the ONNX migration without changing this constant, so chapters detected before the upgrade
+    ///     carried 1 and would never have been re-detected.
+    ///     </para>
+    /// </summary>
+    public const int CURRENT_DETECTOR_VERSION = 2;
 
     /// <summary>
     /// Upper bound on the known-failure cache. A detector that cannot run on a backend is a property
@@ -61,8 +71,18 @@ public class SplitDetectionService(
     private GpuBackend EffectiveBackend =>
         effectiveBackend ??= onnxSessionFactory.GetEffectiveBackend();
 
-    /// <summary>Model path and resolved accelerator backend a failure verdict applies to.</summary>
-    private readonly record struct DetectorBackendKey(string ModelPath, GpuBackend Backend);
+    /// <summary>Model path, resolved accelerator backend, and content signature a verdict applies to.</summary>
+    /// <param name="Signature">
+    /// The model file's length and last-write time, mirroring <c>DeviceMemoryProfileStore</c>'s marker
+    /// convention (<c>(0, -1)</c> for a missing file, <c>(0, -2)</c> for unreadable metadata). A verdict
+    /// keyed on the path alone outlived the file it described: replacing a broken detector left it
+    /// blacklisted for the rest of the process, with no way to clear it short of a restart.
+    /// </param>
+    private readonly record struct DetectorBackendKey(
+        string ModelPath,
+        GpuBackend Backend,
+        (long Length, long LastWriteUtcTicks) Signature
+    );
 
     /// <summary>
     /// Compares keys case-insensitively on the path, matching how the session factory resolves model
@@ -74,23 +94,42 @@ public class SplitDetectionService(
 
         public bool Equals(DetectorBackendKey x, DetectorBackendKey y) =>
             x.Backend == y.Backend
-            && string.Equals(x.ModelPath, y.ModelPath, StringComparison.OrdinalIgnoreCase);
+            && string.Equals(x.ModelPath, y.ModelPath, StringComparison.OrdinalIgnoreCase)
+            && x.Signature == y.Signature;
 
         public int GetHashCode(DetectorBackendKey obj) =>
             HashCode.Combine(
                 StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ModelPath),
-                obj.Backend
+                obj.Backend,
+                obj.Signature.Length,
+                obj.Signature.LastWriteUtcTicks
             );
+    }
+
+    /// <summary>The verdict key for a model file as it is on disk right now.</summary>
+    private static DetectorBackendKey KeyFor(string modelPath, GpuBackend backend)
+    {
+        (long Length, long LastWriteUtcTicks) signature;
+        try
+        {
+            var info = new FileInfo(modelPath);
+            signature = info.Exists ? (info.Length, info.LastWriteTimeUtc.Ticks) : (0L, -1L);
+        }
+        catch (Exception)
+        {
+            // Unreadable metadata is still a distinct, stable key rather than one that matches a
+            // readable file.
+            signature = (0L, -2L);
+        }
+
+        return new DetectorBackendKey(modelPath, backend, signature);
     }
 
     private static bool TryGetKnownFailure(string modelPath, GpuBackend backend, out string error)
     {
         lock (KnownFailuresGate)
         {
-            return KnownFailures.TryGetValue(
-                new DetectorBackendKey(modelPath, backend),
-                out error!
-            );
+            return KnownFailures.TryGetValue(KeyFor(modelPath, backend), out error!);
         }
     }
 
@@ -98,7 +137,7 @@ public class SplitDetectionService(
     {
         lock (KnownFailuresGate)
         {
-            var key = new DetectorBackendKey(modelPath, backend);
+            var key = KeyFor(modelPath, backend);
             if (KnownFailures.Count >= KnownFailureCacheCapacity && !KnownFailures.ContainsKey(key))
             {
                 KnownFailures.Clear();
@@ -234,6 +273,11 @@ public class SplitDetectionService(
         // the await. Kept alive (not disposed) if the run is abandoned, because ORT is still reading
         // it; it is then released by its finalizer once the native call returns.
         var runOptions = new RunOptions();
+        // The shrinkage key belongs to RunOptions, not SessionOptions (see
+        // OnnxSessionFactory.CreateSession): the detector runs a different image shape on every page, so
+        // its arena would otherwise stay at the high-water mark of the largest page it has seen. This is
+        // the one place in the engine that passes a RunOptions anyway, so it costs nothing.
+        runOptions.AddRunConfigEntry("memory.enable_memory_arena_shrinkage", "cpu:0;gpu:0");
         bool disposeRunOptions = true;
         // Declared out here so the cancellation path can tell whether the abandoned task is still
         // running: the options may only be freed once the native call has returned (see

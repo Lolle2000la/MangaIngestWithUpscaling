@@ -914,6 +914,7 @@ public class OnnxUpscaleEngine(
     {
         var unusable = new List<string>();
         Exception? firstTransientProbeFailure = null;
+        int nonFiniteCandidates = 0;
 
         foreach (string modelPath in candidates)
         {
@@ -950,6 +951,7 @@ public class OnnxUpscaleEngine(
             {
                 MarkModelUnusable(modelPath, scale);
                 unusable.Add(Path.GetFileName(modelPath));
+                nonFiniteCandidates++;
                 logger.LogWarning(
                     ex,
                     "Model {Model} produced non-finite output on device {Device} with the {Provider} execution provider, so it would have written a black page. Trying the next model.",
@@ -994,6 +996,23 @@ public class OnnxUpscaleEngine(
         if (firstTransientProbeFailure is not null)
         {
             throw firstTransientProbeFailure;
+        }
+
+        if (nonFiniteCandidates > 0)
+        {
+            // Every candidate produced non-finite output, which is the same failure a single candidate
+            // produces and is classified as retryable there (ClassifyStreamingFailure treats
+            // NonFiniteModelOutputException as transient, deliberately: a driver reset can produce it
+            // once). Reported as a plain InvalidOperationException it would be classified permanent, and
+            // the spool — the pages that did upscale — would be dropped for what may have been a
+            // one-off. The retry is bounded by the server's soft-failure cap, so a genuinely unusable
+            // provider still ends in a visible failure.
+            throw new NonFiniteModelOutputException(
+                $"Every candidate model in {ModelsDirectory} produced non-finite output for a "
+                    + $"{width}x{height} page at {scale}x on the {sessionFactory.GetEffectiveBackend()} "
+                    + "execution provider. This is the provider not being able to run these models, not "
+                    + "a property of the page."
+            );
         }
 
         throw new InvalidOperationException(
@@ -1165,6 +1184,20 @@ public class OnnxUpscaleEngine(
                         {
                             sessionFactory.ReleaseCachedSessions();
                             attempt = OnnxTiler.HalveSplit(width, height, attempt);
+                            // Record the halved shape as the one the session about to be fetched will
+                            // have run. Without it a later page that plans the original grid compares
+                            // against the pre-halving shape, sees no change, and keeps a session whose
+                            // per-shape buffer cache holds a different shape — the accumulation
+                            // ReleaseSessionForShapeChange exists to prevent.
+                            (int halvedWidth, int halvedHeight) = OnnxTiler.UniformTileTensorShape(
+                                attempt
+                            );
+                            lock (_sessionShapeGate)
+                            {
+                                _sessionShapeModel = modelPath;
+                                _sessionShape = (halvedWidth, halvedHeight);
+                            }
+
                             GC.Collect();
                             GC.WaitForPendingFinalizers();
                         }
@@ -1221,7 +1254,7 @@ public class OnnxUpscaleEngine(
     /// run on it yet. See <see cref="_sessionShape"/> for why.
     /// <para>
     /// An unknown <see cref="_sessionShapeModel"/> also counts as a change: the session the caller is
-    /// about to fetch is the one the device probe ran a 64x64 tile on, so the probe's buffers would
+    /// about to fetch is the one the device probe ran a 256 px tile on, so the probe's buffers would
     /// otherwise be kept alongside the page's shape — the accumulation this exists to prevent. It
     /// costs one session rebuild per model per process.
     /// </para>
@@ -1261,7 +1294,8 @@ public class OnnxUpscaleEngine(
     /// The question is asked with one small tile through the real path, because there is no other
     /// way to know: an execution provider that does not implement a model's kernels does not say
     /// so at session creation, it returns NaN from the first inference. Running that check on a
-    /// 64x64 tile costs milliseconds, while running it on the page costs the whole page.
+    /// <see cref="ModelProbeTilePixels"/> tile costs milliseconds, while running it on the page costs
+    /// the whole page.
     /// </para>
     /// </summary>
     private async Task<(bool Usable, Exception? TransientFailure)> ModelUsableOnThisDeviceAsync(
@@ -1394,13 +1428,19 @@ public class OnnxUpscaleEngine(
     /// failure skips the candidate for this page but leaves the model usable, so a tiler bug cannot
     /// disable a model that works.
     /// </summary>
-    private static bool IsModelFault(Exception ex) =>
+    /// <summary>
+    /// True for a failure the execution provider reports for the model itself — a graph it cannot
+    /// load, an operator or shape it does not implement, an output whose geometry does not match the
+    /// requested scale, an input it does not name the way the engine requires. Only these become a
+    /// permanent "unusable on this device" verdict; every other failure skips the candidate for this
+    /// page but leaves the model usable, so a tiler bug or a misconfigured <c>TileSize</c> cannot
+    /// disable a model that works.
+    /// </summary>
+    internal static bool IsModelFault(Exception ex) =>
         ex
             is OnnxRuntimeException
                 or NonFiniteModelOutputException
-                or NotSupportedException
-                or ArgumentException
-                or InvalidOperationException;
+                or ModelContractMismatchException;
 
     /// <summary>
     /// A deterministic RGB gradient. Content does not matter for the probe — it only asks whether

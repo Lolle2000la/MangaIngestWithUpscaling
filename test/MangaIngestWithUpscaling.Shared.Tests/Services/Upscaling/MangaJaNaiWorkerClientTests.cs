@@ -13,20 +13,6 @@ public class MangaJaNaiWorkerClientTests
 {
     [Theory]
     [Trait("Category", "Unit")]
-    [InlineData(CompressionFormat.Webp, "webp")]
-    [InlineData(CompressionFormat.Png, "png")]
-    [InlineData(CompressionFormat.Jpg, "jpeg")]
-    [InlineData(CompressionFormat.Avif, "avif")]
-    public void ToFormatString_MapsCompressionFormatToWorkerFormat(
-        CompressionFormat format,
-        string expected
-    )
-    {
-        Assert.Equal(expected, MangaJaNaiWorkerClient.ToFormatString(format));
-    }
-
-    [Theory]
-    [Trait("Category", "Unit")]
     [InlineData(CompressionFormat.Webp, ".webp")]
     [InlineData(CompressionFormat.Png, ".png")]
     [InlineData(CompressionFormat.Jpg, ".jpg")]

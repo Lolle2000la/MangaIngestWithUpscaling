@@ -20,6 +20,36 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_ChangesWithTheArchitecturePreferenceOrder()
+    {
+        // The order decides which weights run for a page, and it is worker-local configuration that
+        // does not travel in the job request. Not hashing it let two workers with the same models
+        // produce different pixels under one identity — which is exactly what the server would then
+        // assemble a chapter from.
+        UpscalerConfig baseline = Config();
+        UpscalerConfig promoted = Config();
+        promoted.PreferredModelArchitectures = "FDAT_XL,FDAT_M";
+
+        Assert.NotEqual(EngineIdentity.ForUpscaler(baseline), EngineIdentity.ForUpscaler(promoted));
+
+        // An equivalent spelling is the same engine: the resolved order is hashed, not the raw string.
+        UpscalerConfig spelled = Config();
+        spelled.PreferredModelArchitectures = "fdat_xl, FdatM";
+
+        Assert.Equal(EngineIdentity.ForUpscaler(promoted), EngineIdentity.ForUpscaler(spelled));
+
+        // And the default is the built-in order, so leaving it unset keeps an unchanged identity.
+        UpscalerConfig explicitDefault = Config();
+        explicitDefault.PreferredModelArchitectures = "FDAT_M,ESRGAN,SPAN,FDAT_XL,DAT2,HAT_L";
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(baseline),
+            EngineIdentity.ForUpscaler(explicitDefault)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForUpscaler_IgnoresPreprocessingBecauseTheServerOwnsIt()
     {
         // The server owns preprocessing and folds the effective options into the content identity, so

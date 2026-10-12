@@ -456,6 +456,50 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_AfterTheModelIsReplaced_ReProbesInsteadOfReplayingTheVerdict()
+    {
+        // A structural failure is remembered for the process, which is what keeps a detector the
+        // provider cannot run from being rebuilt for every page. Keyed on the path alone, that verdict
+        // outlived the file it described: replacing a broken detector left it blacklisted until the
+        // process restarted.
+        string modelsDir = Path.Combine(_root, "replaced_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = Path.Combine(modelsDir, "page_break_detector.onnx");
+        File.WriteAllBytes(modelPath, [1, 2, 3]); // not an ONNX model at all
+
+        var factory = new OnnxSessionFactory(
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir, UseCPU = true }),
+            NullLogger<OnnxSessionFactory>.Instance
+        );
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir, UseCPU = true })
+        );
+
+        SplitDetectionResult first = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("replaced.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+        Assert.NotNull(first.Error);
+
+        // Same path, different model: the recorded verdict must not apply to it any more.
+        TinyOnnxModel.WritePeakMaskDetector(modelsDir, fileName: "page_break_detector.onnx");
+
+        SplitDetectionResult second = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("replaced.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+        Assert.Null(second.Error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task DetectSplitsAsync_TransientFailure_ThrowsInsteadOfReportingAPageError()
     {
         // A device-lost or an OOM during detection is not a property of the page. Reported as a

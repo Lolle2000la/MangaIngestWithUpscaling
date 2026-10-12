@@ -409,7 +409,7 @@ public class OnnxTilerTests : IDisposable
             "fixture: the model input should have been renamed off 'input'"
         );
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        var ex = Assert.Throws<ModelContractMismatchException>(() =>
             OnnxTiler.UpscaleTile(
                 CreateTestImage(32, 32),
                 32,
@@ -445,7 +445,7 @@ public class OnnxTilerTests : IDisposable
             NamedOnnxValue.CreateFromTensor("image", input),
         ]);
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        var ex = Assert.Throws<ModelContractMismatchException>(() =>
             OnnxTiler.DecodeOutputTensor(outputs, 2, 2, 2, 2, 2, CancellationToken.None)
         );
 

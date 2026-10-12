@@ -990,7 +990,7 @@ public class MangaJaNaiUpscaler(
         );
         response.EnsureSuccessStatusCode();
 
-        string tempZip = Path.Combine(Path.GetTempPath(), $"model_pkg_{Guid.NewGuid():N}.zip");
+        string tempZip = Path.Combine(ModelPath, $"model_pkg_{Guid.NewGuid():N}.zip.tmp");
         try
         {
             await using (var fileStream = File.Create(tempZip))

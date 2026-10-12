@@ -359,6 +359,16 @@ using (var scope = app.Services.CreateScope())
 {
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
+    // Resolved (and thereby validated) before the migrations and the model download: registering the
+    // validator makes this first read of the value run it, so an unparsable setting fails the boot
+    // before either has done any work. Reading it afterwards validated a configuration the app had
+    // already migrated the database and downloaded gigabytes of models for — the worker already
+    // validates before touching anything.
+    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
+    // Force the first read here: registering the validator makes this access run it, which is what
+    // fails the boot before either has done any work.
+    _ = upscalerConfig.Value;
+
     await DatabaseBootstrap.ApplyStartupMigrationsAsync(
         scope.ServiceProvider,
         databaseConfiguration,
@@ -367,7 +377,6 @@ using (var scope = app.Services.CreateScope())
     );
 
     // Initialize upscaler models
-    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
     if (upscalerConfig.Value.RemoteOnly)
     {
         logger.LogInformation(

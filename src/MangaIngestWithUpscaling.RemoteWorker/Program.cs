@@ -139,6 +139,20 @@ using (var scope = app.Services.CreateScope())
     // IValidateOptions<UpscalerConfig> now, and a failure throws OptionsValidationException here.
     _ = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>().Value;
 
+    // The key is sent on every call, so without TLS it travels in cleartext on the wire. Worth saying
+    // out loud at startup rather than leaving to be discovered: an http:// ApiUrl is a deliberate
+    // choice for a trusted LAN and a mistake everywhere else.
+    if (
+        Uri.TryCreate(apiUrl, UriKind.Absolute, out Uri? apiUri)
+        && apiUri.Scheme != Uri.UriSchemeHttps
+    )
+    {
+        logger.LogWarning(
+            "WorkerConfig:ApiUrl is {ApiUrl}, which is not https. The API key is sent with every request and will travel in cleartext on this connection.",
+            apiUrl
+        );
+    }
+
     CheckConnectionResponse? connection = null;
     while (connection is null)
     {

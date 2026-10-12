@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 

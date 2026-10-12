@@ -1,7 +1,8 @@
-# Release image, built by the release workflows for GHCR (multi-arch via TARGETARCH) with
-# ASPNETCORE_ENVIRONMENT=Production, a healthcheck and the bundled DbMigrator. The local/Compose
-# image is the separate src/MangaIngestWithUpscaling/Dockerfile; the two are intentionally not the
-# same file, so a change here does not reach `docker compose up` and vice versa.
+# Release image, built by the release workflows for GHCR. The Dockerfile is multi-arch via
+# TARGETARCH; the workflows currently publish amd64 only (the manifest also carries the CUDA variant).
+# It ships ASPNETCORE_ENVIRONMENT=Production, a healthcheck and the bundled DbMigrator. The
+# local/Compose image is the separate src/MangaIngestWithUpscaling/Dockerfile; the two are
+# intentionally not the same file, so a change here does not reach `docker compose up` and vice versa.
 #
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 

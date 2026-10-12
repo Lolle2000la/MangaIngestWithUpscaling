@@ -35,3 +35,33 @@ jobs:
         env:
           TEST_DB_PROVIDER: postgres
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj --filter-not-trait Category=Download
+
+  # The images are only built by the release workflows, which run after the merge — so a Dockerfile
+  # that no longer copies, restores or publishes is first noticed when a release is cut. The migration
+  # rewrote both of them (the app image now also carries the migrator, the worker's copy list and its
+  # base stage changed), so the two CPU images are built on every PR.
+  #
+  # The CUDA images are deliberately not built (a multi-gigabyte base pull on every PR, and the release
+  # workflows build them anyway) but their base tag is resolved: a retired or mistyped nvidia/cuda tag
+  # is the failure that would otherwise only surface in a release. Their own build steps are the same
+  # shape as the CPU images', which are covered.
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build the application image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+      - name: Build the remote worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/MangaIngestWithUpscaling.RemoteWorker/Dockerfile
+          push: false
+      - name: Verify the CUDA base image resolves
+        run: docker pull --quiet nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04

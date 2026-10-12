@@ -288,6 +288,45 @@ public class UpscalerConfigValidatorTests
         Assert.NotEmpty(config.FindInvalidPreprocessingSettings());
     }
 
+    [Theory]
+    [InlineData(double.NaN, 15.0, null)]
+    [InlineData(double.PositiveInfinity, 15.0, null)]
+    [InlineData(double.NegativeInfinity, 15.0, null)]
+    [InlineData(0.75, double.NaN, null)]
+    [InlineData(0.75, double.PositiveInfinity, null)]
+    public void RejectsNonFinitePreprocessingSettings(double factor, double threshold, int? maxDim)
+    {
+        // Every comparison against NaN is false, so the range checks alone let it through, and an
+        // infinite threshold would classify every image as a cheap upscale.
+        var config = new UpscalerConfig
+        {
+            SmartDownscaleFactor = factor,
+            SmartDownscaleThreshold = threshold,
+            MaxDimensionBeforeUpscaling = maxDim,
+        };
+
+        Assert.NotEmpty(config.FindInvalidPreprocessingSettings());
+    }
+
+    [Fact]
+    public void RejectsANonFiniteVramUtilizationFraction()
+    {
+        // The same reason on the VRAM side: NaN survives CalculateVramBudget's clamp instead of being
+        // clamped into range, because the comparisons it is built from are all false for NaN.
+        Assert.NotEmpty(
+            new UpscalerConfig { VramUtilizationFraction = double.NaN }.FindInvalidSizeSettings()
+        );
+        Assert.NotEmpty(
+            new UpscalerConfig
+            {
+                VramUtilizationFraction = double.PositiveInfinity,
+            }.FindInvalidSizeSettings()
+        );
+        Assert.Empty(
+            new UpscalerConfig { VramUtilizationFraction = 0.97 }.FindInvalidSizeSettings()
+        );
+    }
+
     [Fact]
     public void AcceptsValidPreprocessingSettings()
     {

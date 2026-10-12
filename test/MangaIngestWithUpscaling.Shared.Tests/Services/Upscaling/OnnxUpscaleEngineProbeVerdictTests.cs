@@ -214,6 +214,26 @@ public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
     }
 
     [Fact]
+    public void IsModelFault_OnlyCondemnsTheModelsOwnContract()
+    {
+        // A permanent verdict is for the model's own contract: the non-finite output of a mis-executing
+        // kernel, output geometry that does not match the requested scale, an input the engine does not
+        // name the way it requires, an element type it cannot feed, or the provider refusing the graph.
+        Assert.True(OnnxUpscaleEngine.IsModelFault(new NonFiniteModelOutputException()));
+        Assert.True(OnnxUpscaleEngine.IsModelFault(new ModelContractMismatchException("geometry")));
+
+        // Not for our own configuration or programming errors. A bad TileSize throws
+        // InvalidOperationException from the tile-too-large guard and a tiler invariant throws
+        // ArgumentException; treating either as a model fault took a working model out of service for
+        // the rest of the process and ended in a misleading "no model can upscale this page".
+        Assert.False(
+            OnnxUpscaleEngine.IsModelFault(new InvalidOperationException("tile too large"))
+        );
+        Assert.False(OnnxUpscaleEngine.IsModelFault(new ArgumentException("tile height")));
+        Assert.False(OnnxUpscaleEngine.IsModelFault(new OutOfMemoryException()));
+    }
+
+    [Fact]
     public void IsCandidateModelFailure_SeparatesModelFaultsFromRetryableOnes()
     {
         // A model that passes the 256 px probe can still fail on the real grid — a shape the EP's

@@ -58,6 +58,15 @@ configuration surface. Nothing here requires a data migration; the database sche
   rather than reported; there is no replacement, because the detector and the upscaler now run
   in-process. Remove them to keep the file honest.
 
+## Splits and detection
+
+* The page-break detector changed from the PyTorch peak-mask algorithm to an ONNX model, and its
+  **version was bumped to 2**. Chapters whose splits were detected by the previous algorithm carry
+  version 1 and are therefore **re-detected** after the upgrade. Where the new detection finds splits,
+  the chapter shows as having pending splits until they are re-applied — the findings come from a
+  different algorithm, so they are meant to be reviewed, not inherited. Chapters that need no split
+  are re-marked without any action.
+
 ## Models
 
 * The model set is re-downloaded in ONNX form. The old PyTorch files are **not** removed: `.pth` and
