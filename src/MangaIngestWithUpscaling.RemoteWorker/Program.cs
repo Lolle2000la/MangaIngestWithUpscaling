@@ -153,9 +153,16 @@ using (var scope = app.Services.CreateScope())
                 deadline: DateTime.UtcNow.AddSeconds(5)
             );
         }
-        catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition)
+        catch (RpcException ex)
+            when (ex.StatusCode
+                    is StatusCode.FailedPrecondition
+                        or StatusCode.Unauthenticated
+                        or StatusCode.PermissionDenied
+            )
         {
-            // The server rejected our version outright; retrying cannot help.
+            // The server rejected this worker outright: a version or protocol it does not support, or an
+            // API key it does not accept. Retrying cannot help, and retrying forever would leave the
+            // worker in this loop with /health never served — a wrong key would look like a hang.
             logger.LogError("The server rejected this worker: {Detail}", ex.Status.Detail);
             throw;
         }

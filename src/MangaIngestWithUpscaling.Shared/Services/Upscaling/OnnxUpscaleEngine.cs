@@ -359,6 +359,7 @@ public class OnnxUpscaleEngine(
                 string targetExt = MangaJaNaiWorkerClient.ToExtension(format);
 
                 var entries = new List<ZipArchiveEntry>(inArchive.Entries.Count);
+                var seenNames = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var entry in inArchive.Entries)
                 {
                     // An entry name that escapes the archive (absolute or parent-traversing) must
@@ -369,7 +370,13 @@ public class OnnxUpscaleEngine(
                     // in PageStreamSpool.IsSafeEntryName, which this Shared assembly cannot reach.
                     if (string.IsNullOrEmpty(entry.Name) || IsSafeEntryName(entry.FullName))
                     {
-                        entries.Add(entry);
+                        // First occurrence wins, matching the streamed path
+                        // (PageStreamSpool.AssembleCore), so a malformed archive that repeats an entry
+                        // name yields the same page count on both paths.
+                        if (seenNames.Add(entry.FullName))
+                        {
+                            entries.Add(entry);
+                        }
                         continue;
                     }
 
@@ -932,10 +939,18 @@ public class OnnxUpscaleEngine(
                 // grid — a shape the EP's kernel does not implement, an output whose geometry does not
                 // match the scale. That is the same "one bad file must not abort the page while a
                 // working candidate follows" property the probe exists to provide, so it is handled
-                // the same way: skip this model for the process and try the next. A transient failure
-                // (memory, a lost device, IO) is deliberately not caught here — it says nothing about
-                // the model, and it is rethrown so the caller can retry the page.
-                MarkModelUnusable(modelPath, scale);
+                // the same way: try the next candidate. A transient failure (memory, a lost device,
+                // IO) is deliberately not caught here — it says nothing about the model, and it is
+                // rethrown so the caller can retry the page.
+                if (IsModelFault(ex))
+                {
+                    // Only a failure that is plausibly the model's becomes a permanent verdict. A
+                    // programming error that happens to surface here skips the candidate — the page
+                    // still falls through — but must not take a working model out of service for the
+                    // rest of the process on the strength of a bug in our own code.
+                    MarkModelUnusable(modelPath, scale);
+                }
+
                 unusable.Add(Path.GetFileName(modelPath));
                 logger.LogWarning(
                     ex,
@@ -1285,6 +1300,20 @@ public class OnnxUpscaleEngine(
         ex is not OperationCanceledException
         && ex is not ObjectDisposedException
         && !IsTransientProbeFailure(ex);
+
+    /// <summary>
+    /// True for a failure the execution provider reports for the model itself — a graph it cannot
+    /// load, an operator or shape it does not implement, an output whose geometry does not match the
+    /// requested scale. Only these become a permanent "unusable on this device" verdict; every other
+    /// failure skips the candidate for this page but leaves the model usable, so a tiler bug cannot
+    /// disable a model that works.
+    /// </summary>
+    private static bool IsModelFault(Exception ex) =>
+        ex
+            is OnnxRuntimeException
+                or NonFiniteModelOutputException
+                or ArgumentException
+                or InvalidOperationException;
 
     /// <summary>
     /// A deterministic RGB gradient. Content does not matter for the probe — it only asks whether

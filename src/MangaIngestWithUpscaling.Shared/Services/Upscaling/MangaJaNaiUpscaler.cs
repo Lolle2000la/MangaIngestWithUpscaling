@@ -570,7 +570,10 @@ public class MangaJaNaiUpscaler(
                 return;
             }
 
-            File.Delete(outputPath);
+            // No pre-delete. The engine stages its output beside the destination and publishes it with
+            // an atomic move (overwrite), so deleting here first would only re-open the window this
+            // was meant to close: a crash or a full disk mid-job would leave no chapter at all where a
+            // good one used to be.
         }
 
         await PerformUpscaling(

@@ -892,6 +892,18 @@ public static class OnnxTiler
             }
         }
 
+        // A page whose both sides are at or below MinimumTileSize has no candidate at all: the
+        // enumeration bounds are floor(width / MinimumTileSize) and floor(height / MinimumTileSize),
+        // which are 1 and 1, and the (1,1) candidate is skipped above. The seed would then be a single
+        // tile covering the page — the exact plan the single-pass gate rejected, at a fraction of the
+        // budget it was rejected for. An emergency grid is returned instead, its tiles finer than the
+        // floor, which is what the engine would have halved down to after the driver refused the
+        // allocation anyway.
+        if (best.Columns == 1 && best.Rows == 1)
+        {
+            best = new TileSplit(2, 2, Math.Max(1, (width + 1) / 2), Math.Max(1, (height + 1) / 2));
+        }
+
         return best;
     }
 
@@ -1926,8 +1938,24 @@ public static class OnnxTiler
             int outTileH = tileH * scale;
             int outPaddedW = paddedW * scale;
             int outPaddedH = paddedH * scale;
-            int outPlane = outPaddedW * outPaddedH;
-            byte[] outCrop = new byte[outTileW * outTileH * 3];
+            // Widths and heights are exact multiples of the scale factor, so the plane and the crop are
+            // computed in long first: an 8000x8000 page run as one tile (TileSize = -1) is 32000 px on a
+            // side, and three bytes each overflows an int. The array below would then be asked for a
+            // negative length, which surfaces as an opaque OverflowException instead of the tile being
+            // refused for what it is.
+            long outPlaneLong = (long)outPaddedW * outPaddedH;
+            long outCropLength = 3L * outTileW * outTileH;
+            if (outPlaneLong * 3 > int.MaxValue || outCropLength > int.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"A {tileW}x{tileH} tile at {scale}x decodes to {outCropLength} bytes, which exceeds "
+                        + "the maximum array length. Use a smaller TileSize, or leave it at 0 so the "
+                        + "grid is derived from the memory budget instead of a single pass."
+                );
+            }
+
+            int outPlane = (int)outPlaneLong;
+            byte[] outCrop = new byte[(int)outCropLength];
 
             int outROff = 0;
             int outGOff = outPlane;

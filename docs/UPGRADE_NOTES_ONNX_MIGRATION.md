@@ -21,8 +21,8 @@ configuration surface. Nothing here requires a data migration; the database sche
   the value is read. A deployment that set `0` meaning "the first device" now runs on CPU; use `1`
   for the first accelerator.
 * The legacy backend aliases `ROCm`, `ROCm_GFX120X`, `XPU` and `CUDA_12_8` are still accepted and are
-  remapped to `WebGPU` / `CUDA`, but the remap is not logged. They are marked obsolete in
-  `upscaler.schema.json`; prefer `WebGPU` / `CUDA` directly.
+  remapped to `WebGPU` / `CUDA`, but the remap is not logged. They carry `[Obsolete]` on the
+  `GpuBackend` enum; prefer `WebGPU` / `CUDA` directly.
 
 ## Models
 

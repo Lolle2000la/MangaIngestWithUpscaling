@@ -404,5 +404,25 @@ public class EngineIdentityTests
         File.WriteAllText(SplitDetectionLayout.OnnxModelPath, model);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_TreatsPreferredGpuBackendCpuAsCpuLikeUseCpu()
+    {
+        // ShouldUseCpuProvider is the runtime's single decision, and it counts PreferredGpuBackend=CPU
+        // as CPU along with UseCPU and SelectedDeviceIndex <= 0. The identity defers to it, so the two
+        // spellings of "CPU" must hash the same — otherwise two workers with equivalent settings reject
+        // each other's spool.
+        UpscalerConfig byUseCpu = Config();
+        byUseCpu.UseCPU = true;
+
+        UpscalerConfig byBackend = Config();
+        byBackend.PreferredGpuBackend = GpuBackend.CPU;
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(byUseCpu, GpuBackend.CPU),
+            EngineIdentity.ForUpscaler(byBackend, GpuBackend.CPU)
+        );
+    }
+
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };
 }

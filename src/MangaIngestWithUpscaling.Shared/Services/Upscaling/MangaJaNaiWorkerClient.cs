@@ -317,6 +317,16 @@ public class MangaJaNaiWorkerClient(
                 $"Streamed chapter {request.Id} timed out after {timeout.Value} of inactivity."
             );
         }
+        finally
+        {
+            // Hand the device memory back at the chapter boundary whether the chapter succeeded, failed
+            // or timed out. The whole-CBZ path does the same after a chapter; without it here, a worker
+            // that streams chapter after chapter keeps every buffer the execution provider grew for the
+            // last one, and the budget the next chapter is planned against is no longer what it thinks
+            // it is. It also has to happen on the failure path, or a chapter that failed would hold the
+            // session into its own retry.
+            await ReleaseGpuCacheAsync(effectiveToken);
+        }
 
         sw.Stop();
         logger.LogInformation(
@@ -324,12 +334,6 @@ public class MangaJaNaiWorkerClient(
             request.Id,
             sw.Elapsed.TotalSeconds
         );
-
-        // Hand the device memory back before the next chapter. The whole-CBZ path does the same
-        // after a chapter; without it here, a worker that streams chapter after chapter keeps every
-        // buffer the execution provider grew for the last one, and the budget the next chapter is
-        // planned against is no longer what it thinks it is.
-        await ReleaseGpuCacheAsync(effectiveToken);
 
         return new UpscaleJobResult(request.Id, "success", files, sw.Elapsed.TotalSeconds);
     }

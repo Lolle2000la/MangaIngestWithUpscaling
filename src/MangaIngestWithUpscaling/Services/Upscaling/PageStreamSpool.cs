@@ -736,6 +736,47 @@ public sealed class PageStreamSpool : IPageSpoolStore
         // BuildPageDescriptors and GetPages, so a duplicate is skipped here instead of colliding.
         var handledSources = new HashSet<string>(StringComparer.Ordinal);
         var written = new HashSet<string>(StringComparer.Ordinal);
+
+        // Pages first, in page-index order. That is the order the manifest assigned (natural-sorted)
+        // and the order the whole-CBZ writer produces; iterating the source archive instead would give
+        // a source whose zip order is 10.png before 2.png a different physical page order from the
+        // other path, which is the one thing the two are meant to agree on. A reader uses the archive's
+        // physical order, so this is content, not bookkeeping.
+        foreach (
+            (string sourceName, SpoolPageDescriptor page) in bySource.OrderBy(kv => kv.Value.Index)
+        )
+        {
+            // A page whose source name could escape the archive is not carried into the output; the
+            // pass-through loop below applies the same guard.
+            if (!IsSafeEntryName(sourceName))
+            {
+                continue;
+            }
+
+            string pagePath = session.PagePath(page.Index);
+            if (!File.Exists(pagePath))
+            {
+                throw new PageStreamRestartException(
+                    $"Spooled page {page.Index} for task {session.TaskId} is missing."
+                );
+            }
+
+            // BuildPageDescriptors disambiguates distinct sources, so this only fires if that
+            // invariant is ever broken; fail loudly rather than silently dropping a page.
+            if (!written.Add(page.OutputName))
+            {
+                throw new InvalidOperationException(
+                    $"Two pages of task {session.TaskId} resolve to the same output name '{page.OutputName}'."
+                );
+            }
+
+            ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
+            using Stream input = File.OpenRead(pagePath);
+            using Stream target = outputEntry.Open();
+            input.CopyTo(target);
+        }
+
+        // Then everything that is not a page (ComicInfo.xml and friends), in the source's own order.
         foreach (ZipArchiveEntry entry in source.Entries)
         {
             // Skip directory entries (zip stores them with an empty name).
@@ -749,43 +790,22 @@ public sealed class PageStreamSpool : IPageSpoolStore
                 continue;
             }
 
+            // Its page was already written in index order above.
+            if (bySource.ContainsKey(entry.FullName))
+            {
+                continue;
+            }
+
             // Do not propagate a parent-traversing name into the output archive.
             if (!IsSafeEntryName(entry.FullName))
             {
                 continue;
             }
 
-            if (bySource.TryGetValue(entry.FullName, out SpoolPageDescriptor? page))
-            {
-                string pagePath = session.PagePath(page.Index);
-                if (!File.Exists(pagePath))
-                {
-                    throw new PageStreamRestartException(
-                        $"Spooled page {page.Index} for task {session.TaskId} is missing."
-                    );
-                }
-
-                // BuildPageDescriptors disambiguates distinct sources, so this only fires if that
-                // invariant is ever broken; fail loudly rather than silently dropping a page.
-                if (!written.Add(page.OutputName))
-                {
-                    throw new InvalidOperationException(
-                        $"Two pages of task {session.TaskId} resolve to the same output name '{page.OutputName}'."
-                    );
-                }
-
-                ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
-                using Stream input = File.OpenRead(pagePath);
-                using Stream target = outputEntry.Open();
-                input.CopyTo(target);
-            }
-            else
-            {
-                ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
-                using Stream input = entry.Open();
-                using Stream target = outputEntry.Open();
-                input.CopyTo(target);
-            }
+            ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
+            using Stream input = entry.Open();
+            using Stream target = outputEntry.Open();
+            input.CopyTo(target);
         }
     }
 

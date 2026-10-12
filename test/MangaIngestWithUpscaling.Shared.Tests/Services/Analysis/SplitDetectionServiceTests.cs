@@ -309,7 +309,7 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task DetectSplitsAsync_WhenInferenceHangs_ReturnsAnErrorWithinTheTimeout()
+    public async Task DetectSplitsAsync_WhenInferenceHangs_ThrowsATimeoutWithinTheTimeout()
     {
         // session.Run is synchronous and cannot be cancelled, so a hung provider would otherwise
         // park the chapter forever. The service bounds the await and returns an error instead.
@@ -352,15 +352,18 @@ public class SplitDetectionServiceTests : IDisposable
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            SplitDetectionResult result = Assert.Single(
-                await service.DetectSplitsAsync(
+            // Thrown as a TimeoutException, not returned as an error result: an error finding is
+            // uploaded as a normal page finding and ends in SplitProcessingService failing the chapter
+            // for good, while a TimeoutException is classified transient (the upscaler path treats a
+            // timed-out upscale the same way) and requeues the task with the spool intact.
+            await Assert.ThrowsAsync<TimeoutException>(() =>
+                service.DetectSplitsAsync(
                     WriteDecodableImage("hang.png"),
                     cancellationToken: TestContext.Current.CancellationToken
                 )
             );
             stopwatch.Stop();
 
-            Assert.NotNull(result.Error);
             Assert.True(
                 stopwatch.Elapsed < TimeSpan.FromSeconds(10),
                 $"detection was not bounded; it took {stopwatch.Elapsed}"
@@ -410,6 +413,38 @@ public class SplitDetectionServiceTests : IDisposable
         using var image = Image.NewFromMemory(pixels, width, height, 3, Enums.BandFormat.Uchar);
         image.WriteToFile(path);
         return path;
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_TransientFailure_ThrowsInsteadOfReportingAPageError()
+    {
+        // A device-lost or an OOM during detection is not a property of the page. Reported as a
+        // per-page Error it reaches SplitProcessingService, which calls SetFailedAsync once every page
+        // carries one — the chapter is failed for good. Thrown with its original type it reaches the
+        // worker's IsInfrastructureFailure / ClassifyStreamingFailure path, which requeues the task
+        // with the spool intact, exactly as the upscaler path does. An OOM from the session factory
+        // makes the classification deterministic without needing a real device failure.
+        string modelsDir = Path.Combine(_root, "transient_models");
+        Directory.CreateDirectory(modelsDir);
+        File.WriteAllBytes(Path.Combine(modelsDir, "page_break_detector.onnx"), [0]);
+        string imagePath = WriteDecodableImage("transient_page.png");
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        factory
+            .GetOrCreateSession(Arg.Any<string>())
+            .Returns(_ => throw new OutOfMemoryException("device lost"));
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            service.DetectSplitsAsync(imagePath, null, TestContext.Current.CancellationToken)
+        );
     }
 
     [Fact]

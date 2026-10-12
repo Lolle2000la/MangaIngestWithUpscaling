@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
@@ -73,11 +74,11 @@ public static class EngineIdentity
                     ?? config.ResolveUseFp16(resolvedBackend ?? config.PreferredGpuBackend)
             )
             .Append('|')
-            // The effective compute mode, not just UseCPU: device 0 is the CPU switch and, as in
-            // OnnxSessionFactory.ShouldUseCpuProvider and UpscalerConfig.ResolveUseFp16, every
-            // SelectedDeviceIndex <= 0 resolves to CPU. So UseCPU=true, SelectedDeviceIndex=0 and
-            // SelectedDeviceIndex=-1 must all hash the same and differ from a GPU run (> 0).
-            .Append(config.UseCPU || config.SelectedDeviceIndex <= 0)
+            // The effective compute mode, not just UseCPU: device 0 is the CPU switch, and
+            // PreferredGpuBackend = CPU is the third way to ask for CPU. ShouldUseCpuProvider is the
+            // single place that decides it, so this defers to it rather than restating the rule — the
+            // two must agree or two workers with equivalent settings reject each other's spool.
+            .Append(OnnxSessionFactory.ShouldUseCpuProvider(config))
             .Append('|')
             // The *resolved* accelerator backend, so a CUDA and a WebGPU run never mix even when both
             // are configured Auto. The GPU index itself is not hashed, so a same-backend hand-off
@@ -115,6 +116,10 @@ public static class EngineIdentity
             return;
         }
 
+        string detectorFileName = Path.GetFileName(
+            SplitDetectionLayout.ResolveModelPath(directory)
+        );
+
         // Only the ONNX weights go in. The same directory also holds the per-device calibration
         // profile (device-memory-profile.json) and a .verified_* marker per downloaded package, and
         // both change on a worker without the models changing at all — the profile is written the
@@ -139,6 +144,15 @@ public static class EngineIdentity
             // this directory, so a live or crashed one would otherwise contribute duplicate weights to
             // the identity even though the installed models are unchanged.
             .Where(entry => !entry.Relative.Split('/').Any(segment => segment.StartsWith('.')))
+            // The page-break detector lives in this directory too but is hashed separately by
+            // ForDetector, so a detector-only change must not invalidate an upscale spool.
+            .Where(entry =>
+                !string.Equals(
+                    Path.GetFileName(entry.File),
+                    detectorFileName,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
             .OrderBy(entry => entry.Relative, StringComparer.Ordinal);
         foreach ((string relative, long length, string file) in files)
         {

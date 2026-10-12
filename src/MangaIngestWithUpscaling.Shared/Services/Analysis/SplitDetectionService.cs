@@ -438,20 +438,23 @@ public class SplitDetectionService(
                 onnxSessionFactory.InvalidateSession(modelPath);
             }
 
-            return new SplitDetectionResult
-            {
-                ImagePath = imagePath,
-                Error = "Split detection timed out; the execution provider did not return.",
-            };
+            // Thrown as a TimeoutException rather than reported as a per-page error, for the same
+            // reason as the transient catch above: an error finding ends in SetFailedAsync, while a
+            // timeout is classified transient (the upscaler path treats a timed-out upscale the same
+            // way) and requeues the task with the spool intact. It is also not cached as a detector
+            // failure, so the retry re-probes.
+            throw new TimeoutException(
+                $"Split detection for {imagePath} timed out; the execution provider did not return.",
+                ex
+            );
         }
         catch (Exception ex) when (reachedModel && IsTransientDetectionFailure(ex))
         {
             // Transient: a resource hiccup (memory, a lost device) or an IO error, not a property of
-            // the detector. Drop the session for this attempt but do NOT cache the verdict, so a
-            // later page retries it.
+            // the detector. Drop the session for the retry.
             logger.LogWarning(
                 ex,
-                "Split detection for {ImagePath} failed transiently; it will be retried.",
+                "Split detection for {ImagePath} failed transiently; the task will be retried.",
                 imagePath
             );
             if (session is not null)
@@ -459,7 +462,13 @@ public class SplitDetectionService(
                 onnxSessionFactory.InvalidateSession(modelPath);
             }
 
-            return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
+            // Rethrown with its original type, not reported as a per-page error. A recorded error
+            // reaches SplitProcessingService as a failed finding, and when every page carries one it
+            // calls SetFailedAsync and throws — the chapter is marked failed for good, on the strength
+            // of an OOM or a lost device. Rethrown, the worker's IsInfrastructureFailure /
+            // ClassifyStreamingFailure path recognises it as transient and requeues the task with the
+            // spool intact, which is exactly what the same machinery does on the upscaler path.
+            throw;
         }
         catch (Exception ex) when (reachedModel && ex is not ObjectDisposedException)
         {

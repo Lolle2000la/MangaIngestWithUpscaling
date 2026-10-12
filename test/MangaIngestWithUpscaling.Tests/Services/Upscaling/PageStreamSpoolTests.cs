@@ -233,6 +233,52 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void Assemble_WritesPagesInPageOrderNotSourceArchiveOrder()
+    {
+        // A reader uses the archive's physical order, and the manifest (and the whole-CBZ writer)
+        // natural-sort the pages. A source whose zip order is 2 before 1 must therefore still come out
+        // as 1 then 2, or the streamed CBZ and the whole-CBZ output disagree on page order — which the
+        // code itself calls content-critical.
+        string directory = Directory.CreateTempSubdirectory("spool_order").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "002.jpg", new byte[] { 2 });
+                WriteEntry(zip, "001.jpg", new byte[] { 1 });
+            }
+
+            var pages = new List<SpoolPageDescriptor>
+            {
+                new(0, "001.jpg", "001.webp"),
+                new(1, "002.jpg", "002.webp"),
+            };
+            PageStreamSession session = _spool.GetOrCreateSession(21, "identity", "engine", 1);
+            for (int index = 0; index < pages.Count; index++)
+            {
+                using FileStream page = _spool.BeginPageWrite(session, index, out string temp);
+                page.Write([(byte)(index + 10)]);
+                _spool.CommitPage(session, index, temp);
+            }
+
+            string destination = Path.Combine(directory, "out.cbz");
+            _spool.Assemble(session, session.Identity, path, pages, destination);
+
+            using ZipArchive output = ZipFile.OpenRead(destination);
+            Assert.Equal(
+                new[] { "001.webp", "002.webp" },
+                output.Entries.Select(e => e.FullName).ToArray()
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task WritePage_Assemble_ReplacesImagesAndCopiesOtherEntries()
     {
         string directory = Directory.CreateTempSubdirectory("spool_test").FullName;

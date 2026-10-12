@@ -47,14 +47,52 @@ public static class UpscalerConfigSizeValidation
 /// the setting exists to express — so it fails at startup instead, where the offending line is still
 /// findable in the log before the first chapter is upscaled.
 /// </para>
+/// <para>
+/// The preprocessing values are checked here for the same reason: <see cref="ImageResizeService"/>
+/// rejects them per image, so an invalid one would otherwise fail the first chapter of the first task
+/// instead of the boot. The ranges mirror that check, including applying the smart-downscale ones
+/// only while the feature is enabled — a nonsense value on a disabled feature is inert.
+/// </para>
 /// </summary>
 public sealed class UpscalerConfigValidator : IValidateOptions<UpscalerConfig>
 {
     public ValidateOptionsResult Validate(string? name, UpscalerConfig options)
     {
         List<string> invalid = options.FindInvalidSizeSettings().ToList();
+        invalid.AddRange(options.FindInvalidPreprocessingSettings());
         return invalid.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(invalid);
+    }
+}
+
+/// <summary>
+/// The preprocessing half of <see cref="UpscalerConfigValidator"/>. Kept beside it so the two checks
+/// on the same section are read together, and so <see cref="ImageResizeService.Validate"/> has a
+/// boot-time counterpart it can be compared against.
+/// </summary>
+public static class UpscalerConfigPreprocessingValidation
+{
+    public static IEnumerable<string> FindInvalidPreprocessingSettings(this UpscalerConfig config)
+    {
+        if (config.MaxDimensionBeforeUpscaling is < 0)
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.MaxDimensionBeforeUpscaling)} = {config.MaxDimensionBeforeUpscaling}: expected null, 0 or a positive maximum dimension";
+        }
+
+        if (!config.EnableSmartDownscale)
+        {
+            yield break;
+        }
+
+        if (config.SmartDownscaleThreshold <= 0)
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.SmartDownscaleThreshold)} = {config.SmartDownscaleThreshold}: expected a positive Laplacian standard deviation";
+        }
+
+        if (config.SmartDownscaleFactor is <= 0 or >= 1)
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.SmartDownscaleFactor)} = {config.SmartDownscaleFactor}: expected a fraction strictly between 0 and 1";
+        }
     }
 }

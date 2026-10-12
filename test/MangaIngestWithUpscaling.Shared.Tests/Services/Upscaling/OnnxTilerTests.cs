@@ -1577,6 +1577,34 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void PlanTileSplit_TinyPageThatSinglePassRejects_DoesNotReturnTheWholePage()
+    {
+        // Both sides are at or below MinimumTileSize, so the enumeration bounds are 1 and 1 and the
+        // (1,1) candidate is skipped — there is no candidate at all. The seed would then be a single
+        // tile covering the page, which is the very plan the single-pass gate rejected: a 200x150 page
+        // with the heaviest model needs ~2.9 GiB of activation, so against a 3 GiB budget (2.6 GiB
+        // after the session reservation, 2.4 GiB of headroom) the gate rejects it while the loop finds
+        // nothing. The emergency grid is returned instead.
+        string model = "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx";
+
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+            200,
+            150,
+            4,
+            model,
+            3L * 1024 * 1024 * 1024,
+            isFp16: true
+        );
+
+        Assert.False(
+            split.Columns == 1 && split.Rows == 1,
+            $"the whole page was rejected as a single pass but planned anyway: {split.Columns}x{split.Rows}"
+        );
+        Assert.Equal(2, split.Columns);
+        Assert.Equal(2, split.Rows);
+    }
+
+    [Fact]
     public void PlanTileSplit_UsesTheModelsOwnScaleNotTheDeviceDefault()
     {
         // The device default was fitted on a small fp16 ESRGAN (0.90x); the fp32 transformer measured

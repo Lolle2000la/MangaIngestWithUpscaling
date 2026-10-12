@@ -45,8 +45,10 @@ FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 # SQLite<->PostgreSQL migration CLI. It is framework-dependent (same runtime and shared deps as the
-# app), so publishing it into the same image adds only ~0.2 MB; the migrator csproj strips the web
-# app's multi-GB backend content. Run it by overriding the entrypoint, e.g.:
+# app), so publishing it into the same image adds only ~0.2 MB. It was once much larger because the
+# migrator csproj stripped the web app's bundled Python backend; that backend is gone, so the two now
+# overlap almost completely and `cp -rn` only adds the migrator entrypoint. Run it by overriding the
+# entrypoint, e.g.:
 #   docker run --rm --entrypoint dotnet <image> MangaIngestWithUpscaling.DbMigrator.dll <arguments>
 RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c $BUILD_CONFIGURATION -o /app/migrator /p:UseAppHost=false
 RUN cp -rn /app/migrator/. /app/publish/

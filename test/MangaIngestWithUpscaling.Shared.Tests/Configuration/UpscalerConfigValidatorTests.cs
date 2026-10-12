@@ -227,4 +227,51 @@ public class UpscalerConfigValidatorTests
         // Many call sites construct a config directly; those must not be affected by validation.
         _ = Options.Create(new UpscalerConfig { MemoryBudgetBytes = "nonsense" });
     }
+
+    [Theory]
+    [InlineData(1.5, 15.0, null)] // factor at or above 1
+    [InlineData(0.0, 15.0, null)] // factor at or below 0
+    [InlineData(0.75, 0.0, null)] // non-positive threshold
+    [InlineData(0.75, -1.0, null)] // negative threshold
+    [InlineData(0.75, 15.0, -1)] // negative maximum dimension
+    public void RejectsInvalidPreprocessingSettings(double factor, double threshold, int? maxDim)
+    {
+        // EnableSmartDownscale defaults to true, and ImageResizeService rejects these per image. Without
+        // a boot-time check the first chapter of the first task fails instead of the boot.
+        var config = new UpscalerConfig
+        {
+            SmartDownscaleFactor = factor,
+            SmartDownscaleThreshold = threshold,
+            MaxDimensionBeforeUpscaling = maxDim,
+        };
+
+        Assert.NotEmpty(config.FindInvalidPreprocessingSettings());
+    }
+
+    [Fact]
+    public void AcceptsValidPreprocessingSettings()
+    {
+        var config = new UpscalerConfig
+        {
+            SmartDownscaleFactor = 0.75,
+            SmartDownscaleThreshold = 15.0,
+            MaxDimensionBeforeUpscaling = 2048,
+        };
+
+        Assert.Empty(config.FindInvalidPreprocessingSettings());
+    }
+
+    [Fact]
+    public void IgnoresSmartDownscaleSettingsWhileTheFeatureIsDisabled()
+    {
+        // A nonsense value on a disabled feature is inert, matching ImageResizeService.Validate.
+        var config = new UpscalerConfig
+        {
+            EnableSmartDownscale = false,
+            SmartDownscaleFactor = 1.5,
+            SmartDownscaleThreshold = 0,
+        };
+
+        Assert.Empty(config.FindInvalidPreprocessingSettings());
+    }
 }
