@@ -107,11 +107,13 @@ than being serialised, and the eviction is made safe by retiring the session and
 once every scope has drained (`OnnxSessionFactory.RetireLocked` / `DrainRetired`) — and it is the
 deliberate price of keeping `C` to a single model.
 
-The detector runs one inference window at a time (2048 rows plus context), which bounds its own
-footprint independently of the page height — a whole-page pass would need ~1.5 GiB at 4000 resized
-rows and ~5.6 GiB at 15000. The window's context margin is what makes it exact: it covers the model's
-1423-row receptive field, so the windowed result is bit-identical to a whole-page pass (see the
-detector section of [the migration notes](UPGRADE_NOTES_ONNX_MIGRATION.md#splits-and-detection)).
+The detector infers one window at a time, sized to the same budget tile sizing uses: the whole page in
+a single pass when it fits, otherwise the largest window that does (a window's context rows are
+re-inferred, so windowing costs time). Its own footprint is therefore bounded independently of the page
+height — a whole-page pass would need ~1.5 GiB at 4000 resized rows and ~5.6 GiB at 15000. The window's
+context margin is what makes it exact: it covers the model's 1423-row receptive field, so the result is
+bit-identical to a whole-page pass at any window size (see the detector section of
+[the migration notes](UPGRADE_NOTES_ONNX_MIGRATION.md#splits-and-detection)).
 
 ---
 

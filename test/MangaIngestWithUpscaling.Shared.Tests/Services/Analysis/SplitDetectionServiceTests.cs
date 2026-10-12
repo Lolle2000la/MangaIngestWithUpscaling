@@ -261,15 +261,22 @@ public class SplitDetectionServiceTests : IDisposable
         Assert.Equal(200f / 255f, transparentRow.Confidence, 2);
     }
 
-    [Fact]
+    [Theory]
     [Trait("Category", "Unit")]
-    public async Task DetectSplitsAsync_PageTallerThanAWindow_AssemblesEveryRowFromItsOwnWindow()
+    [InlineData("64MiB")]
+    [InlineData("4GiB")]
+    public async Task DetectSplitsAsync_PageTallerThanAWindow_AssemblesEveryRowFromItsOwnWindow(
+        string budget
+    )
     {
         // A page taller than the inference window is detected in several windows, and every row has to
         // come back from the window that was trusted for it. The synthetic detector's probability is
-        // the row mean, so filling row y with (y % 256) makes each row's value identify where it was
-        // read from: a window offset or margin mistake shifts the whole assembly and every confidence
-        // after the first window boundary comes out wrong.
+        // the row mean, so filling row y with (128 + y % 128) makes each row's value identify where it
+        // was read from: a window offset or margin mistake shifts the whole assembly and every
+        // confidence after the first window boundary comes out wrong. The budget is varied to pin the
+        // other half of the contract — 64MiB forces windows, 4GiB buys the whole-page pass, and the
+        // detected splits have to be identical either way, because the margin (not the chunk) is what
+        // makes a window exact.
         string modelsDir = Path.Combine(_root, "window_models");
         Directory.CreateDirectory(modelsDir);
         string modelPath = TinyOnnxModel.WritePeakMaskDetector(
@@ -285,7 +292,9 @@ public class SplitDetectionServiceTests : IDisposable
             factory,
             NullLogger<SplitDetectionService>.Instance,
             Substitute.For<IStringLocalizer<SplitDetectionService>>(),
-            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+            Options.Create(
+                new UpscalerConfig { ModelsDirectory = modelsDir, MemoryBudgetBytes = budget }
+            )
         );
 
         // Four windows at the 2048-row chunk, the last one partial; 100 rows are dropped at each end.

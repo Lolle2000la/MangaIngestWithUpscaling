@@ -39,12 +39,12 @@ public class SplitDetectionService(
     internal const string PeakMaskOutputName = "peak_mask";
 
     /// <summary>
-    /// Rows of a page inferred per forward pass. Matches the reference's window (and the model's
-    /// training crop), which is what keeps the window's input length in the range the model was fitted
-    /// on; the value only affects throughput, not the result, because the margin below is what makes a
-    /// window exact.
+    /// Chunk used when no memory budget could be measured at all (a device with no VRAM reporting, or
+    /// CPU inference), where "no budget" is not evidence of abundance. It is the reference's window and
+    /// the model's training crop, and it bounds the footprint to one window rather than the page;
+    /// anything smaller barely helps, because the context margin dominates a window's size.
     /// </summary>
-    private const int DetectorChunkRows = 2048;
+    private const int DetectorDefaultChunkRows = 2048;
 
     /// <summary>
     /// Rows of context a window carries beyond the rows it is trusted for. Must be at least the model's
@@ -56,6 +56,73 @@ public class SplitDetectionService(
     /// memory without changing which rows are detected as peaks. 1536 is that bound rounded up.
     /// </summary>
     private const int DetectorWindowMargin = 1536;
+
+    /// <summary>
+    /// Fixed part of one detector inference's footprint, and the per-row cost of it, measured on the
+    /// shipped model (RX 9070 XT, ORT 1.29, WebGPU) as the working-set growth of a page pass: 1513 MiB
+    /// for 4000 resized rows and 5615 MiB for 15000, i.e. ~0.373 MiB per row plus ~21 MiB. These are
+    /// used to decide whether the whole page fits the memory budget and, when it does not, how large a
+    /// window is affordable. They are deliberately round numbers above the measurement: an estimate
+    /// that is too low would pick a window that does not fit, and the cost of being too high is only a
+    /// smaller window.
+    /// </summary>
+    private const long DetectorFixedBytes = 32L * 1024 * 1024;
+
+    private const long DetectorBytesPerRow = 420_000;
+
+    /// <summary>
+    /// Smallest chunk worth splitting into. Below this the context alone dominates the work — every
+    /// window carries <see cref="DetectorWindowMargin"/> rows on each side regardless — so a budget too
+    /// small for this still gets this, and an overrun is left to the retry path rather than turned into
+    /// hundreds of near-identical windows.
+    /// </summary>
+    private const int DetectorMinChunkRows = 512;
+
+    /// <summary>
+    /// Largest chunk (and number of windows) whose inference fits <paramref name="budgetBytes"/>.
+    /// <para>
+    /// One window, i.e. the whole page in a single pass, whenever the page fits: windowing exists only
+    /// to keep a tall page inside the budget, and it is not free — the context rows are inferred again
+    /// for every window, so a 2048-row chunk with the 1536-row margin costs about 2.5 times the rows
+    /// the page has. The result does not depend on the choice (the margin is what makes a window
+    /// exact), so the budget is free to buy speed.
+    /// </para>
+    /// </summary>
+    internal static (int ChunkRows, int WindowCount) PlanDetectorWindows(
+        int pageRows,
+        long budgetBytes
+    )
+    {
+        if (pageRows <= 0)
+        {
+            return (1, 0);
+        }
+
+        // No budget could be measured: neither the page nor a window has a known ceiling, so use the
+        // bounded default rather than assuming the device is roomy (the tile planner reaches for its
+        // quality floor in the same situation).
+        if (budgetBytes <= 0)
+        {
+            int defaultChunk = Math.Min(pageRows, DetectorDefaultChunkRows);
+            return (defaultChunk, (pageRows + defaultChunk - 1) / defaultChunk);
+        }
+
+        // Rows of *window* the budget affords, after the whole-page allowance the planner elsewhere
+        // also applies to a pass that cannot be recovered from.
+        long affordableWindowRows =
+            (long)(budgetBytes * OnnxTiler.SinglePassSafetyFraction) - DetectorFixedBytes;
+        long affordableRows =
+            affordableWindowRows > 0 ? affordableWindowRows / DetectorBytesPerRow : 0;
+
+        if (affordableRows >= pageRows)
+        {
+            return (pageRows, 1);
+        }
+
+        long chunk = affordableRows - (2L * DetectorWindowMargin);
+        int chunkRows = (int)Math.Clamp(chunk, DetectorMinChunkRows, pageRows);
+        return (chunkRows, (pageRows + chunkRows - 1) / chunkRows);
+    }
 
     /// <summary>
     /// Upper bound on the known-failure cache. A detector that cannot run on a backend is a property
@@ -403,39 +470,40 @@ public class SplitDetectionService(
                     // AsTensor.
                     RequireDetectorContract(localSession);
 
-                    // The inference runs in windows rather than over the whole page at once. The model's
-                    // vertical receptive field is +-1423 rows — the dilated CNN stack reaches +-1023
-                    // (dilations 1..512 over 3x3 kernels), the smoothing conv +-8 and the peak test's
-                    // MaxPool +-400 — so a window that extends DetectorWindowMargin rows past the rows
-                    // it is trusted for reproduces the whole-page result exactly. Measured against the
-                    // shipped model on periodic, noise and banded 9000-row pages: max |delta prob| is
-                    // exactly 0.0 at this margin, 3.8e-6 at 1024 and 1.5e-1 at 512.
-                    //
-                    // Bounding the window is what removes the memory growth: a whole-page pass needs
-                    // about 1.5 GiB at 4000 resized rows and ~5.5 GiB at 15000, which is the top of the
-                    // range the model's training strips covered. With this it is the footprint of one
-                    // window regardless of page height.
-                    //
-                    // The margin is deliberately larger than the reference's 512-row overlap. Upstream
-                    // windows the *logits* before the calibration is applied, so its overlap only has
-                    // to cover the peak test's +-400; its 2048/512 window therefore truncates the
-                    // dilated CNN's +-1023 context for rows near a window boundary. That is consistent
-                    // with the 2048-row crops the model was trained on, but it is *not* the whole-page
-                    // evaluation the baked thresholds were calibrated on (calibrate.py runs an
-                    // uncropped single pass). Using the exact margin keeps this on the calibrated
-                    // evaluation, and makes the result independent of the window size.
+                    // Windows only as far as the memory budget requires, and one whole-page pass when the
+                    // page fits. Windowing is what bounds the footprint of a tall page — a whole-page
+                    // pass needs ~1.5 GiB at 4000 resized rows and ~5.6 GiB at 15000 — but it is not
+                    // free: every window re-infers its DetectorWindowMargin rows of context on each
+                    // side, so a 2048-row chunk costs about 2.5 times the page's rows. The margin (not
+                    // the chunk) is what makes a window exact, so the chunk only trades memory against
+                    // speed and the budget is free to buy the faster whole-page pass.
+                    int deviceId = Math.Max(0, upscalerConfig?.Value.SelectedDeviceIndex - 1 ?? 0);
+                    long budget =
+                        (upscalerConfig?.Value.ResolvedMemoryBudgetBytes ?? 0) > 0
+                            ? upscalerConfig!.Value.ResolvedMemoryBudgetBytes
+                            : OnnxTiler.GetAvailableVramBudget(
+                                deviceId,
+                                upscalerConfig?.Value.VramUtilizationFraction,
+                                upscalerConfig?.Value.ResolvedVramSafetyMarginBytes,
+                                upscalerConfig?.Value.ResolvedVramExclusiveThresholdBytes
+                            );
+                    (int chunkRows, int windowCount) = PlanDetectorWindows(actualHeight, budget);
+                    logger.LogDebug(
+                        "Detector: {Rows} resized rows in {Windows} window(s) of {ChunkRows} rows (budget {BudgetMiB} MiB).",
+                        actualHeight,
+                        windowCount,
+                        chunkRows,
+                        budget / 1024 / 1024
+                    );
+
                     var probs = new float[actualHeight];
                     var peakMask = new bool[actualHeight];
 
-                    for (
-                        int windowStart = 0;
-                        windowStart < actualHeight;
-                        windowStart += DetectorChunkRows
-                    )
+                    for (int windowStart = 0; windowStart < actualHeight; windowStart += chunkRows)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
-                        int windowEnd = Math.Min(windowStart + DetectorChunkRows, actualHeight);
+                        int windowEnd = Math.Min(windowStart + chunkRows, actualHeight);
                         int inputStart = Math.Max(0, windowStart - DetectorWindowMargin);
                         int inputEnd = Math.Min(actualHeight, windowEnd + DetectorWindowMargin);
                         int windowHeight = inputEnd - inputStart;

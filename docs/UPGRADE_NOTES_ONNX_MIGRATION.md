@@ -66,11 +66,17 @@ configuration surface. Nothing here requires a data migration; the database sche
   the chapter shows as having pending splits until they are re-applied — the findings come from a
   different algorithm, so they are meant to be reviewed, not inherited. Chapters that need no split
   are re-marked without any action.
-* The detector runs its inference in **windows**, like the upstream reference: one window per 2048
-  rows plus context on either side. That is what bounds its memory: the activations grow with the
-  height of the input, and a whole-page pass needs roughly 1.5 GiB at 4000 resized rows and 5.6 GiB at
-  15000 rows (the top of the range the model's training strips cover, `STRIP_LENGTH_MAX`), while a
-  windowed pass stays at a few hundred MiB regardless of height.
+* The detector runs its inference in **windows only as far as the memory budget requires**, and in one
+  whole-page pass when the page fits. That budget is the same one tile sizing uses (measured free VRAM
+  with its safety margins, or an explicit `MemoryBudgetBytes`). Windowing is what bounds the footprint
+  of a tall page — a whole-page pass needs roughly 1.5 GiB at 4000 resized rows and 5.6 GiB at 15000
+  (the top of the range the model's training strips cover, `STRIP_LENGTH_MAX`) — but it is not free:
+  every window re-infers its context rows, so a 2048-row chunk costs about 2.5 times the page's rows.
+  The window is therefore sized to the budget, up to the whole page.
+* The window's size does **not** affect the result — verified bit-identical against the shipped model
+  at chunk sizes 512, 2048, 4096, 8192 and whole-page, on pages of two different kinds (max probability
+  difference 0.0, no differing peaks) — so the budget is free to buy the faster whole-page pass. What
+  makes a window exact is its context margin, not its length.
 * The window carries **1536 rows of context** beyond the rows it is trusted for, deliberately more than
   the reference's 512. The model's vertical receptive field is 1423 rows: the dilated residual stack
   reaches ±1023 (ten 3x3 blocks with dilations 1, 2, 4, … 512), the smoothing convolution after the
@@ -79,13 +85,12 @@ configuration surface. Nothing here requires a data migration; the database sche
   reference can use 512 because it windows the *logits* and applies the sigmoid, the smoothing and the
   peak search afterwards; this export bakes those three into the graph, so its windows are already
   post-calibration and the margin has to cover the whole receptive field instead. Measured against the
-  shipped model on 9000-row pages of three different kinds: with 1536 the windowed result is
-  **bit-identical** to a whole-page pass (max probability difference 0.0, no differing peaks), with
-  1024 it diverges by 3.8e-6, with 512 by 1.5e-1.
+  shipped model on 9000-row pages: with 1536 the windowed result is **bit-identical** to a whole-page
+  pass, with 1024 it diverges by 3.8e-6, with 512 by 1.5e-1.
 * That also keeps the implementation on the evaluation the baked thresholds were calibrated on: the
   calibration (`calibrate.py`) runs an **uncropped single pass** over whole strips, which is what the
-  windowed pass reproduces. The 2048-row window is the reference's window and the model's training
-  crop (`--crop_height` default 2048); it affects memory and speed, not the result.
+  windowed pass reproduces. The reference's 2048-row window is the model's training crop
+  (`--crop_height` default 2048); here it is only the fallback when no budget can be measured.
 
 * Images with **transparency** are now decoded the way the reference decodes them: the alpha band is
   **dropped**, so the colour stored under a transparent pixel is what the detector sees. Previously
