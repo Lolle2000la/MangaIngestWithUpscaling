@@ -44,6 +44,37 @@ public class OnnxTilerTests : IDisposable
         Assert.True(OnnxTiler.IsMemoryException(ex));
     }
 
+    [Theory]
+    [InlineData(1125, 1600, 3, 4, 375, 400, true)] // halving asks for 188 px tiles, above the floor
+    [InlineData(1125, 1600, 6, 8, 188, 200, false)] // halving asks for 94 px tiles
+    [InlineData(400, 400, 2, 2, 200, 200, false)] // 100 px tiles
+    [InlineData(256, 288, 1, 1, 256, 288, true)] // exactly 128 px tiles, which the floor allows
+    public void CanHalveWithinFloor_JudgesTheHalvedTileNotTheCurrentOne(
+        int width,
+        int height,
+        int columns,
+        int rows,
+        int tileWidth,
+        int tileHeight,
+        bool expected
+    )
+    {
+        // The floor is about the tile the descent would actually run, and TileSplit.For shrinks the
+        // tiles so they cover the page exactly: 1125 px in 6 columns is 188 px per tile, and halving
+        // that asks for 94 px tiles rather than 128. Judging the current sides instead would let the
+        // descent land a step below the floor on every axis the test does not look at. The last case is
+        // the boundary the engine relies on: a grid whose halving yields exactly 128 px is attempted.
+        Assert.Equal(
+            expected,
+            OnnxTiler.CanHalveWithinFloor(
+                width,
+                height,
+                new OnnxTiler.TileSplit(columns, rows, tileWidth, tileHeight),
+                OnnxTiler.EmergencyTileFloor
+            )
+        );
+    }
+
     [Fact]
     public void ExtractCrop_ExtractsCorrectRegion()
     {

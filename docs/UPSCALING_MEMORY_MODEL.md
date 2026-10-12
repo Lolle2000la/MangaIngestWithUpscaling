@@ -156,7 +156,12 @@ Notes:
   `maxCap = { ≥4 => 512, 3 => 640, _ => 1024 }` is gone.
 * **`MinimumTileSize = 256`** remains the quality floor (receptive field on screentones), and the grid
   never gets finer than it. When even that grid does not fit the budget, the engine's existing
-  `OnnxTiler.IsMemoryException` path halves it further.
+  `OnnxTiler.IsMemoryException` path halves it further — down to **`EmergencyTileFloor = 128`**, and no
+  further. Below that a tile is not a cheaper version of the same inference but a different, much
+  worse one, so reaching the floor fails the page (as a memory failure, which the worker requeues)
+  rather than upscaling it in postage stamps. The floor is judged on the tile the halving would
+  actually produce, not on the size asked of it: `TileSplit.For` shrinks tiles to cover the page
+  exactly, so halving a 188 px grid asks for 94 px and stops one step earlier.
 * Tiles are inferred at **one uniform shape per page** (a multiple of 64), which keeps the driver from
   re-allocating per tile. It is derived from the grid the page actually has, *not* from the budget's
   tile side: an 800 px wide page inferred as a 1600 px tile computes every tile at twice the pixels
@@ -236,7 +241,8 @@ the stronger check for the fp16 conv nets; the fp32 transformers are checked in 
 
 The unknown-architecture fallback is deliberately elastic: it scales with `sqrt(modelSize)` so a
 model nobody has classified still lands in the right ballpark, and the engine halves the tile on
-allocation failure if it lands low.
+allocation failure if it lands low — stopping at `EmergencyTileFloor` (128 px), where the page is
+failed as a memory failure instead of being split further.
 
 ---
 

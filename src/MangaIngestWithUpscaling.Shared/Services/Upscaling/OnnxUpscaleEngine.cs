@@ -1136,7 +1136,12 @@ public class OnnxUpscaleEngine(
                     }
                     catch (Exception ex)
                         when (OnnxTiler.IsMemoryException(ex)
-                            && (attempt.TileWidth > 16 || attempt.TileHeight > 16)
+                            && OnnxTiler.CanHalveWithinFloor(
+                                width,
+                                height,
+                                attempt,
+                                OnnxTiler.EmergencyTileFloor
+                            )
                         )
                     {
                         logger.LogWarning(
@@ -1173,6 +1178,28 @@ public class OnnxUpscaleEngine(
                                 .Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex)
                                 .Throw();
                         }
+                    }
+                    catch (Exception ex) when (OnnxTiler.IsMemoryException(ex))
+                    {
+                        // The descent has bottomed out: halving again would leave a tile below
+                        // EmergencyTileFloor, where the model has no receptive-field context left and
+                        // the page would be upscaled in postage stamps — saving nothing but the failure
+                        // itself. Surfaced as the memory failure it is (the worker classifies that as
+                        // retryable) with a line that says which floor stopped it, so the log explains
+                        // the outcome rather than only reporting memory pressure.
+                        logger.LogWarning(
+                            ex,
+                            "Memory pressure upscaling {InputPath} with {Model} persists at {Columns}x{Rows} tiles of {TileWidth}x{TileHeight}, which is the smallest this engine will run ({Floor}px floor); failing the page instead of descending further.",
+                            Path.GetFileName(inputPath),
+                            Path.GetFileName(modelPath),
+                            attempt.Columns,
+                            attempt.Rows,
+                            attempt.TileWidth,
+                            attempt.TileHeight,
+                            OnnxTiler.EmergencyTileFloor
+                        );
+                        sessionFactory.InvalidateSession(modelPath);
+                        throw;
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {

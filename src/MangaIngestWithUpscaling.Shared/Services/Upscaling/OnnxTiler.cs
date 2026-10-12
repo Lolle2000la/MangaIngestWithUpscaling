@@ -402,11 +402,26 @@ public static class OnnxTiler
     /// <para>
     /// The emergency fallback returned when no affordable grid exists is not bound by this: it is
     /// <see cref="TileSplit.For"/> at this size, which shrinks each tile to fit the page exactly and
-    /// can therefore land below the floor, and the engine halves it again when the driver refuses
-    /// the allocation.
+    /// can therefore land below the floor, and the engine halves it again when the driver refuses the
+    /// allocation — down to <see cref="EmergencyTileFloor"/> and no further.
     /// </para>
     /// </summary>
     public const int MinimumTileSize = 256;
+
+    /// <summary>
+    /// Smallest tile side the memory-pressure descent may reach. Below it a smaller tile is not a
+    /// cheaper version of the same inference but a different, much worse one: the model has no
+    /// receptive-field context left to work with, so the page is upscaled in postage stamps and the
+    /// only thing saved is the failure.
+    /// <para>
+    /// Reaching the floor therefore fails the page as the memory failure it is, which the worker
+    /// classifies as retryable, instead of descending further. Deliberately separate from
+    /// <see cref="MinimumTileSize"/>: that one bounds the <em>planned</em> grid and is what the
+    /// planner aims for, while this bounds only the emergency descent after the driver has refused an
+    /// allocation.
+    /// </para>
+    /// </summary>
+    public const int EmergencyTileFloor = 128;
 
     /// <summary>
     /// Tile side the models need on both dimensions for full quality, and the side
@@ -1511,6 +1526,23 @@ public static class OnnxTiler
     /// </summary>
     public static TileSplit HalveSplit(int width, int height, TileSplit split) =>
         TileSplit.For(width, height, Math.Max(split.TileWidth, split.TileHeight) / 2);
+
+    /// <summary>
+    /// Whether halving <paramref name="split"/> would still leave a tile at or above
+    /// <paramref name="floor"/> on both sides — that is, whether the memory-pressure descent has an
+    /// attempt left worth making.
+    /// <para>
+    /// The bound is tested on the tile the halving would actually produce, not on the size asked of it:
+    /// <see cref="TileSplit.For"/> shrinks the tiles so they cover the page exactly, so halving a 225 px
+    /// grid asks for 112 px tiles rather than 128. Testing the current sides instead would let the
+    /// descent run a step below the floor on every axis the test does not look at.
+    /// </para>
+    /// </summary>
+    public static bool CanHalveWithinFloor(int width, int height, TileSplit split, int floor)
+    {
+        TileSplit halved = HalveSplit(width, height, split);
+        return halved.TileWidth >= floor && halved.TileHeight >= floor;
+    }
 
     private static byte[] AutoSplit(
         byte[] rgbBytes,

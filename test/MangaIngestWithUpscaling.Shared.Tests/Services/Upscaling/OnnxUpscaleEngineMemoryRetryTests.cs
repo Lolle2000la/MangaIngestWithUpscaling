@@ -1,8 +1,10 @@
+using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
@@ -100,6 +102,106 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         Assert.Equal(4, factory.InferenceScopeCalls);
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task MemoryPressureThatPersistsToTheFloor_FailsThePageInsteadOfShrinkingFurther()
+    {
+        // A device that cannot run the page at any tile size worth running has to fail it rather than
+        // descend into postage stamps: below EmergencyTileFloor the model has no receptive-field
+        // context left, so a smaller tile saves nothing but the failure. It is surfaced as the memory
+        // exception it is, which the worker's classifier treats as retryable, so the chapter is
+        // requeued rather than silently produced at a terrible quality.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = new MemoryPressureSessionFactory(modelPath, alwaysFails: true);
+        var logger = new RecordingLogger();
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new OnnxUpscaleEngine(
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            logger
+        );
+
+        string outputPath = Path.Combine(_tempDir, "upscaled.webp");
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            engine.UpscaleFileAsync(
+                inputPath,
+                outputPath,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.False(File.Exists(outputPath), "a failed page must not be published");
+
+        // Every tile the descent actually attempted is at or above the floor. Parsed out of the halving
+        // warnings, because that is where the engine reports the grid it is about to shrink: a descent
+        // that went lower logs a smaller one here and fails this, whatever the floor constant happens to
+        // say. The plan's own attempt is the first of them.
+        List<int> attemptedSides = logger
+            .Warnings.Where(w =>
+                w.Contains("Memory pressure encountered", StringComparison.Ordinal)
+            )
+            .Select(w => Regex.Match(w, @"tiles of (\d+)x(\d+)"))
+            .Where(m => m.Success)
+            .Select(m => Math.Min(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)))
+            .ToList();
+
+        Assert.NotEmpty(attemptedSides);
+        Assert.All(
+            attemptedSides,
+            side =>
+                Assert.True(
+                    side >= OnnxTiler.EmergencyTileFloor,
+                    $"the descent attempted a {side} px tile, below the {OnnxTiler.EmergencyTileFloor} px floor: {string.Join(", ", attemptedSides)}"
+                )
+        );
+
+        // The floor that stopped the descent names itself in the log, which is what makes the outcome
+        // diagnosable rather than only "memory pressure".
+        Assert.Contains(
+            logger.Warnings,
+            w => w.Contains($"{OnnxTiler.EmergencyTileFloor}px floor", StringComparison.Ordinal)
+        );
+    }
+
+    /// <summary>
+    /// Captures the engine's warnings so a test can assert what it decided. Only the formatted message
+    /// is kept; the tests read the floor value out of it.
+    /// </summary>
+    private sealed class RecordingLogger : ILogger<OnnxUpscaleEngine>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            if (logLevel == LogLevel.Warning)
+            {
+                Warnings.Add(formatter(state, exception));
+            }
+        }
+    }
+
     private string CreateTestJpeg(int width, int height)
     {
         byte[] rgb = new byte[width * height * 3];
@@ -135,7 +237,8 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
     /// probe's scoping changes, this fails loudly rather than testing nothing.
     /// </para>
     /// </summary>
-    private sealed class MemoryPressureSessionFactory(string modelPath) : IOnnxSessionFactory
+    private sealed class MemoryPressureSessionFactory(string modelPath, bool alwaysFails = false)
+        : IOnnxSessionFactory
     {
         private readonly Lock _lock = new();
         private InferenceSession? _session;
@@ -234,8 +337,10 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
             // concurrent eviction cannot dispose the session under it), and #3 the first tile attempt
             // in the retry loop. Pinned exactly, together with the InferenceScopeCalls assertion, so
             // adding or removing a scope breaks this loudly instead of silently moving the failure to a
-            // place the retry does not cover.
-            if (Interlocked.Increment(ref _scopeCalls) == 3)
+            // place the retry does not cover. alwaysFails keeps failing from there, which is what drives
+            // the descent down to the floor.
+            int call = Interlocked.Increment(ref _scopeCalls);
+            if (call == 3 || (alwaysFails && call > 3))
             {
                 throw new OutOfMemoryException("simulated device memory pressure");
             }
