@@ -40,17 +40,21 @@ public readonly record struct ByteSize : IComparable<ByteSize>
         ["pib"] = 1_125_899_906_842_624,
     };
 
+    // Largest first across *both* families. The loop returns the first unit whose value is at least
+    // 1, so listing a whole family before the other makes the later one unreachable: with all the
+    // binary units first, 1_000_000_000 rendered as "953.67 MiB" and "GB" could never be returned at
+    // all, contradicting the "largest unit" contract below.
     private static readonly (string Suffix, double Size)[] LargestFirst =
     [
         ("PiB", 1_125_899_906_842_624d),
-        ("TiB", 1_099_511_627_776d),
-        ("GiB", 1_073_741_824d),
-        ("MiB", 1_048_576d),
-        ("KiB", 1_024d),
         ("PB", 1_000_000_000_000_000d),
+        ("TiB", 1_099_511_627_776d),
         ("TB", 1_000_000_000_000d),
+        ("GiB", 1_073_741_824d),
         ("GB", 1_000_000_000d),
+        ("MiB", 1_048_576d),
         ("MB", 1_000_000d),
+        ("KiB", 1_024d),
         ("KB", 1_000d),
     ];
 
@@ -121,12 +125,14 @@ public readonly record struct ByteSize : IComparable<ByteSize>
     }
 
     /// <summary>
-    /// Formats with the largest unit that keeps the value at least 1, e.g. <c>1 GiB</c>.
+    /// Formats with the largest unit that keeps the value at least 1, e.g. <c>1 GiB</c>. Both families
+    /// are candidates and the largest qualifying one wins, so 1000000000 renders as <c>1 GB</c> and
+    /// 1073741824 as <c>1 GiB</c>.
     /// <para>
-    /// This is a human-readable rendering, not a lossless encoding: a value just below a unit
-    /// boundary rounds up across it (1048575 bytes renders as "1024 KiB", which parses back one byte
-    /// higher). The logs only need it readable, and the whole-number rendering is what makes them so;
-    /// use <see cref="Bytes"/> where the exact value matters.
+    /// This is a human-readable rendering, not a lossless encoding: a value just below a boundary
+    /// rounds up across it (1048575 bytes renders as "1.05 MB", which parses back higher). The logs
+    /// only need it readable, and the whole-number rendering is what makes them so; use
+    /// <see cref="Bytes"/> where the exact value matters.
     /// </para>
     /// </summary>
     public override string ToString()

@@ -36,7 +36,6 @@ README.md
 # Negating `.git/refs` re-includes that whole subtree, which is what carries loose branch/tag refs;
 # `packed-refs` carries the packed form.
 !.git/HEAD
-!.git/config
 !.git/packed-refs
 !.git/refs
 test_data/

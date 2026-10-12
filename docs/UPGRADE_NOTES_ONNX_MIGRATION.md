@@ -23,7 +23,8 @@ configuration surface. Nothing here requires a data migration; the database sche
 * `SelectedDeviceIndex` is now a **bound property**, where it used to be a plain field. The
   configuration binder only sets properties, so a value from `appsettings.json` or an `Ingest_`
   environment variable was silently ignored before and now takes effect. A deployment that had `2`
-  configured (or `-1` for "single pass") will behave differently on the next start.
+  configured (or a negative value, which the same `<= 0` rule clamps to CPU — `-1` is a `TileSize`
+  semantic, not a device index) will behave differently on the next start.
 * `UseFp16` now defaults to **`null` (auto-detect)** instead of `true`. Unset means the precision is
   derived from the resolved execution provider and the accelerator's own feature set; set it
   explicitly to pin one. The fp16 and fp32 copies of a model are both downloaded, and the engine
@@ -33,6 +34,10 @@ configuration surface. Nothing here requires a data migration; the database sche
   upscaling, so **existing deployments will produce different output** from the first run after the
   upgrade. Set `Ingest_Upscaler__EnableSmartDownscale=false` to keep the previous behaviour, or tune
   `SmartDownscaleThreshold` / `SmartDownscaleFactor`.
+  One caveat: the values are now checked at startup, where they used to be checked per image. A file
+  that carries a leftover `SmartDownscaleFactor` outside `(0, 1)` — `0` is the common one, and it was
+  inert while the feature was disabled — now **fails the boot** instead of being ignored. Fix or
+  remove the value, or disable the feature.
 * The legacy backend aliases `ROCm`, `ROCm_GFX120X`, `XPU` and `CUDA_12_8` are still accepted and are
   remapped to `WebGPU` / `CUDA`, but the remap is not logged. They carry `[Obsolete]` on the
   `GpuBackend` enum; prefer `WebGPU` / `CUDA` directly.

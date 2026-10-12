@@ -36,6 +36,11 @@ services:
     # the render nodes are passed through (see the README). There is no NVIDIA device reservation
     # here: this is not the CUDA image. See the README for the :latest-cuda Compose example (with the
     # NVIDIA reservation) when you need CUDA.
+    #
+    # This mapping is required, not optional: Compose has no "map it if it exists", and a missing
+    # /dev/dri aborts `docker compose up` before the container starts — the CPU fallback in the app
+    # cannot help. On a CPU-only host (a NAS without a render node) comment these two lines out, or
+    # run the remote-only variant below, which has no device mapping.
     devices:
       - /dev/dri
 

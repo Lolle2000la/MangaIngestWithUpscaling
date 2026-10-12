@@ -106,14 +106,15 @@ public class VulkanMemoryProviderTests
     [InlineData((uint)0x106B)] // Apple
     public void ResolveFp16Support_QueryRanAndSaidNo_IsNotOverriddenByVendorId(uint vendorId)
     {
-        // vkGetPhysicalDeviceFeatures2 succeeded and reported neither fp16 feature. That is the
-        // driver saying "not supported", so the vendor heuristic must not turn it back into a yes —
-        // otherwise the fp16-only model set is downloaded and the WebGPU EP cannot run it.
+        // vkGetPhysicalDeviceFeatures2 succeeded and reported none of the three fp16 features. That is
+        // the driver saying "not supported", so the vendor heuristic must not turn it back into a yes
+        // — otherwise the fp16-only model set is downloaded and the WebGPU EP cannot run it.
         Assert.False(
             VulkanMemoryProvider.ResolveFp16Support(
                 featureQueryRan: true,
                 shaderFloat16: false,
                 storageBuffer16BitAccess: false,
+                uniformAndStorageBuffer16BitAccess: false,
                 vendorId: vendorId
             )
         );
@@ -133,6 +134,7 @@ public class VulkanMemoryProviderTests
                 featureQueryRan: false,
                 shaderFloat16: false,
                 storageBuffer16BitAccess: false,
+                uniformAndStorageBuffer16BitAccess: false,
                 vendorId: vendorId
             )
         );
@@ -147,25 +149,39 @@ public class VulkanMemoryProviderTests
                 featureQueryRan: false,
                 shaderFloat16: false,
                 storageBuffer16BitAccess: false,
+                uniformAndStorageBuffer16BitAccess: false,
                 vendorId: 0x1234
             )
         );
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void ResolveFp16Support_QueryRanAndReportedAFeature_IsTrue(
+    [InlineData(true, true, true, true)] // the full set the WebGPU EP requires
+    [InlineData(true, true, false, false)] // no 16-bit access in the uniform storage class
+    [InlineData(true, false, true, false)] // no 16-bit access in storage buffers
+    [InlineData(false, true, true, false)] // no fp16 arithmetic
+    [InlineData(true, false, false, false)] // arithmetic only
+    [InlineData(false, false, true, false)] // storage only
+    public void ResolveFp16Support_QueryRan_RequiresAllThreeFeatures(
         bool shaderFloat16,
-        bool storageBuffer16BitAccess
+        bool storageBuffer16BitAccess,
+        bool uniformAndStorageBuffer16BitAccess,
+        bool expected
     )
     {
-        // Either fp16 feature is enough, and the vendor id is irrelevant once the query has answered.
-        Assert.True(
+        // The WebGPU shader-f16 gate on Vulkan is fp16 arithmetic *and* 16-bit storage in both the
+        // storage-buffer and the uniform-block storage classes — both Chrome and Firefox require
+        // exactly that set (gpuweb#2512, gpuweb#5006), which is why Adreno devices without
+        // uniformAndStorageBuffer16BitAccess never get shader-f16. An OR answered yes for a device the
+        // EP cannot run the fp16 model on, which selects the fp16 package and hashes the engine
+        // identity as fp16 for a backend that then falls back to fp32.
+        Assert.Equal(
+            expected,
             VulkanMemoryProvider.ResolveFp16Support(
                 featureQueryRan: true,
                 shaderFloat16: shaderFloat16,
                 storageBuffer16BitAccess: storageBuffer16BitAccess,
+                uniformAndStorageBuffer16BitAccess: uniformAndStorageBuffer16BitAccess,
                 vendorId: 0x1234
             )
         );

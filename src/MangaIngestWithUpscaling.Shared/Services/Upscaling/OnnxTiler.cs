@@ -1377,28 +1377,24 @@ public static class OnnxTiler
         CancellationToken cancellationToken = default
     )
     {
-        while (true)
-        {
-            try
-            {
-                return AutoSplit(
-                    rgbBytes,
-                    width,
-                    height,
-                    scale,
-                    session,
-                    split,
-                    tilePad,
-                    cancellationToken
-                );
-            }
-            catch (Exception ex)
-                when (IsMemoryException(ex) && (split.TileWidth > 16 || split.TileHeight > 16))
-            {
-                split = HalveSplit(width, height, split);
-                GC.Collect();
-            }
-        }
+        // No halve-and-retry loop here. The caller owns the recovery, because the recovery is not
+        // only "make the tiles smaller" but "drop the session whose arena made the allocation fail" —
+        // and that flush may only be taken with no inference scope held, which this method is always
+        // called inside. A loop here halved the tiles on the very same session, so the arena that
+        // caused the OOM stayed resident for the whole descent (a peak-VRAM spike in the path meant to
+        // reduce it); and since the caller could not see the descent, it halved its own split and made
+        // the tiler re-descend the sizes it had just failed. A memory exception propagates as such;
+        // the engine halves the split, releases the session, and calls back in.
+        return AutoSplit(
+            rgbBytes,
+            width,
+            height,
+            scale,
+            session,
+            split,
+            tilePad,
+            cancellationToken
+        );
     }
 
     /// <summary>

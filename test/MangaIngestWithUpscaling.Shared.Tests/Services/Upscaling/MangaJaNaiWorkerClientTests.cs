@@ -445,6 +445,71 @@ public class MangaJaNaiWorkerClientTests
     }
 
     [Fact]
+    public async Task RunChapterAsync_WhenAPageFailsWithAWrappedInfrastructureError_Propagates()
+    {
+        // The cause is routinely wrapped — an IOException inside the provider's own exception, or
+        // inside an AggregateException. Inspecting only the outermost exception classified it as a
+        // page error and committed a chapter whose page was never upscaled, while
+        // RemoteTaskProcessor.ClassifyStreamingFailure, PageStreamFinalizer and ImageResizeService all
+        // walk InnerException for exactly that reason.
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        var factory = Substitute.For<IOnnxSessionFactory>();
+
+        engine
+            .UpscaleFileStagedAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CompressionFormat>(),
+                Arg.Any<int?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(
+                Task.FromResult(
+                    Task.FromException(
+                        new InvalidOperationException(
+                            "the provider failed",
+                            new IOException("disk full")
+                        )
+                    )
+                )
+            );
+
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            factory,
+            NullLogger<MangaJaNaiWorkerClient>.Instance
+        );
+
+        var request = new ChapterJobRequest
+        {
+            Id = "ch-wrapped-disk-full",
+            OutputFolder = "/out",
+            Scale = ScaleFactor.TwoX,
+            Format = CompressionFormat.Webp,
+            Quality = 90,
+            TotalPages = 1,
+        };
+
+        async IAsyncEnumerable<ChapterPage> GetPages()
+        {
+            yield return new ChapterPage(0, "001.png", "/data/001.png");
+            await Task.Yield();
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.RunChapterAsync(
+                request,
+                GetPages(),
+                null,
+                _ => { },
+                TestContext.Current.CancellationToken,
+                null
+            )
+        );
+    }
+
+    [Fact]
     [Trait("Category", "Unit")]
     public async Task ReleaseGpuCacheAsync_ReleasesSynchronouslyAtTheChapterBoundary()
     {

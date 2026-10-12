@@ -455,13 +455,16 @@ public static class VulkanMemoryProvider
             return false;
         }
 
-        // A successful vkGetPhysicalDeviceFeatures2 is authoritative for both answers: a zero
-        // shaderFloat16 / storageBuffer16BitAccess field means the driver said "not supported",
-        // not "could not be asked". Only a query that never ran (no entry point, or the call
-        // faulted) may fall back to the vendor heuristic in ResolveFp16Support.
+        // A successful vkGetPhysicalDeviceFeatures2 is authoritative for all three answers: a zero
+        // field means the driver said "not supported", not "could not be asked". Only a query that
+        // never ran (no entry point, or the call faulted) may fall back to the vendor heuristic in
+        // ResolveFp16Support. All three are read on every query rather than short-circuited: the
+        // decision needs the conjunction, so an early exit would leave a flag at its default false
+        // and report "no fp16" for a device that has it.
         bool featureQueryRan = false;
         bool shaderFloat16 = false;
         bool storageBuffer16BitAccess = false;
+        bool uniformAndStorageBuffer16BitAccess = false;
 
         if (_vkGetPhysicalDeviceFeatures2 != null)
         {
@@ -485,17 +488,16 @@ public static class VulkanMemoryProvider
                     featureQueryRan = true;
                     shaderFloat16 = feat16.shaderFloat16 != 0;
 
-                    if (!shaderFloat16)
+                    var featStorage = new VkPhysicalDevice16BitStorageFeatures
                     {
-                        var featStorage = new VkPhysicalDevice16BitStorageFeatures
-                        {
-                            sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
-                            pNext = IntPtr.Zero,
-                        };
-                        feat2.pNext = (IntPtr)(&featStorage);
-                        _vkGetPhysicalDeviceFeatures2(dev, ref feat2);
-                        storageBuffer16BitAccess = featStorage.storageBuffer16BitAccess != 0;
-                    }
+                        sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+                        pNext = IntPtr.Zero,
+                    };
+                    feat2.pNext = (IntPtr)(&featStorage);
+                    _vkGetPhysicalDeviceFeatures2(dev, ref feat2);
+                    storageBuffer16BitAccess = featStorage.storageBuffer16BitAccess != 0;
+                    uniformAndStorageBuffer16BitAccess =
+                        featStorage.uniformAndStorageBuffer16BitAccess != 0;
                 }
             }
             catch
@@ -507,7 +509,13 @@ public static class VulkanMemoryProvider
 
         uint vendor =
             _vendorIds != null && targetIndex < _vendorIds.Length ? _vendorIds[targetIndex] : 0;
-        return ResolveFp16Support(featureQueryRan, shaderFloat16, storageBuffer16BitAccess, vendor);
+        return ResolveFp16Support(
+            featureQueryRan,
+            shaderFloat16,
+            storageBuffer16BitAccess,
+            uniformAndStorageBuffer16BitAccess,
+            vendor
+        );
     }
 
     /// <summary>
@@ -515,8 +523,8 @@ public static class VulkanMemoryProvider
     /// from <see cref="SupportsFp16"/> so it can be exercised without a GPU, because the native query
     /// it depends on cannot be driven from a unit test.
     /// <para>
-    /// When <paramref name="featureQueryRan"/> is true the two feature flags are authoritative —
-    /// including when both are false, so a Vulkan device that explicitly reports no FP16 is never
+    /// When <paramref name="featureQueryRan"/> is true the three feature flags are authoritative —
+    /// including when all are false, so a Vulkan device that explicitly reports no FP16 is never
     /// overridden by its vendor id. The vendor heuristic answers only when the query never ran.
     /// </para>
     /// </summary>
@@ -524,12 +532,21 @@ public static class VulkanMemoryProvider
         bool featureQueryRan,
         bool shaderFloat16,
         bool storageBuffer16BitAccess,
+        bool uniformAndStorageBuffer16BitAccess,
         uint vendorId
     )
     {
         if (featureQueryRan)
         {
-            return shaderFloat16 || storageBuffer16BitAccess;
+            // All three, not either/or. The WebGPU shader-f16 gate on Vulkan requires fp16 arithmetic
+            // (VK_KHR_shader_float16_int8's shaderFloat16) *and* 16-bit storage in both the buffer and
+            // the uniform-block storage classes (VK_KHR_16bit_storage's storageBuffer16BitAccess and
+            // uniformAndStorageBuffer16BitAccess); both Chrome and Firefox require exactly that set,
+            // which is why Adreno devices lacking uniformAndStorageBuffer16BitAccess get no
+            // shader-f16 (gpuweb#2512, gpuweb#5006). An OR answered yes on a device the EP cannot run
+            // the fp16 model on, which selects the fp16 package and hashes the engine identity as
+            // fp16 for a backend that then falls back to fp32.
+            return shaderFloat16 && storageBuffer16BitAccess && uniformAndStorageBuffer16BitAccess;
         }
 
         // Known modern GPU vendors: NVIDIA (0x10DE), AMD (0x1002), Intel (0x8086), Apple (0x106B)
@@ -873,6 +890,15 @@ public static class VulkanMemoryProvider
                 if (vkEnumeratePhysicalDevices(_instance, ref deviceCount, devices) != 0)
                 {
                     return;
+                }
+
+                // The second call may write a smaller count than the first (a device that disappeared
+                // between the two queries). Every array is sized from that final count and the pointer
+                // array is trimmed to match, because the loops below bound on _physicalDevices.Length
+                // and a mismatch indexed the shorter name/vendor/type arrays out of range.
+                if (devices.Length != (int)deviceCount)
+                {
+                    Array.Resize(ref devices, (int)deviceCount);
                 }
 
                 _physicalDevices = devices;

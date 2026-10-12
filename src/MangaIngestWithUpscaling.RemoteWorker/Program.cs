@@ -158,11 +158,14 @@ using (var scope = app.Services.CreateScope())
                     is StatusCode.FailedPrecondition
                         or StatusCode.Unauthenticated
                         or StatusCode.PermissionDenied
+                        or StatusCode.Unimplemented
             )
         {
-            // The server rejected this worker outright: a version or protocol it does not support, or an
-            // API key it does not accept. Retrying cannot help, and retrying forever would leave the
-            // worker in this loop with /health never served — a wrong key would look like a hang.
+            // The server rejected this worker outright: a version or protocol it does not support
+            // (FailedPrecondition, or Unimplemented when the server is too old to have the RPC at
+            // all), or an API key it does not accept. Retrying cannot help, and retrying forever
+            // would leave the worker in this loop with /health never served — a wrong key, or a
+            // server from before the protocol handshake, would look like a hang.
             logger.LogError("The server rejected this worker: {Detail}", ex.Status.Detail);
             throw;
         }

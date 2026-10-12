@@ -19,9 +19,9 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 For information on how to set up and use a remote worker for upscaling, please see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md).
 
 For information about running the server without local ML dependencies and delegating all
-upscaling to remote workers, see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md) and set
-`Ingest_Upscaler__RemoteOnly=true` — see [the remote-only configuration](./docs/REMOTE_ONLY_VARIANT.md),
-which is deprecated in favour of that environment variable.
+upscaling to remote workers, set `Ingest_Upscaler__RemoteOnly=true`. The
+[remote-only configuration](./docs/REMOTE_ONLY_VARIANT.md) documents the Compose profile that turns
+it on for you; the environment variable is the setting itself and works without that profile.
 
 ## Usage
 
@@ -57,9 +57,9 @@ Both flavor tags are available for both the main application (`manga-ingest-with
 
 ### Universal Image (AMD Radeon / Intel / CPU)
 
-Recommended for all non-NVIDIA systems. Uses ONNX Runtime WebGPU (backed by Mesa RADV for AMD and ANV for Intel via Vulkan). On systems without a GPU, it cleanly falls back to CPU inference.
+Recommended for all non-NVIDIA systems. Uses ONNX Runtime WebGPU (backed by Mesa RADV for AMD and ANV for Intel via Vulkan). The application itself falls back to CPU inference when no GPU is usable.
 
-Simply pass `/dev/dri` to the container to give it access to your GPU:
+Pass `/dev/dri` to the container to give it access to your GPU:
 
 ```yaml
 services:

@@ -152,8 +152,11 @@ public sealed class DeviceMemoryCalibrator(
             DeviceMemoryProfile? cached = store.Load(modelsDirectory, fingerprint);
 
             // CPU mode has no per-tile footprint worth calibrating: the activation working set is
-            // allocated in system RAM, not on a device with a budget we are trying to fill.
-            if (config.Value.UseCPU)
+            // allocated in system RAM, not on a device with a budget we are trying to fill. The rule
+            // is OnnxSessionFactory's, not "UseCPU": SelectedDeviceIndex <= 0 and PreferredGpuBackend
+            // = CPU are the other two spellings, and checking only UseCPU ran the GPU benchmark — and
+            // wrote a bogus profile — on a host that never creates a GPU session at all.
+            if (OnnxSessionFactory.ShouldUseCpuProvider(config.Value))
             {
                 return cached;
             }

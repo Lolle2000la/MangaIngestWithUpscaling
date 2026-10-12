@@ -108,7 +108,7 @@ public class OnnxSessionFactoryTests : IDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
-    public void InvalidateAllSessions_RemovesAndDisposesCachedSessions()
+    public void InvalidateAllSessions_ReplacesTheCachedSessionAndDisposesTheOldOne()
     {
         string modelPath = ModelPath();
         var config = Options.Create(new UpscalerConfig { UseCPU = true });
@@ -119,6 +119,13 @@ public class OnnxSessionFactoryTests : IDisposable
         InferenceSession session2 = factory.GetOrCreateSession(modelPath);
 
         Assert.NotSame(session1, session2);
+        // InvalidateAllSessions retires and lets the thread pool drain rather than disposing inline
+        // (a caller may still hold a read scope), so the free is eventual rather than synchronous.
+        // Asserting only NotSame would stay green even if the retired session were never freed at all.
+        Assert.True(
+            SpinWait.SpinUntil(() => IsDisposed(session1), TimeSpan.FromSeconds(10)),
+            "the retired session was never disposed"
+        );
     }
 
     [Fact]

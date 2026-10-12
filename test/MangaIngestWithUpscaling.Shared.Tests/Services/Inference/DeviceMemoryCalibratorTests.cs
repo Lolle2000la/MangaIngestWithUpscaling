@@ -463,17 +463,43 @@ public class DeviceMemoryCalibratorTests
         }
     }
 
-    [Fact]
-    public async Task GetOrCalibrate_OnCpu_ReturnsNull()
+    [Theory]
+    [InlineData(nameof(UpscalerConfig.UseCPU))]
+    [InlineData(nameof(UpscalerConfig.SelectedDeviceIndex))]
+    [InlineData(nameof(UpscalerConfig.PreferredGpuBackend))]
+    public async Task GetOrCalibrate_OnAnyCpuSpelling_ReturnsNullWithoutAskingForASession(
+        string spelling
+    )
     {
+        // The CPU rule is OnnxSessionFactory.ShouldUseCpuProvider's, not "UseCPU": SelectedDeviceIndex
+        // <= 0 and PreferredGpuBackend = CPU are the other two spellings, and checking only UseCPU ran
+        // the GPU benchmark — and wrote a bogus profile — on a host that never creates a GPU session.
+        // The session assertion is what makes this observable: a failed benchmark also returns null,
+        // so Assert.Null alone would stay green for the GPU path.
         string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         try
         {
             File.WriteAllText(Path.Combine(dir, "2x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx"), "x");
-            DeviceMemoryCalibrator calibrator = CreateCalibrator(
-                new UpscalerConfig { UseCPU = true }
-            );
+
+            var config = new UpscalerConfig();
+            switch (spelling)
+            {
+                case nameof(UpscalerConfig.UseCPU):
+                    config.UseCPU = true;
+                    break;
+                case nameof(UpscalerConfig.SelectedDeviceIndex):
+                    config.SelectedDeviceIndex = 0;
+                    break;
+                case nameof(UpscalerConfig.PreferredGpuBackend):
+                    config.PreferredGpuBackend = GpuBackend.CPU;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(spelling), spelling, null);
+            }
+
+            var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+            DeviceMemoryCalibrator calibrator = CreateCalibrator(config, sessionFactory);
 
             DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateAsync(
                 0,
@@ -482,6 +508,7 @@ public class DeviceMemoryCalibratorTests
             );
 
             Assert.Null(profile);
+            sessionFactory.DidNotReceive().GetOrCreateSession(Arg.Any<string>());
         }
         finally
         {

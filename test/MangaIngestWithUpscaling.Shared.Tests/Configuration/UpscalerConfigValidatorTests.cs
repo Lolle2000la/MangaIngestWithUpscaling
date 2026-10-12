@@ -225,7 +225,12 @@ public class UpscalerConfigValidatorTests
     public void OptionsCreate_BypassesValidation()
     {
         // Many call sites construct a config directly; those must not be affected by validation.
-        _ = Options.Create(new UpscalerConfig { MemoryBudgetBytes = "nonsense" });
+        var config = new UpscalerConfig { MemoryBudgetBytes = "nonsense" };
+        _ = Options.Create(config);
+
+        // ...while the same value is rejected by the validator that runs at startup. Asserting only
+        // that Options.Create did not throw would stay green if the validator were never registered.
+        Assert.False(new UpscalerConfigValidator().Validate(null, config).Succeeded);
     }
 
     [Theory]

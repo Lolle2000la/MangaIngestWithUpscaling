@@ -109,12 +109,22 @@ public class SplitDetectionService(
     }
 
     /// <summary>
-    /// True for a detection failure that says nothing about the detector: a resource error (memory,
-    /// a lost device) or an IO error. Such a failure must be retried, not cached as unusable.
-    /// Mirrors <c>OnnxUpscaleEngine.IsTransientProbeFailure</c>.
+    /// True for a detection failure that must be rethrown rather than reported as a per-page error.
+    /// <para>
+    /// A recorded error reaches SplitProcessingService as a failed finding, and when every page of
+    /// the chapter carries one it calls SetFailedAsync — the chapter is failed for good. That verdict
+    /// is only acceptable for a failure that is a property of the page (a corrupt image, handled by
+    /// the last catch) or of the detector as a whole (a graph the provider cannot run, which
+    /// <see cref="RecordKnownFailure"/> remembers). This is everything else: a resource error
+    /// (memory, a lost device), an IO error, and a non-finite output — the last because the code that
+    /// throws it calls an all-NaN output the mark of a mis-executing execution provider, which a
+    /// freshly built session can change, and with a single detector there is no second model to fall
+    /// back to. Rethrown, the worker's IsInfrastructureFailure / ClassifyStreamingFailure path
+    /// requeues the task with the spool intact, exactly as the upscaler path does.
+    /// </para>
     /// </summary>
-    private static bool IsTransientDetectionFailure(Exception ex) =>
-        OnnxTiler.IsMemoryException(ex) || ex is IOException;
+    private static bool IsRetryableDetectionFailure(Exception ex) =>
+        OnnxTiler.IsMemoryException(ex) || ex is IOException || ex is NonFiniteModelOutputException;
 
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
@@ -448,17 +458,24 @@ public class SplitDetectionService(
                 ex
             );
         }
-        catch (Exception ex) when (IsTransientDetectionFailure(ex))
+        catch (ObjectDisposedException)
         {
-            // Transient: a resource hiccup (memory, a lost device) or an IO error, not a property of
-            // the detector. Deliberately not gated on having reached the model: the vips decode and
-            // the float[1*3*H*W] tensor it feeds happen before the session is fetched, and an OOM
-            // there is just as transient as one inside Run. Gated, it fell through to the generic
-            // catch and was reported as a per-page error, which ends in SetFailedAsync. Drop the
-            // session for the retry when there is one.
+            // Shutdown raced this page: the session factory is being torn down. It is not a property
+            // of the detector, and it must not become a page error — that reaches SetFailedAsync and
+            // fails a chapter that is merely being stopped. Rethrown like a cancellation, without
+            // touching the session or the known-failure cache.
+            throw;
+        }
+        catch (Exception ex) when (IsRetryableDetectionFailure(ex))
+        {
+            // Not a property of the page. Deliberately not gated on having reached the model: the
+            // vips decode and the float[1*3*H*W] tensor it feeds happen before the session is fetched,
+            // and an OOM there is just as recoverable as one inside Run. Gated, it fell through to the
+            // generic catch and was reported as a per-page error. Drop the session for the retry when
+            // there is one.
             logger.LogWarning(
                 ex,
-                "Split detection for {ImagePath} failed transiently; the task will be retried.",
+                "Split detection for {ImagePath} failed recoverably; the task will be retried.",
                 imagePath
             );
             if (session is not null)
@@ -466,15 +483,12 @@ public class SplitDetectionService(
                 onnxSessionFactory.InvalidateSession(modelPath);
             }
 
-            // Rethrown with its original type, not reported as a per-page error. A recorded error
-            // reaches SplitProcessingService as a failed finding, and when every page carries one it
-            // calls SetFailedAsync and throws — the chapter is marked failed for good, on the strength
-            // of an OOM or a lost device. Rethrown, the worker's IsInfrastructureFailure /
-            // ClassifyStreamingFailure path recognises it as transient and requeues the task with the
+            // Rethrown with its original type, not reported as a per-page error: the worker's
+            // infrastructure classifier recognises it as transient and requeues the task with the
             // spool intact, which is exactly what the same machinery does on the upscaler path.
             throw;
         }
-        catch (Exception ex) when (reachedModel && ex is not ObjectDisposedException)
+        catch (Exception ex) when (reachedModel)
         {
             logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
 
@@ -483,24 +497,12 @@ public class SplitDetectionService(
             // of the chapter. Drop it so the next page rebuilds a fresh one, and remember the
             // structural failure for this backend so the rebuild does not happen on every page of
             // every chapter either.
-            // A disposed factory is excluded above: it means shutdown, not a property of the detector,
-            // and caching it would disable detection for the rest of the process on the strength of a
-            // teardown race.
             if (session is not null)
             {
                 onnxSessionFactory.InvalidateSession(modelPath);
             }
 
-            // A non-finite output is not a structural verdict. The model loaded and ran; the comment
-            // at the throw calls an all-NaN output the mark of a mis-executing provider, which is a
-            // glitch as much as a defect — and with a single detector, caching it disables detection
-            // for the rest of the process on the strength of one page. The session is dropped above,
-            // so the next page rebuilds and re-probes.
-            if (ex is not NonFiniteModelOutputException)
-            {
-                RecordKnownFailure(modelPath, backend, ex.Message);
-            }
-
+            RecordKnownFailure(modelPath, backend, ex.Message);
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
         }
         catch (Exception ex)

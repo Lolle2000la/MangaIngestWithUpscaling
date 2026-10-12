@@ -709,6 +709,13 @@ public class MangaJaNaiUpscaler(
     private const int DownloadAttempts = 4;
 
     /// <summary>
+    /// The largest package this will accept. The largest real one is a couple of gigabytes; anything
+    /// past this is not one of ours, and a hostile or broken endpoint must not be able to fill the
+    /// temp volume before the hash check rejects the result.
+    /// </summary>
+    private const long MaxPackageBytes = 4L * 1024 * 1024 * 1024;
+
+    /// <summary>
     /// Marker content format that records a size/mtime fingerprint per model file. A marker written
     /// by a build before this format holds only the bare zip hash; it is treated as stale, so the
     /// package is re-verified once and the marker rewritten in the fingerprint format.
@@ -977,7 +984,44 @@ public class MangaJaNaiUpscaler(
                 var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken)
             )
             {
-                await contentStream.CopyToAsync(fileStream, cancellationToken);
+                // Content-Length is checked when the server sends one, but it is not trusted as the
+                // only bound: the stream is capped as it is written too, so a chunked or lying
+                // response cannot fill the temp volume before the hash check would have rejected it.
+                if (
+                    response.Content.Headers.ContentLength is long declared
+                    && declared > MaxPackageBytes
+                )
+                {
+                    throw new Exception(
+                        localizer[
+                            "Error_PackageTooLarge",
+                            package.ZipUrl,
+                            MaxPackageBytes,
+                            declared
+                        ]
+                    );
+                }
+
+                byte[] buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = await contentStream.ReadAsync(buffer, cancellationToken)) > 0)
+                {
+                    total += read;
+                    if (total > MaxPackageBytes)
+                    {
+                        throw new Exception(
+                            localizer[
+                                "Error_PackageTooLarge",
+                                package.ZipUrl,
+                                MaxPackageBytes,
+                                total
+                            ]
+                        );
+                    }
+
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                }
             }
 
             // verify the zip hash

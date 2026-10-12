@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -117,12 +118,17 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task DetectSplitsAsync_WhenDetectorOutputIsNonFinite_ReportsAnErrorInsteadOfZeroSplits()
+    public async Task DetectSplitsAsync_WhenDetectorOutputIsNonFinite_IsRethrownForRetry()
     {
         // A mis-executing execution provider returns NaN instead of failing, and every comparison
         // against NaN is false — so without the guard the mask is all-false and the page is reported
-        // as a SUCCESSFUL detection with zero splits. That is the silent miss this pins, and the
-        // session that produced the NaN has to be dropped just like any other inference failure.
+        // as a SUCCESSFUL detection with zero splits. That silent miss is still rejected, but the
+        // rejection is now rethrown rather than turned into a per-page error: an error finding reaches
+        // SplitProcessingService and, when every page carries one, calls SetFailedAsync — the chapter
+        // failed for good on what the guard's own comment calls a mis-executing provider, and the
+        // detector has no second model to fall back to. Rethrown, the worker's infrastructure
+        // classifier requeues the task, and the session that produced the NaN is dropped so the retry
+        // re-probes with a fresh one.
         string modelsDir = Path.Combine(_root, "nonfinite_models");
         Directory.CreateDirectory(modelsDir);
         string modelPath = TinyOnnxModel.WritePeakMaskDetector(
@@ -144,15 +150,48 @@ public class SplitDetectionServiceTests : IDisposable
 
         // A black page makes the row mean 0, so the injected division is 0/0 — a NaN in
         // probabilities with an all-false peak_mask, exactly the silent-zero-split shape.
-        List<SplitDetectionResult> results = await service.DetectSplitsAsync(
-            WriteDecodableImage("nonfinite.png", fill: 0),
-            cancellationToken: TestContext.Current.CancellationToken
+        await Assert.ThrowsAsync<NonFiniteModelOutputException>(() =>
+            service.DetectSplitsAsync(
+                WriteDecodableImage("nonfinite.png", fill: 0),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
         );
 
-        SplitDetectionResult result = Assert.Single(results);
-        Assert.NotNull(result.Error);
-        Assert.Empty(result.Splits);
         factory.Received(1).InvalidateSession(modelPath);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_DisposedFactory_IsRethrownNotReportedAsAPageError()
+    {
+        // Shutdown races a page: the factory is torn down while detection runs. Reported as a per-page
+        // error that reaches SetFailedAsync, it would fail a chapter that is merely being stopped — so
+        // it is excluded from the structural catch and rethrown like a cancellation.
+        string modelsDir = Path.Combine(_root, "disposed_models");
+        Directory.CreateDirectory(modelsDir);
+        TinyOnnxModel.WritePeakMaskDetector(modelsDir, fileName: "page_break_detector.onnx");
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        factory
+            .EnterInferenceScope()
+            .Returns(_ => throw new ObjectDisposedException(nameof(OnnxSessionFactory)));
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            service.DetectSplitsAsync(
+                WriteDecodableImage("disposed.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        // A teardown race is not a property of the detector, so it must not be remembered as one.
+        factory.DidNotReceive().InvalidateSession(Arg.Any<string>());
     }
 
     [Fact]

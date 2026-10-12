@@ -91,8 +91,10 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
 | `TileSize` | `Ingest_Upscaler__TileSize` | `0` | Tile size in pixels for ONNX inference. `0` = plan the grid from the model's activation footprint and the VRAM budget (default — see [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md)); `> 0` = manual maximum tile size; `-1` = force single pass (no tiling). |
 | `MemoryBudgetBytes` | `Ingest_Upscaler__MemoryBudgetBytes` | *(unset)* | VRAM memory budget for tile estimation, as a byte count or a size string (`4GiB`, `12288MiB`, `4294967296`). Unset means auto-detect free VRAM (default); a value that cannot be parsed fails startup. |
+| `VramUtilizationFraction` | `Ingest_Upscaler__VramUtilizationFraction` | *(unset)* | Fraction of free VRAM (`0.0`–`1.0`) to budget when auto-detecting. Unset means adaptive (~97% headless, ~95% with a desktop attached). Set `1.0` on a dedicated host. Used for the tile budget *and* the memory benchmark, so it also caps what the benchmark may allocate. |
+| `VramSafetyMarginBytes` | `Ingest_Upscaler__VramSafetyMarginBytes` | *(unset)* | Safety margin subtracted from free VRAM, as a byte count or a size string (`512MiB`, `1.5 GiB`). Unset means automatic (256 MiB headless, 1.5–3.0 GiB with a desktop attached). A value that cannot be parsed fails startup. |
 | `VramExclusiveThresholdBytes` | `Ingest_Upscaler__VramExclusiveThresholdBytes` | `350 MiB` | Usage at or below which the card is treated as quasi-exclusive (minimal 256 MiB reserve), as a byte count or a size string (`700MiB`, `1 GiB`). Raise it when another process reliably shares the GPU but stays bounded — e.g. a video transcoder holding 700 MiB: at `1GiB` the budget again treats the card as exclusive. A value that cannot be parsed fails startup, like the other size settings; the default applies only while the setting is unset. See [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md). |
-| `RecalibrateDeviceMemory` | `Ingest_Upscaler__RecalibrateDeviceMemory` | `false` | Force the one-off per-device memory benchmark to run again on the next upscale. Normally unnecessary: the benchmark runs automatically the first time a device is seen and is cached in `device-memory-profile.json` next to the models. See [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md#6-per-device-calibration). |
+| `RecalibrateDeviceMemory` | `Ingest_Upscaler__RecalibrateDeviceMemory` | `false` | Force the one-off per-device memory benchmark to run again on the next upscale. Normally unnecessary: the benchmark runs automatically the first time a device is seen and is cached in `device-memory-profile.json` next to the models. See [Upscaling Memory Model](UPSCALING_MEMORY_MODEL.md#6-per-model-calibration-per-device). |
 
 #### `PreferredGpuBackend` values
 
@@ -183,6 +185,16 @@ supported formats and use-case examples.
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
 | `RemoteOnly` | `Ingest_Upscaler__RemoteOnly` | `false` | Disable local upscaling entirely; all tasks are forwarded to remote workers. Also suppresses local model downloading. |
+
+### Page-streaming settings
+
+These apply to the streamed remote-worker path (see [Page Streaming](PAGE_STREAMING_KNOWN_LIMITATIONS.md)).
+
+| Setting | ENV variable | Default | Description |
+|---|---|---|---|
+| `SpoolDirectory` | `Ingest_Upscaler__SpoolDirectory` | *(system temp)* | App-owned directory the page spool is written under. The app creates `<pid>-<guid>` roots and sweeps only those, so do not point it at a directory with unrelated data. Set it to a path on a real disk when `/tmp` is a RAM-backed tmpfs. |
+| `MaxSpoolBytesPerTask` | `Ingest_Upscaler__MaxSpoolBytesPerTask` | `8 GiB` | Upper bound on the bytes spooled for one streamed task, as a byte count or a size string. There is no process-wide cap. Note that `"0"` parses to 0 and then falls back to the 8 GiB default. |
+| `ManifestTimeout` | `Ingest_Upscaler__ManifestTimeout` | `00:10:00` | How long a worker waits for a page manifest. Raise it when a large chapter on slow storage has to be assembled server-side before the manifest is answered. |
 
 ---
 

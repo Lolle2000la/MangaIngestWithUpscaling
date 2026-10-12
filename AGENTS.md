@@ -379,6 +379,6 @@ run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches 
 - **Testcontainers** - Spins up PostgreSQL for the dual-provider test passes (Docker required)
 - **gRPC** - Communication protocol
 - **Serilog** - Logging framework
-- **Microsoft.ML.OnnxRuntime** - Pure C# ML inference engine (WebGPU — the default GPU backend — CUDA, DirectML, OpenVINO, MIGraphX, CPU)
+- **Microsoft.ML.OnnxRuntime** - Pure C# ML inference engine (WebGPU — the `:latest` image default, while the app default is `Auto` — CUDA, DirectML, OpenVINO, MIGraphX, CPU)
 
 Remember: **ALWAYS use RemoteOnly mode for development** unless you specifically need to test ML functionality locally.

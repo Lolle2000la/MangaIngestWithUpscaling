@@ -1112,7 +1112,9 @@ public class OnnxUpscaleEngine(
                         break;
                     }
                     catch (Exception ex)
-                        when (OnnxTiler.IsMemoryException(ex) && attempt.TileWidth > 128)
+                        when (OnnxTiler.IsMemoryException(ex)
+                            && (attempt.TileWidth > 16 || attempt.TileHeight > 16)
+                        )
                     {
                         logger.LogWarning(
                             ex,
@@ -1128,6 +1130,9 @@ public class OnnxUpscaleEngine(
                         // VRAM in the very path meant to reduce it. This catch runs after the scope
                         // above has been disposed (the using wraps the try body), so the caller holds
                         // no scope and the write lock cannot deadlock.
+                        // This is also the only halving loop: the tiler used to halve internally on
+                        // the same session, which hid the failure from here and kept the arena
+                        // resident, so the two descended through the same sizes twice.
                         sessionFactory.ReleaseCachedSessions();
                         attempt = OnnxTiler.HalveSplit(width, height, attempt);
                         GC.Collect();

@@ -366,8 +366,27 @@ public class MangaJaNaiWorkerClient(
     /// classified Transient upstream precisely so the worker is requeued, and swallowing it here
     /// would commit a chapter whose page was never upscaled.
     /// </summary>
-    private static bool IsInfrastructureFailure(Exception ex) =>
-        ex is IOException or UnauthorizedAccessException || OnnxTiler.IsMemoryException(ex);
+    private static bool IsInfrastructureFailure(Exception ex)
+    {
+        // The whole chain, not just the outermost exception: a retryable cause is routinely wrapped
+        // (an IOException inside an AggregateException, a memory failure inside the provider's own
+        // exception), and RemoteTaskProcessor.ClassifyStreamingFailure, PageStreamFinalizer and
+        // ImageResizeService all walk InnerException for exactly that reason. Inspecting only the
+        // wrapper classified a wrapped IO failure as a page error instead of requeueing the task with
+        // the spool intact.
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (
+                current is IOException or UnauthorizedAccessException
+                || OnnxTiler.IsMemoryException(current)
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public static string ToExtension(CompressionFormat format) =>
         format switch

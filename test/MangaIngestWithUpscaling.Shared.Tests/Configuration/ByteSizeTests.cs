@@ -109,12 +109,17 @@ public class ByteSizeTests
     [Fact]
     public void ToString_IsHumanReadableButNotLosslessAtAUnitBoundary()
     {
-        // One byte below 1 MiB: the "0.##" format rounds the 1023.999 KiB quotient up to "1024 KiB",
-        // which re-parses one byte higher. This is a deliberate readability trade-off, not a Parse
-        // bug: a lossless encoding would have to give up the whole-number rendering the logs expect
-        // (1500000000 -> "1.4 GiB"). Pinned so a future format change has to decide consciously.
-        Assert.Equal("1024 KiB", new ByteSize(1048575).ToString());
-        Assert.Equal(1048576L, ByteSize.Parse("1024 KiB").Bytes);
+        // One byte below 1 MiB. The largest unit that keeps the value at least 1 is the decimal MB
+        // (1048575 / 1e6 = 1.048575), so the "0.##" format rounds that quotient to "1.05 MB" — a
+        // readable rendering that no longer parses back to the exact byte count. This is a deliberate
+        // trade-off, not a Parse bug: a lossless encoding would have to give up the whole-number
+        // rendering the logs expect (1500000000 -> "1.4 GiB"). Pinned so a future format change has to
+        // decide consciously.
+        Assert.Equal("1.05 MB", new ByteSize(1048575).ToString());
+
+        // A binary-aligned value still renders in the binary unit, which is what the logs mostly show.
+        Assert.Equal("1 MiB", new ByteSize(1048576).ToString());
+        Assert.Equal(1048576L, ByteSize.Parse("1 MiB").Bytes);
     }
 
     [Fact]
@@ -210,6 +215,23 @@ public class ByteSizeTests
 
         Assert.Equal(3221225472L, config.ResolvedMemoryBudgetBytes);
         Assert.Equal(100L, config.ResolvedMaxSpoolBytesPerTask);
+    }
+
+    [Theory]
+    [InlineData(1_000_000_000L, "1 GB")] // the decimal family is reachable, not shadowed by the binary one
+    [InlineData(1_073_741_824L, "1 GiB")]
+    [InlineData(1_050_000_000L, "1.05 GB")]
+    [InlineData(1_100_000_000L, "1.02 GiB")]
+    [InlineData(1_000_000L, "1 MB")]
+    [InlineData(1_024L, "1 KiB")]
+    [InlineData(500L, "500 B")]
+    [InlineData(0L, "0")]
+    public void ToString_UsesTheLargestUnitAcrossBothFamilies(long bytes, string expected)
+    {
+        // All the binary units used to be listed before the decimal ones, and the loop returns the
+        // first unit whose value is at least 1 — so 1_000_000_000 rendered as "953.67 MiB" and "GB"
+        // could never be returned at all.
+        Assert.Equal(expected, new ByteSize(bytes).ToString());
     }
 
     [Fact]
