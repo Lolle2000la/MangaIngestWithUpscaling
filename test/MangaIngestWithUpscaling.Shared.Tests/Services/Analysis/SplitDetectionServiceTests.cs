@@ -212,6 +212,145 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_ImageWithTransparency_DropsTheAlphaInsteadOfCompositingItAway()
+    {
+        // The reference calls PIL's convert("RGB"), which keeps the colour stored under a transparent
+        // pixel and merely discards the alpha band. libvips' Flatten() composites onto black instead,
+        // so a transparent region turns into a black band — and since the detector's probability is a
+        // row mean, that moves rows across the peak threshold (measured with the shipped model: an LA
+        // page with a transparent row yields a different peak set).
+        //
+        // The synthetic detector's probability is the row mean, so the split rows are a direct read-out
+        // of the pixel values after alpha handling: the band below is transparent and must still be
+        // detected, because the colour under it is 200/255 rather than 0.
+        string modelsDir = Path.Combine(_root, "alpha_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteTransparentImage(
+                    "transparent.png",
+                    height: 400,
+                    transparentFrom: 150,
+                    rows: 100
+                ),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        // Every row between the 100-row edge margins carries the synthetic peak, transparent or not:
+        // before the alpha fix the transparent band was composited to black, which dropped exactly
+        // those 100 rows from the mask.
+        Assert.Equal(400 - 2 * 100, result.Count);
+        Assert.Equal(100, result.Splits[0].YOriginal);
+
+        // A row inside the transparent band reads back the colour stored under the alpha (200/255)
+        // rather than the 0.0 that compositing onto black would produce.
+        DetectedSplit transparentRow = result.Splits.Single(s => s.YOriginal == 150);
+        Assert.Equal(200f / 255f, transparentRow.Confidence, 2);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_GrayscalePage_IsReplicatedToThreeChannelsLikeTheReference()
+    {
+        // The reference feeds the model PIL's convert("RGB"), which replicates the single band of an
+        // L image to R=G=B; libvips' Colourspace(Srgb) on a 1-band B_W image does the same (it is the
+        // interpretation that decides the branch, not the band count). Pinned here because the two are
+        // independent implementations of the same intent and a grayscale page is the common case for
+        // manga: a conversion that produced anything else — black, or an error — would be invisible in
+        // a colour-only test suite.
+        string modelsDir = Path.Combine(_root, "gray_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteGrayscaleImage("gray.png", fill: 200, height: 400),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal(400 - 2 * 100, result.Count);
+        // Row mean of the replicated band, i.e. the value survived the grayscale -> sRGB conversion.
+        Assert.Equal(200f / 255f, result.Splits[0].Confidence, 2);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_ForeignModelAtTheDetectorPath_ThrowsAContractError()
+    {
+        // The model path is resolved by name and accepted if it exists, and the pinned hash only
+        // repairs a swapped file while models are verified at startup. An identity graph is what any
+        // unrelated .onnx looks like from here: an 'input' that type-checks but no 'probabilities'
+        // output. Without the contract check this surfaced as ONNX Runtime's "is not in the metadata"
+        // per page; it must name the tensors it found instead.
+        string modelsDir = Path.Combine(_root, "foreign_models");
+        Directory.CreateDirectory(modelsDir);
+        string identityPath = TinyOnnxModel.WriteIdentity(modelsDir, fp16: false);
+        string modelPath = Path.Combine(modelsDir, "page_break_detector.onnx");
+        File.Move(identityPath, modelPath);
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        // Reported as the page's error rather than thrown: the structural catch already treats "this
+        // model cannot run here" as a process-wide verdict, and because that verdict is keyed on the
+        // file's length and mtime, replacing the file with the real detector clears it.
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("foreign.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.NotNull(result.Error);
+        Assert.Contains(
+            $"no output named '{SplitDetectionService.ProbabilitiesOutputName}'",
+            result.Error
+        );
+        Assert.Contains("'output'", result.Error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task DetectSplitsAsync_DisposedFactory_IsRethrownNotReportedAsAPageError()
     {
         // Shutdown races a page: the factory is torn down while detection runs. Reported as a per-page
@@ -488,6 +627,49 @@ public class SplitDetectionServiceTests : IDisposable
     /// factory, so a test that needs the operation to get past the pre-flight checks has to hand it
     /// a real image, not a few arbitrary bytes.
     /// </summary>
+    private string WriteGrayscaleImage(string fileName, byte fill, int height)
+    {
+        // One band, written as a greyscale PNG so it reads back as B_W: the resize is still a no-op
+        // (768 wide), and the band count is what the grayscale path differs in.
+        const int width = 768;
+        var pixels = new byte[width * height];
+        Array.Fill(pixels, fill);
+
+        string path = Path.Combine(_root, fileName);
+        using var image = Image.NewFromMemory(pixels, width, height, 1, Enums.BandFormat.Uchar);
+        image.WriteToFile(path);
+        return path;
+    }
+
+    private string WriteTransparentImage(string fileName, int height, int transparentFrom, int rows)
+    {
+        // 768 wide so the detector's resize is a no-op, 4 bands so the image really carries alpha, and
+        // Interpretation.Srgb so libvips recognises the fourth band as alpha at all (a multiband image
+        // with four bands does not).
+        const int width = 768;
+        var pixels = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
+        {
+            bool transparent = y >= transparentFrom && y < transparentFrom + rows;
+            for (int x = 0; x < width; x++)
+            {
+                int i = (y * width + x) * 4;
+                pixels[i] = 200;
+                pixels[i + 1] = 200;
+                pixels[i + 2] = 200;
+                pixels[i + 3] = transparent ? (byte)0 : (byte)255;
+            }
+        }
+
+        string path = Path.Combine(_root, fileName);
+        // No interpretation is set here: the file is written and then read back by the service, and
+        // libvips assigns RGBA (sRGB with an alpha band) from the PNG's own colour type, which is what
+        // makes HasAlpha() true on the way in.
+        using var image = Image.NewFromMemory(pixels, width, height, 4, Enums.BandFormat.Uchar);
+        image.WriteToFile(path);
+        return path;
+    }
+
     private string WriteDecodableImage(string fileName, byte fill = 128, int height = 4)
     {
         // 768 wide so the detector's fixed-width resize is a no-op, and normally short so the packed

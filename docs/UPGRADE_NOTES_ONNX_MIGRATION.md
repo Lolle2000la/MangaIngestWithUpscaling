@@ -83,6 +83,23 @@ configuration surface. Nothing here requires a data migration; the database sche
   chapter is then retried and, if the failure repeats, fails with a memory error. Recovering that
   case properly needs a logits-only export plus the smoothing and peak search reimplemented in C#;
   it is not something that can be fixed by chunking this graph.
+* Images with **transparency** are now decoded the way the reference decodes them: the alpha band is
+  **dropped**, so the colour stored under a transparent pixel is what the detector sees. Previously
+  the alpha was composited onto black, which turned a transparent page area into a black band; since
+  the detector's score is a row mean, that moved rows across the peak threshold and could drop real
+  splits (a fully transparent page area detected as no split at all). Detection results for pages with
+  genuine partial transparency can therefore differ after this upgrade — in the direction of the
+  upstream reference.
+* Two input formats intentionally do **not** reproduce the reference byte for byte, because there the
+  reference is the worse of the two: **16-bit** images (PIL's `convert("RGB")` clamps everything from
+  255 upwards to white, while libvips scales the full range down correctly — a `I;16` page is unusable
+  in the reference) and **CMYK** (libvips converts through the image's profile, PIL through a crude
+  fixed transform). 8-bit grayscale, RGB, palette and bilevel pages match the reference exactly.
+* If something other than the pinned detector is placed at `<models>/page_break_detector.onnx`, the
+  failure is now reported as a clear contract error naming the tensors the file actually has, instead
+  of ONNX Runtime's "is not in the metadata" (or, for a differing element type, a bare
+  `NullReferenceException`) repeated per page. Replacing the file clears the verdict, because the
+  recorded failure is keyed on the file's length and modification time.
 
 ## Models
 

@@ -2397,7 +2397,7 @@ public static class OnnxTiler
         );
     }
 
-    private static string FormatNames(IEnumerable<string> names)
+    internal static string FormatNames(IEnumerable<string> names)
     {
         string[] quoted = names.Select(n => $"'{n}'").ToArray();
         return quoted.Length == 0 ? "(none)" : string.Join(", ", quoted);

@@ -32,6 +32,12 @@ public class SplitDetectionService(
     /// </summary>
     public const int CURRENT_DETECTOR_VERSION = 2;
 
+    /// <summary>Tensor names the pinned detector export declares, validated once per session.</summary>
+    internal const string ModelInputName = "input";
+
+    internal const string ProbabilitiesOutputName = "probabilities";
+    internal const string PeakMaskOutputName = "peak_mask";
+
     /// <summary>
     /// Upper bound on the known-failure cache. A detector that cannot run on a backend is a property
     /// of the model and the execution provider, so the number of distinct entries is tiny; the cap
@@ -318,12 +324,22 @@ public class SplitDetectionService(
                     );
                     int actualWidth = resized.Width;
                     int actualHeight = resized.Height;
-                    using var flattened = resized.HasAlpha() ? resized.Flatten() : resized.Copy();
+
+                    // The alpha band is dropped, not composited. That is what the reference does: PIL's
+                    // convert("RGB") keeps the colour stored under a transparent pixel and simply
+                    // discards the band, while libvips' Flatten() composites onto black. A transparent
+                    // region therefore used to become a black band, and because the detector's
+                    // probability is a row mean, that moved rows across the peak threshold — an image
+                    // whose page area is transparent under the alpha was detected with a different
+                    // split set, and a fully transparent page as no splits at all.
+                    using var opaque = resized.HasAlpha()
+                        ? resized.ExtractBand(0, resized.Bands - 1)
+                        : resized.Copy();
                     using var rgb =
-                        flattened.Bands == 3
-                        && flattened.Interpretation == NetVips.Enums.Interpretation.Srgb
-                            ? flattened.Copy()
-                            : flattened.Colourspace(NetVips.Enums.Interpretation.Srgb);
+                        opaque.Bands == 3
+                        && opaque.Interpretation == NetVips.Enums.Interpretation.Srgb
+                            ? opaque.Copy()
+                            : opaque.Colourspace(NetVips.Enums.Interpretation.Srgb);
                     using var ucharRgb =
                         rgb.Format == NetVips.Enums.BandFormat.Uchar
                             ? rgb.Copy()
@@ -362,11 +378,20 @@ public class SplitDetectionService(
                     );
                     session = localSession;
 
+                    // Cheap dictionary lookups on the already-cached session, so this costs nothing per
+                    // page; it is what turns a foreign file at the model path into a clear message
+                    // instead of ORT's "is not in the metadata" or a bare NullReferenceException out of
+                    // AsTensor.
+                    RequireDetectorContract(localSession);
+
                     var inputTensor = new DenseTensor<float>(
                         tensorData,
                         [1, 3, actualHeight, actualWidth]
                     );
-                    var inputs = new[] { NamedOnnxValue.CreateFromTensor("input", inputTensor) };
+                    var inputs = new[]
+                    {
+                        NamedOnnxValue.CreateFromTensor(ModelInputName, inputTensor),
+                    };
 
                     // The two outputs are named explicitly rather than passing null for "all": with a
                     // RunOptions the null-outputNames overload does not hand back every output, and
@@ -374,14 +399,16 @@ public class SplitDetectionService(
                     using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs =
                         localSession.Run(
                             inputs,
-                            new[] { "peak_mask", "probabilities" },
+                            new[] { PeakMaskOutputName, ProbabilitiesOutputName },
                             runOptions
                         );
 
-                    var peakMaskTensor = outputs.First(o => o.Name == "peak_mask").AsTensor<bool>();
+                    var peakMaskTensor = outputs
+                        .First(o => o.Name == PeakMaskOutputName)
+                        .AsTensor<bool>();
                     var probsTensor =
                         (DenseTensor<float>)
-                            outputs.First(o => o.Name == "probabilities").AsTensor<float>();
+                            outputs.First(o => o.Name == ProbabilitiesOutputName).AsTensor<float>();
 
                     // A mis-executing execution provider can return an all-NaN output instead of
                     // failing (the same failure class OnnxTiler rejects for the upscaler). Every
@@ -640,6 +667,71 @@ public class SplitDetectionService(
 
         int mapped = (int)Math.Round(resizedRow / vscale);
         return Math.Clamp(mapped, 0, lastRow);
+    }
+
+    /// <summary>
+    /// Verifies once per session that the loaded graph really is the detector the row loop assumes: an
+    /// input named <see cref="ModelInputName"/> carrying float32, plus
+    /// <see cref="ProbabilitiesOutputName"/> (float32) and <see cref="PeakMaskOutputName"/> (bool)
+    /// outputs.
+    /// <para>
+    /// The pinned export declares exactly those, but nothing enforces that the file at the model path
+    /// is that export: <see cref="SplitDetectionLayout.ResolveModelPath"/> accepts any file that
+    /// exists, and the pinned hash only repairs a swapped file while models are being verified at
+    /// startup — a running process keeps using whatever it loaded. Without this check an unrecognised
+    /// name comes back as ONNX Runtime's "is not in the metadata" and an unrecognised element type as a
+    /// bare <see cref="NullReferenceException"/> out of <c>AsTensor</c>, both as a per-page structural
+    /// failure whose message names neither the model nor the tensor, repeated for every page of every
+    /// chapter.
+    /// </para>
+    /// </summary>
+    private static void RequireDetectorContract(InferenceSession session)
+    {
+        if (!session.InputMetadata.TryGetValue(ModelInputName, out NodeMetadata? input))
+        {
+            throw new ModelContractMismatchException(
+                $"The detector model has no input named '{ModelInputName}'; its inputs are "
+                    + $"{OnnxTiler.FormatNames(session.InputMetadata.Keys)}. The file is not the "
+                    + "page-break detector this build expects — delete it and let the app download it "
+                    + "again."
+            );
+        }
+
+        if (input.ElementType != typeof(float))
+        {
+            throw new ModelContractMismatchException(
+                $"The detector model's '{ModelInputName}' input is {input.ElementType.Name}; float32 is "
+                    + "required."
+            );
+        }
+
+        RequireDetectorOutput(session, ProbabilitiesOutputName, typeof(float));
+        RequireDetectorOutput(session, PeakMaskOutputName, typeof(bool));
+    }
+
+    private static void RequireDetectorOutput(
+        InferenceSession session,
+        string name,
+        Type expectedElementType
+    )
+    {
+        if (!session.OutputMetadata.TryGetValue(name, out NodeMetadata? output))
+        {
+            throw new ModelContractMismatchException(
+                $"The detector model has no output named '{name}'; its outputs are "
+                    + $"{OnnxTiler.FormatNames(session.OutputMetadata.Keys)}. The file is not the "
+                    + "page-break detector this build expects — delete it and let the app download it "
+                    + "again."
+            );
+        }
+
+        if (output.ElementType != expectedElementType)
+        {
+            throw new ModelContractMismatchException(
+                $"The detector model's '{name}' output is {output.ElementType.Name}; "
+                    + $"{expectedElementType.Name} is required."
+            );
+        }
     }
 
     /// <summary>
