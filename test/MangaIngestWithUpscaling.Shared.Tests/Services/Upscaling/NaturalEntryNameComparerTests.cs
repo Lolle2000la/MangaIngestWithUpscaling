@@ -36,6 +36,22 @@ public class NaturalEntryNameComparerTests
     }
 
     [Fact]
+    public void Compare_NumericallyEqualButTextuallyDifferentNamesAreNotEqual()
+    {
+        // "1.png" and "01.png" parse to the same number. Without an ordinal tiebreak they compare
+        // equal, and a consumer that treats the comparer as a total order — a set, a distinct, a
+        // sorted dictionary — would collapse two different pages into one.
+        Assert.NotEqual(0, NaturalEntryNameComparer.Instance.Compare("1.png", "01.png"));
+
+        // Still a stable, distinct ordering when both are present: ordinal, so "01" precedes "1".
+        string[] ordered = new[] { "01.png", "1.png" }
+            .OrderBy(n => n, NaturalEntryNameComparer.Instance)
+            .ToArray();
+        Assert.Equal(2, ordered.Distinct().Count());
+        Assert.Equal(["01.png", "1.png"], ordered);
+    }
+
+    [Fact]
     public void Compare_ShorterNameSortsFirstWhenOneIsAPrefix()
     {
         string[] names = ["1.png", "1.png.jpg"];

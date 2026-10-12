@@ -45,7 +45,9 @@ public sealed class TileBlender
         _height = height;
         _channels = channels;
         _direction = direction;
-        _result = new byte[width * height * channels];
+        _result = new byte[
+            OnnxTiler.CheckedCount((long)width * height * channels, "The blended output")
+        ];
         _offset = 0;
         _lastEndOverlap = 0;
     }
@@ -1732,6 +1734,32 @@ public static class OnnxTiler
         bool IsLastInRow
     );
 
+    /// <summary>
+    /// An element or byte count that does not fit in an int, reported as an out-of-memory condition.
+    /// <para>
+    /// The buffer sizes in this file are products of image dimensions, so they must be computed in
+    /// long: a page whose RGB output exceeds 2 GiB (a long-strip webtoon at 4x, for instance) wrapped
+    /// the int arithmetic. A negative product produced an <see cref="OverflowException"/>, which
+    /// <see cref="IsMemoryException"/> does not recognise, so the halve-and-retry recovery never ran;
+    /// a wrapped-but-positive one sized the array too small and then wrapped every row offset too,
+    /// writing into the wrong region before failing. Reported as an
+    /// <see cref="OutOfMemoryException"/>, an impossible size takes the same path as a driver that
+    /// refuses the allocation.
+    /// </para>
+    /// </summary>
+    internal static int CheckedCount(long count, string what)
+    {
+        if (count < 0 || count > int.MaxValue)
+        {
+            throw new OutOfMemoryException(
+                $"{what} needs {count} bytes, which is more than one array can hold. Reduce the page "
+                    + "size (Upscaler:MaxDimensionBeforeUpscaling) or the tile size."
+            );
+        }
+
+        return (int)count;
+    }
+
     public static bool IsMemoryException(Exception ex)
     {
         if (ex is OutOfMemoryException)
@@ -1774,7 +1802,7 @@ public static class OnnxTiler
 
     public static byte[] ExtractCrop(byte[] src, int srcWidth, int x, int y, int w, int h)
     {
-        byte[] dst = new byte[w * h * 3];
+        byte[] dst = new byte[CheckedCount((long)w * h * 3, "The tile crop")];
         int rowBytes = w * 3;
         for (int r = 0; r < h; r++)
         {
@@ -1829,7 +1857,9 @@ public static class OnnxTiler
         }
         else
         {
-            paddedInput = new byte[paddedW * paddedH * 3];
+            paddedInput = new byte[
+                CheckedCount((long)paddedW * paddedH * 3, "The padded tile input")
+            ];
             Parallel.For(
                 0,
                 paddedH,
@@ -1860,7 +1890,7 @@ public static class OnnxTiler
 
         if (elementType == typeof(Float16))
         {
-            Float16[] halfData = new Float16[1 * 3 * planeSize];
+            Float16[] halfData = new Float16[CheckedCount(3L * planeSize, "The input tensor")];
             Parallel.For(
                 0,
                 paddedH,
@@ -1885,7 +1915,7 @@ public static class OnnxTiler
         }
         else
         {
-            float[] floatData = new float[1 * 3 * planeSize];
+            float[] floatData = new float[CheckedCount(3L * planeSize, "The input tensor")];
             Parallel.For(
                 0,
                 paddedH,

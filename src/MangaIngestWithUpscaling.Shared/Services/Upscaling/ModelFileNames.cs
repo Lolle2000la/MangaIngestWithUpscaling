@@ -24,8 +24,15 @@ public static partial class ModelFileNames
     public const string Fp32Suffix = "_fp32";
 
     /// <summary>True when a file is the fp32 copy of a model.</summary>
+    /// <remarks>
+    /// A suffix test, not a substring test: <see cref="Resolve"/> appends <see cref="Fp32Suffix"/> to
+    /// the name's stem, so that is where it can be. A <c>Contains</c> would also match a model whose
+    /// own name mentions the marker somewhere else (e.g. <c>foo_fp32_notes.onnx</c>) and score it as
+    /// the fp32 copy.
+    /// </remarks>
     public static bool IsFp32(string fileName) =>
-        Path.GetFileName(fileName).Contains(Fp32Suffix, StringComparison.OrdinalIgnoreCase);
+        Path.GetFileNameWithoutExtension(fileName)
+            .EndsWith(Fp32Suffix, StringComparison.OrdinalIgnoreCase);
 
     [GeneratedRegex(@"_(fp16|fp32|bf16)$", RegexOptions.CultureInvariant)]
     private static partial Regex PrecisionMarker();

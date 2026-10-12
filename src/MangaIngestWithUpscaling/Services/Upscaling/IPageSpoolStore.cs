@@ -108,7 +108,13 @@ public interface IPageSpoolStore
     /// <summary>
     /// Builds the final CBZ at <paramref name="destinationPath"/> from the source archive: every
     /// non-image entry is copied unchanged and every image entry is replaced by its spooled page,
-    /// written under the page's output name. Source order is preserved.
+    /// written under the page's output name.
+    /// <para>
+    /// The entry order is the one the whole-CBZ writer produces, not the source archive's: non-image
+    /// entries first in source order, then the pages in <see cref="SpoolPageDescriptor.Index"/> order.
+    /// The page order is content (a reader uses the archive's physical order) and it must not depend
+    /// on the order a source zip happens to store its entries in.
+    /// </para>
     /// </summary>
     void Assemble(
         PageStreamSession session,

@@ -18,6 +18,33 @@ public class OnnxTilerTests : IDisposable
     private readonly List<string> _created = [];
 
     [Fact]
+    public void Blender_ImpossibleOutputSize_IsAnOutOfMemoryException()
+    {
+        // 40000 x 40000 x 3 is 4.8 GB: past int.MaxValue. The int product used to wrap, so the array
+        // was asked either for a negative length — an OverflowException that IsMemoryException does
+        // not recognise, which skipped the halve-and-retry recovery — or for a wrapped-but-positive
+        // one that then had every row offset wrapped too.
+        var ex = Assert.Throws<OutOfMemoryException>(() =>
+            new TileBlender(40000, 40000, 3, BlendDirection.Vertical)
+        );
+
+        Assert.True(
+            OnnxTiler.IsMemoryException(ex),
+            "the halve-and-retry recovery must recognise an impossible output size as memory pressure"
+        );
+    }
+
+    [Fact]
+    public void ExtractCrop_ImpossibleCropSize_IsAnOutOfMemoryException()
+    {
+        var ex = Assert.Throws<OutOfMemoryException>(() =>
+            OnnxTiler.ExtractCrop(new byte[3], srcWidth: 1, x: 0, y: 0, w: 40000, h: 40000)
+        );
+
+        Assert.True(OnnxTiler.IsMemoryException(ex));
+    }
+
+    [Fact]
     public void ExtractCrop_ExtractsCorrectRegion()
     {
         // 4x4 RGB image (16 pixels, 48 bytes)

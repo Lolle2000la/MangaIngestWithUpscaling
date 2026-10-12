@@ -698,7 +698,15 @@ public class MangaJaNaiUpscaler(
         return scaledTimeout;
     }
 
-    private static readonly HttpClient SharedHttpClient = new() { Timeout = TimeSpan.FromHours(1) };
+    /// <summary>
+    /// Downloads the model packages. The timeout bounds a stalled transfer, not the total: the largest
+    /// package is a couple of gigabytes, which a slow link needs well over an hour for, and a first
+    /// run that hit the old one-hour cap could never finish booting.
+    /// </summary>
+    private static readonly HttpClient SharedHttpClient = new() { Timeout = TimeSpan.FromHours(6) };
+
+    /// <summary>Attempts per package before the failure is surfaced (the first attempt included).</summary>
+    private const int DownloadAttempts = 4;
 
     /// <summary>
     /// Marker content format that records a size/mtime fingerprint per model file. A marker written
@@ -910,6 +918,43 @@ public class MangaJaNaiUpscaler(
     }
 
     private async Task DownloadAndExtractPackage(
+        ModelPackage package,
+        CancellationToken cancellationToken
+    )
+    {
+        // Retried, because a first run downloads 0.5-2 GB per package and a single reset mid-body used
+        // to propagate out of DownloadModelsIfNecessary and abort startup entirely — the app never
+        // booted until the whole transfer restarted by hand. The packages are served as one whole-file
+        // response, so there is nothing to resume against: each attempt restarts from the beginning,
+        // which is why the backoff is short and bounded rather than long.
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await DownloadAndExtractOnceAsync(package, cancellationToken);
+                return;
+            }
+            catch (Exception ex)
+                when (attempt < DownloadAttempts
+                    && !cancellationToken.IsCancellationRequested
+                    && ex is not OperationCanceledException
+                )
+            {
+                TimeSpan delay = TimeSpan.FromSeconds(1 << attempt);
+                logger.LogWarning(
+                    ex,
+                    "Downloading {zipUrl} failed (attempt {Attempt}/{Attempts}); retrying in {Delay}s",
+                    package.ZipUrl,
+                    attempt,
+                    DownloadAttempts,
+                    delay.TotalSeconds
+                );
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
+    }
+
+    private async Task DownloadAndExtractOnceAsync(
         ModelPackage package,
         CancellationToken cancellationToken
     )

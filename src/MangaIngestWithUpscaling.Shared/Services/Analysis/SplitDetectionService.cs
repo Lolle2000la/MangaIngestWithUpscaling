@@ -448,10 +448,14 @@ public class SplitDetectionService(
                 ex
             );
         }
-        catch (Exception ex) when (reachedModel && IsTransientDetectionFailure(ex))
+        catch (Exception ex) when (IsTransientDetectionFailure(ex))
         {
             // Transient: a resource hiccup (memory, a lost device) or an IO error, not a property of
-            // the detector. Drop the session for the retry.
+            // the detector. Deliberately not gated on having reached the model: the vips decode and
+            // the float[1*3*H*W] tensor it feeds happen before the session is fetched, and an OOM
+            // there is just as transient as one inside Run. Gated, it fell through to the generic
+            // catch and was reported as a per-page error, which ends in SetFailedAsync. Drop the
+            // session for the retry when there is one.
             logger.LogWarning(
                 ex,
                 "Split detection for {ImagePath} failed transiently; the task will be retried.",
@@ -487,7 +491,16 @@ public class SplitDetectionService(
                 onnxSessionFactory.InvalidateSession(modelPath);
             }
 
-            RecordKnownFailure(modelPath, backend, ex.Message);
+            // A non-finite output is not a structural verdict. The model loaded and ran; the comment
+            // at the throw calls an all-NaN output the mark of a mis-executing provider, which is a
+            // glitch as much as a defect — and with a single detector, caching it disables detection
+            // for the rest of the process on the strength of one page. The session is dropped above,
+            // so the next page rebuilds and re-probes.
+            if (ex is not NonFiniteModelOutputException)
+            {
+                RecordKnownFailure(modelPath, backend, ex.Message);
+            }
+
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
         }
         catch (Exception ex)

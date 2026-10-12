@@ -145,7 +145,11 @@ public sealed class DeviceMemoryCalibrator(
         {
             bool force = config.Value.RecalibrateDeviceMemory && !_forcedRecalibrationDone;
 
-            DeviceMemoryProfile? cached = force ? null : store.Load(modelsDirectory, fingerprint);
+            // Loaded whether or not this is a forced run. Force re-measures the requested key; it must
+            // not discard the rest of the profile, because the store replaces the whole device entry
+            // on save — starting from an empty skeleton dropped every other model's measurement (and
+            // the device default) for the rest of the process.
+            DeviceMemoryProfile? cached = store.Load(modelsDirectory, fingerprint);
 
             // CPU mode has no per-tile footprint worth calibrating: the activation working set is
             // allocated in system RAM, not on a device with a budget we are trying to fill.
@@ -160,8 +164,13 @@ public sealed class DeviceMemoryCalibrator(
 
             // Nothing to measure: the profile is cached and, when a model was named, it already
             // carries that model's own measurement. Returning the stored profile untouched is what
-            // keeps a cached device from touching the GPU at all.
-            if (cached is not null && (modelKey is null || cached.Models.ContainsKey(modelKey)))
+            // keeps a cached device from touching the GPU at all. Skipped on a forced run, which is
+            // asking for exactly the measurement this check would short-circuit.
+            if (
+                !force
+                && cached is not null
+                && (modelKey is null || cached.Models.ContainsKey(modelKey))
+            )
             {
                 return cached;
             }
@@ -244,7 +253,7 @@ public sealed class DeviceMemoryCalibrator(
         DeviceMemoryProfile profile
     )
     {
-        string? modelPath = SelectCalibrationModel(modelsDirectory, deviceId);
+        string? modelPath = SelectCalibrationModel(modelsDirectory, ConfiguredBudget(deviceId));
         if (modelPath is null)
         {
             logger.LogDebug(
@@ -254,7 +263,7 @@ public sealed class DeviceMemoryCalibrator(
         }
 
         int scale = OnnxUpscaleEngine.InferScaleFromModelName(Path.GetFileName(modelPath));
-        long budget = OnnxTiler.GetAvailableVramBudget(deviceId);
+        long budget = ConfiguredBudget(deviceId);
 
         ModelMemoryProfile? measured = RunBenchmark(deviceId, modelPath, scale, budget);
         if (measured is null)
@@ -295,7 +304,7 @@ public sealed class DeviceMemoryCalibrator(
         int scale
     )
     {
-        long budget = OnnxTiler.GetAvailableVramBudget(deviceId);
+        long budget = ConfiguredBudget(deviceId);
         ModelMemoryProfile? measured = RunBenchmark(deviceId, modelPath, scale, budget);
         if (measured is null)
         {
@@ -529,10 +538,30 @@ public sealed class DeviceMemoryCalibrator(
     }
 
     /// <summary>
+    /// The same budget the engine plans tiles against: the operator's override when one is set,
+    /// otherwise the driver's number with the configured margin and exclusivity threshold. Benchmarking
+    /// against the bare driver budget meant a deliberately small <c>MemoryBudgetBytes</c> was ignored
+    /// while the benchmark chose its tile sizes, so it could measure — and then store — tiles the
+    /// planner would never allow, on a device the operator had capped.
+    /// </summary>
+    private long ConfiguredBudget(int deviceId)
+    {
+        UpscalerConfig current = config.Value;
+        return current.ResolvedMemoryBudgetBytes > 0
+            ? current.ResolvedMemoryBudgetBytes
+            : OnnxTiler.GetAvailableVramBudget(
+                deviceId,
+                current.VramUtilizationFraction,
+                current.ResolvedVramSafetyMarginBytes,
+                current.ResolvedVramExclusiveThresholdBytes
+            );
+    }
+
+    /// <summary>
     /// Picks a model to calibrate with: a small ESRGAN is preferred because it is fast, it ships in
     /// every model set, and calibrating the cheapest family is the conservative choice.
     /// </summary>
-    private static string? SelectCalibrationModel(string modelsDirectory, int deviceId)
+    private static string? SelectCalibrationModel(string modelsDirectory, long budget)
     {
         List<string> candidates = Directory
             .GetFiles(modelsDirectory, "*.onnx")
@@ -558,7 +587,6 @@ public sealed class DeviceMemoryCalibrator(
         // A calibration model that does not even fit the largest benchmark tile tells us nothing.
         long fileBytes = new FileInfo(model).Length;
         int scale = OnnxUpscaleEngine.InferScaleFromModelName(Path.GetFileName(model));
-        long budget = OnnxTiler.GetAvailableVramBudget(deviceId);
         OnnxTiler.ActivationCoefficients analytic = OnnxTiler.ActivationCoefficients.For(
             model,
             fileBytes

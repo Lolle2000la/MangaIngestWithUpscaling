@@ -694,6 +694,52 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
+    public async Task UpscaleCbzAsync_FailedChapter_ReleasesTheDeviceBeforeItPropagates()
+    {
+        // The release used to sit on the success path only, so a chapter that failed — a decode error,
+        // or a grid the tiler could not run — kept its session, and every buffer the provider had
+        // grown for it, alive into its own retry; the next chapter then planned its budget against
+        // memory the process did not own. The streamed path releases in a finally for the same reason.
+        // A garbage image entry makes the failure deterministic, with no model and no device.
+        string input = Path.Combine(_tempDir, "corrupt-page.cbz");
+        using (ZipArchive archive = ZipFile.Open(input, ZipArchiveMode.Create))
+        {
+            ZipArchiveEntry entry = archive.CreateEntry("1.png");
+            using Stream stream = entry.Open();
+            stream.Write("this is not a png"u8);
+        }
+        string output = Path.Combine(_tempDir, "corrupt-page-out.cbz");
+
+        var sessionFactory = Substitute.For<IOnnxSessionFactory>();
+        sessionFactory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new OnnxUpscaleEngine(
+            sessionFactory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            engine.UpscaleCbzAsync(
+                input,
+                output,
+                scale: 2,
+                CompressionFormat.Webp,
+                quality: 80,
+                progress: null,
+                CancellationToken.None
+            )
+        );
+
+        Assert.False(File.Exists(output), "a failed chapter must not publish an archive");
+        sessionFactory.Received(1).ReleaseCachedSessions();
+    }
+
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task UpscaleCbzAsync_DropsEntriesThatCouldEscapeTheArchive()
     {

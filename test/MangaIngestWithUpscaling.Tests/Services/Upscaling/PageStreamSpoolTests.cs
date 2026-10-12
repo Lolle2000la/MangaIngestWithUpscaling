@@ -318,8 +318,9 @@ public class PageStreamSpoolTests
             _spool.Assemble(session, session.Identity, source, pages, destination);
 
             using ZipArchive zip = ZipFile.OpenRead(destination);
+            // Non-page entries first, then the pages in order: the order the whole-CBZ writer produces.
             Assert.Equal(
-                new[] { "001.webp", "002.webp", "ComicInfo.xml" },
+                new[] { "ComicInfo.xml", "001.webp", "002.webp" },
                 zip.Entries.Select(e => e.FullName)
             );
             Assert.Equal(new byte[] { 10, 11 }, ReadEntry(zip, "001.webp"));

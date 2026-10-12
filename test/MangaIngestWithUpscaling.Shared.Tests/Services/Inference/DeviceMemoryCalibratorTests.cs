@@ -411,9 +411,13 @@ public class DeviceMemoryCalibratorTests
                 TestContext.Current.CancellationToken
             );
 
-            // The one-shot was spent on the first call: the re-measurement did not replace the
-            // stored profile, and the next upscale got it from the store for free.
-            Assert.Null(forced);
+            // The one-shot was spent on the first call: the re-measurement did not replace the stored
+            // profile (this benchmark cannot run), so both calls return the measurement that is on
+            // disk and the next upscale still gets it from the store for free. Force re-measures the
+            // requested key; it does not throw the rest of the profile away, because the store
+            // replaces the whole device entry on save.
+            Assert.NotNull(forced);
+            Assert.Equal(4.5, forced!.ActivationScale);
             Assert.NotNull(after);
             Assert.Equal(4.5, after!.ActivationScale);
             sessionFactory.Received(1).GetOrCreateSession(Arg.Any<string>());

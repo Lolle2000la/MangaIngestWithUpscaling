@@ -75,6 +75,16 @@ public sealed partial class NaturalEntryNameComparer : IComparer<string>
             {
                 return result;
             }
+
+            // Numerically equal but textually different ("1" vs "01"): the digits are part of the
+            // name, so break the tie ordinally. Without it the two compare equal, and a consumer that
+            // treats this as a total order — a set, a distinct, a sorted dictionary — would treat two
+            // different pages as one and lose a page.
+            result = string.Compare(xPart, yPart, StringComparison.Ordinal);
+            if (result != 0)
+            {
+                return result;
+            }
         }
 
         // Equal up to the shorter name: the longer one sorts after it.

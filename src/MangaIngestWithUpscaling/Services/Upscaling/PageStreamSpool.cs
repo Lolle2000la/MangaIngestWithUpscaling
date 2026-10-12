@@ -646,7 +646,7 @@ public sealed class PageStreamSpool : IPageSpoolStore
     /// <summary>
     /// Builds the final CBZ at <paramref name="destinationPath"/> from the source archive: every
     /// non-image entry is copied unchanged and every image entry is replaced by its spooled page,
-    /// written under the page's output name. Source order is preserved.
+    /// written under the page's output name. The entry order matches the whole-CBZ writer's.
     /// </summary>
     public void Assemble(
         PageStreamSession session,
@@ -737,17 +737,49 @@ public sealed class PageStreamSpool : IPageSpoolStore
         var handledSources = new HashSet<string>(StringComparer.Ordinal);
         var written = new HashSet<string>(StringComparer.Ordinal);
 
-        // Pages first, in page-index order. That is the order the manifest assigned (natural-sorted)
-        // and the order the whole-CBZ writer produces; iterating the source archive instead would give
-        // a source whose zip order is 10.png before 2.png a different physical page order from the
-        // other path, which is the one thing the two are meant to agree on. A reader uses the archive's
-        // physical order, so this is content, not bookkeeping.
+        // Non-page entries first (ComicInfo.xml and friends) in the source's own order, then the pages
+        // in page-index order — exactly what the whole-CBZ writer does, because the two paths must
+        // agree on the archive they produce. The page order is the one the manifest assigned
+        // (natural-sorted): iterating the source archive for the pages instead would give a source
+        // whose zip order is 10.png before 2.png a different physical page order from the other path,
+        // and a reader uses the archive's physical order, so that is content, not bookkeeping.
+        foreach (ZipArchiveEntry entry in source.Entries)
+        {
+            // Skip directory entries (zip stores them with an empty name).
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                continue;
+            }
+
+            if (!handledSources.Add(entry.FullName))
+            {
+                continue;
+            }
+
+            // A page; it is written below, in index order.
+            if (bySource.ContainsKey(entry.FullName))
+            {
+                continue;
+            }
+
+            // Do not propagate a parent-traversing name into the output archive.
+            if (!IsSafeEntryName(entry.FullName))
+            {
+                continue;
+            }
+
+            ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
+            using Stream input = entry.Open();
+            using Stream target = outputEntry.Open();
+            input.CopyTo(target);
+        }
+
         foreach (
             (string sourceName, SpoolPageDescriptor page) in bySource.OrderBy(kv => kv.Value.Index)
         )
         {
             // A page whose source name could escape the archive is not carried into the output; the
-            // pass-through loop below applies the same guard.
+            // pass-through loop above applies the same guard.
             if (!IsSafeEntryName(sourceName))
             {
                 continue;
@@ -772,38 +804,6 @@ public sealed class PageStreamSpool : IPageSpoolStore
 
             ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
             using Stream input = File.OpenRead(pagePath);
-            using Stream target = outputEntry.Open();
-            input.CopyTo(target);
-        }
-
-        // Then everything that is not a page (ComicInfo.xml and friends), in the source's own order.
-        foreach (ZipArchiveEntry entry in source.Entries)
-        {
-            // Skip directory entries (zip stores them with an empty name).
-            if (string.IsNullOrEmpty(entry.Name))
-            {
-                continue;
-            }
-
-            if (!handledSources.Add(entry.FullName))
-            {
-                continue;
-            }
-
-            // Its page was already written in index order above.
-            if (bySource.ContainsKey(entry.FullName))
-            {
-                continue;
-            }
-
-            // Do not propagate a parent-traversing name into the output archive.
-            if (!IsSafeEntryName(entry.FullName))
-            {
-                continue;
-            }
-
-            ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
-            using Stream input = entry.Open();
             using Stream target = outputEntry.Open();
             input.CopyTo(target);
         }

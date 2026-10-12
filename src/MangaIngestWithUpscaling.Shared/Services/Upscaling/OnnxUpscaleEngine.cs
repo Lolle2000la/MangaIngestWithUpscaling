@@ -564,18 +564,27 @@ public class OnnxUpscaleEngine(
             // chapter does not exist at all, and the move itself is atomic because the staged archive
             // is a sibling on the same volume.
             File.Move(tempOutCbz, outputCbzPath, overwrite: true);
-
-            // Release cached sessions synchronously now the chapter is done, to return all GPU VRAM
-            // and GTT buffers back to the driver before the next chapter starts. This is a
-            // synchronous flush: the deferred InvalidateAllSessions drain would still be waiting on
-            // a scope when the next chapter began and planned its budget against memory that was
-            // not actually free. No scope is held here (every page's inference and encode has been
-            // awaited above), so taking the write lock on this thread is safe.
-            sessionFactory.ReleaseCachedSessions();
-            GC.Collect();
         }
         finally
         {
+            // Released whether the chapter succeeded, failed or was cancelled, exactly as the streamed
+            // path does in its own finally. On the success-only path a chapter that failed (or timed
+            // out) kept its session — and every buffer the provider grew for it — alive into its own
+            // retry, and the next chapter planned its budget against memory the process did not
+            // actually own. The flush is synchronous because the deferred InvalidateAllSessions drain
+            // would still be waiting on a scope when the next chapter began. No inference scope is
+            // held here (every page's inference and encode was awaited above), so taking the write
+            // lock on this thread is safe.
+            try
+            {
+                sessionFactory.ReleaseCachedSessions();
+                GC.Collect();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Shutdown raced the chapter; the factory is already freeing what it owns.
+            }
+
             try
             {
                 // The staged archive is a sibling of the destination, so it is not inside tempDir.

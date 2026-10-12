@@ -62,6 +62,19 @@ public class ModelFileNamesTests
     }
 
     [Fact]
+    public void IsFp32_MatchesOnlyTheTrailingMarker()
+    {
+        Assert.True(ModelFileNames.IsFp32("4x_MangaJaNai_1600p_V1_ESRGAN_70k_fp32.onnx"));
+        Assert.True(ModelFileNames.IsFp32(Path.Combine("models", "model_fp32.onnx")));
+
+        // Not fp32: the fp16 set keeps its shipped name, and a name that merely mentions the marker
+        // somewhere else must not be scored as the fp32 copy. A Contains test said otherwise.
+        Assert.False(ModelFileNames.IsFp32("4x_MangaJaNai_1600p_V1_ESRGAN_70k_fp16.onnx"));
+        Assert.False(ModelFileNames.IsFp32("model_fp32_notes.onnx"));
+        Assert.False(ModelFileNames.IsFp32("fp32.onnx"));
+    }
+
+    [Fact]
     public void Resolve_ThrowsForAnEmptyName() =>
         Assert.Throws<ArgumentNullException>(() =>
             ModelFileNames.Resolve(null!, ModelFileNames.Fp32Suffix)
