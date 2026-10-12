@@ -225,11 +225,15 @@ public class SplitDetectionService(
         // it; it is then released by its finalizer once the native call returns.
         var runOptions = new RunOptions();
         bool disposeRunOptions = true;
+        // Declared out here so the cancellation path can tell whether the abandoned task is still
+        // running: the options may only be freed once the native call has returned (see
+        // RunIsStillGoing). A cancellation that lands before the model is reached leaves this null.
+        Task<SplitDetectionResult>? detection = null;
 
         try
         {
             (int pageWidth, int pageHeight) = ReadImageSize(imagePath);
-            Task<SplitDetectionResult> detection = Task.Run(
+            detection = Task.Run(
                 () =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -383,6 +387,25 @@ public class SplitDetectionService(
         }
         catch (OperationCanceledException)
         {
+            // The await was cancelled while the native Run may still be going, so the options are
+            // still in use: freeing them here would pull the handle out from under ORT, the same
+            // hazard the timeout path documents. Only a run that has already returned can release
+            // them. Ask ORT to stop as well, so a cancelled page does not leave a full inference
+            // running behind the abandoned await.
+            if (RunIsStillGoing(detection))
+            {
+                try
+                {
+                    runOptions.Terminate = true;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The run finished and released the options in the meantime.
+                }
+
+                disposeRunOptions = false;
+            }
+
             throw;
         }
         catch (TimeoutException ex)
@@ -406,8 +429,8 @@ public class SplitDetectionService(
             }
 
             // Owned by the still-running call now; freeing it here would pull the handle out from
-            // under ORT. It is left to the finalizer.
-            disposeRunOptions = false;
+            // under ORT. It is left to the finalizer when the run has not returned.
+            disposeRunOptions = !RunIsStillGoing(detection);
 
             logger.LogError(ex, "ONNX split detection timed out for {ImagePath}", imagePath);
             if (session is not null)
@@ -438,7 +461,7 @@ public class SplitDetectionService(
 
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
         }
-        catch (Exception ex) when (reachedModel)
+        catch (Exception ex) when (reachedModel && ex is not ObjectDisposedException)
         {
             logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
 
@@ -447,6 +470,9 @@ public class SplitDetectionService(
             // of the chapter. Drop it so the next page rebuilds a fresh one, and remember the
             // structural failure for this backend so the rebuild does not happen on every page of
             // every chapter either.
+            // A disposed factory is excluded above: it means shutdown, not a property of the detector,
+            // and caching it would disable detection for the rest of the process on the strength of a
+            // teardown race.
             if (session is not null)
             {
                 onnxSessionFactory.InvalidateSession(modelPath);
@@ -472,6 +498,16 @@ public class SplitDetectionService(
             }
         }
     }
+
+    /// <summary>
+    /// Whether the native <c>Run</c> is still executing on the abandoned detection task. The
+    /// <see cref="RunOptions"/> handed to it may only be freed once this is false: it is a
+    /// <c>SafeHandle</c>, and ORT reads it for the whole duration of the call, so disposing it early
+    /// is a use-after-free (and asking it to <c>Terminate</c> then touches a freed handle). A null
+    /// task means the run was never started — the page failed before the model was reached — which is
+    /// safe to free.
+    /// </summary>
+    internal static bool RunIsStillGoing(Task? abandoned) => abandoned is { IsCompleted: false };
 
     /// <summary>
     /// Observe the fault of a detection task that <c>Task.WaitAsync</c> may abandon on a timeout or

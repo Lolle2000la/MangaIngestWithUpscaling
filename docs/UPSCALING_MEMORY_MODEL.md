@@ -98,8 +98,10 @@ the budget once, as `OnnxTiler.SessionReservationBytes` (384 MiB).
 model doubles `C` for no gain while consecutive chapters are the common case. The page-break
 detector shares the same factory, so on a worker that runs detection and upscaling at the same time
 the two evict each other's model: every switch pays a reload. That is a throughput cost, not a
-correctness one — `EnterInferenceScope` serialises the two — and it is the deliberate price of
-keeping `C` to a single model.
+correctness one — `EnterInferenceScope` takes a **read** lock, so the two do run concurrently rather
+than being serialised, and the eviction is made safe by retiring the session and disposing it only
+once every scope has drained (`OnnxSessionFactory.RetireLocked` / `DrainRetired`) — and it is the
+deliberate price of keeping `C` to a single model.
 
 ---
 
@@ -328,6 +330,15 @@ figure is used verbatim only while the card counts as quasi-exclusive (nothing e
 bounded partner below `VramExclusiveThresholdBytes`); otherwise it is capped by the calculated
 budget. At the calculated 10.7 GB both models planned a grid that stayed out of GTT.
 
+**Known limitation: the device index is not cross-checked between Vulkan and the execution provider.**
+`VulkanMemoryProvider` resolves `SelectedDeviceIndex` by counting the non-CPU devices *Vulkan*
+enumerates, while WebGPU, DirectML and CUDA each enumerate in their own order. On a single-GPU host
+the two agree by construction; on a mixed-vendor host (or one with an integrated and a discrete GPU
+from different vendors) the VRAM budget, the FP16 capability answer and the calibration fingerprint
+can therefore be read for a different device than the one inferring. The index is not matched by
+LUID/UUID — pin the device with `PreferredGpuBackend` and confirm the logged device name when this
+matters.
+
 The default threshold is 350 MB — driver plus a display server. That is pessimistic for a card that
 *is* shared, but with a partner whose footprint is known and bounded (a video transcoder holding
 700 MB, a second inference server). `VramExclusiveThresholdBytes` moves the boundary:
@@ -387,24 +398,32 @@ Old behaviour, 4x ESRGAN fp16, 1125×1600 page, real weight size:
 * the estimate said a 512 px tile needed 2.9 GB, then the cap forced 512 px anyway — so a 16 GB
   budget produced 12 tiles and the card sat at roughly a fifth of its usable VRAM.
 
-New behaviour (same page, same models, planned grids — RX 9070 XT, WebGPU, measured end-to-end):
+New behaviour (same page, same models, planned grids — RX 9070 XT, WebGPU). 4x ESRGAN fp16,
+1125×1600, so the enumeration bounds are `maxColumns = floor(1125/256) = 4` and
+`maxRows = floor(1600/256) = 6`:
 
-| budget | old tiles | new grid | new tensor per tile | inference |
-|---|---|---|---|---|
-| 8 GB | 12 x 512 | 5x7 | 320x320 | 76.8 s → 52.9 s |
-| 12 GB | 12 x 512 | 4x3 | 320x576 | 56.4 s → 48.1 s |
-| 13.4 GB | 12 x 512 | 2x3 | 640x576 | 41.7 s → 41.7 s |
-| 16 GB | 12 x 512 | 1x3 | 1216x576 | — |
+| budget | old tiles | planned grid | tensor per tile |
+|---|---|---|---|
+| 8 GB | 12 x 512 | 2x3 | 640x576 |
+| 12 GB | 12 x 512 | 2x2 | 640x832 |
+| 13.4 GB | 12 x 512 | 1x3 | 1216x576 |
+| 16 GB | 12 x 512 | 1x3 | 1216x576 |
+
+From 12 GB the page is four tiles where the old cap used twelve, and at 13.4 GB and above it is one
+column of three. (An earlier revision of this table listed 5x7 and 4x3 rows. Five columns was never
+reachable — the column count is bounded by `floor(width / MinimumTileSize)`, which is 4 here — so
+those numbers predated that bound, and the rest predate the per-precision coefficients of §3.)
 
 and the 2x models run the whole page in a single pass from a 12 GB budget upwards — the old cap held
 them at 1024 px no matter how much memory was free.
 
-Two of the rows are *not* improvements, which is worth writing down rather than hiding:
-`FDAT_XL` at 13.4 GB is 5% slower in a 2x2 grid than in the 2x3 grid the old cap produced, because
-that model is measurably less efficient per pixel on 640x832 tiles than on 640x576 ones (18.6 vs
-20.5 ns/px, repeated). ESRGAN, DAT2 and HAT_L all get *faster* per pixel as the tile grows, so for them
-the least-work grid is also the fastest. The planner optimises padded work; per-pixel efficiency is a
-model property it does not model, and the difference between the two behaviours is a few percent.
+The planner optimises padded work, which is throughput only where per-pixel efficiency is flat in the
+tile size. It is not for every model, which is worth writing down rather than hiding: `FDAT_XL` is
+measurably slower per pixel on larger tiles (18.6 vs 20.5 ns/px on 640x832 vs 640x576, repeated), so
+at 13.4 GB its 2x2 grid is a few percent slower than the 2x3 the old cap produced, even though it does
+less padded work. ESRGAN, DAT2 and HAT_L all get *faster* per pixel as the tile grows, so for them the
+least-work grid is also the fastest. Per-pixel efficiency is a model property the planner does not
+model, and the difference between the two behaviours is a few percent.
 
 ---
 

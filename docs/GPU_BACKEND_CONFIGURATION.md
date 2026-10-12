@@ -18,6 +18,8 @@ Hardware acceleration is achieved through native ONNX **Execution Providers (EP)
 
 Both flavor tags are published for both the main web application (`manga-ingest-with-upscaling`) and the standalone remote worker (`manga-ingest-with-upscaling-remote-worker`). Each container image already has `Ingest_Upscaler__PreferredGpuBackend` pre-set to its matching provider, so you do not need to configure it in Docker Compose unless overriding it.
 
+The `:latest` default changed from CUDA to WebGPU with the ONNX migration, and the CUDA image moved to CUDA 13.4. See [Upgrading to the ONNX engine](UPGRADE_NOTES_ONNX_MIGRATION.md) if you are coming from a PyTorch release.
+
 ---
 
 ## Configuration

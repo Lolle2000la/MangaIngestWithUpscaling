@@ -411,6 +411,23 @@ public class SplitDetectionServiceTests : IDisposable
         image.WriteToFile(path);
         return path;
     }
+
+    [Fact]
+    public async Task RunIsStillGoing_TracksWhetherTheAbandonedRunHasReturned()
+    {
+        // The RunOptions handed to the native Run may only be freed once it has returned, so the
+        // timeout and cancellation paths both ask this. A run that was never started (null) is safe to
+        // free, a completed task means the native call has returned, and only a still-running one has
+        // to keep the handle alive — disposing it there is a use-after-free in the native call.
+        Assert.False(SplitDetectionService.RunIsStillGoing(null));
+
+        var completion = new TaskCompletionSource();
+        Assert.True(SplitDetectionService.RunIsStillGoing(completion.Task));
+
+        completion.SetResult();
+        await completion.Task;
+        Assert.False(SplitDetectionService.RunIsStillGoing(completion.Task));
+    }
 }
 
 /// <summary>

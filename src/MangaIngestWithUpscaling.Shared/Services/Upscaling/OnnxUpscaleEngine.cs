@@ -226,7 +226,12 @@ public class OnnxUpscaleEngine(
                         gttAfter / (1024 * 1024),
                         (gttAfter - gttBefore) / (1024 * 1024)
                     );
-                    sessionFactory.InvalidateSession(model);
+                    // Synchronous release, not InvalidateSession: the log says the cache is flushed to
+                    // free memory, and the deferred retire only marks the session for a background
+                    // drain — the footprint would stay up through the next page, which then budgets
+                    // against it. No inference scope is held here (the page's own ended with
+                    // UpscaleWithModelAsync), which is what makes the write lock safe to take.
+                    sessionFactory.ReleaseCachedSessions();
                     GC.Collect();
                 }
 
@@ -331,7 +336,18 @@ public class OnnxUpscaleEngine(
 
         string tempDir = Path.Combine(Path.GetTempPath(), $"cbz_upscale_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
-        string tempOutCbz = Path.Combine(tempDir, "output.cbz");
+
+        // The archive is staged next to its destination, not in tempDir: the library and /tmp are
+        // different volumes in the common container/NAS layout, so publishing it out of tempDir would
+        // be a cross-device copy, and a crash part-way would leave a truncated CBZ where the chapter
+        // should be. A sibling path makes the publish an atomic rename on one volume. The per-page
+        // scratch stays in tempDir, which is never published.
+        string? finalDir = Path.GetDirectoryName(outputCbzPath);
+        if (!string.IsNullOrEmpty(finalDir))
+        {
+            Directory.CreateDirectory(finalDir);
+        }
+        string tempOutCbz = PartialPath(outputCbzPath);
 
         try
         {
@@ -537,18 +553,10 @@ public class OnnxUpscaleEngine(
                 }
             }
 
-            string? finalDir = Path.GetDirectoryName(outputCbzPath);
-            if (!string.IsNullOrEmpty(finalDir) && !Directory.Exists(finalDir))
-            {
-                Directory.CreateDirectory(finalDir);
-            }
-
-            if (File.Exists(outputCbzPath))
-            {
-                File.Delete(outputCbzPath);
-            }
-
-            File.Move(tempOutCbz, outputCbzPath);
+            // Overwrite in one step: deleting the destination first would leave a window in which the
+            // chapter does not exist at all, and the move itself is atomic because the staged archive
+            // is a sibling on the same volume.
+            File.Move(tempOutCbz, outputCbzPath, overwrite: true);
 
             // Release cached sessions synchronously now the chapter is done, to return all GPU VRAM
             // and GTT buffers back to the driver before the next chapter starts. This is a
@@ -563,6 +571,12 @@ public class OnnxUpscaleEngine(
         {
             try
             {
+                // The staged archive is a sibling of the destination, so it is not inside tempDir.
+                if (File.Exists(tempOutCbz))
+                {
+                    File.Delete(tempOutCbz);
+                }
+
                 if (Directory.Exists(tempDir))
                 {
                     Directory.Delete(tempDir, recursive: true);
@@ -912,6 +926,25 @@ public class OnnxUpscaleEngine(
                     sessionFactory.GetEffectiveBackend()
                 );
             }
+            catch (Exception ex) when (IsCandidateModelFailure(ex))
+            {
+                // The probe only runs a 256 px tile, so a model can pass it and still fail on the real
+                // grid — a shape the EP's kernel does not implement, an output whose geometry does not
+                // match the scale. That is the same "one bad file must not abort the page while a
+                // working candidate follows" property the probe exists to provide, so it is handled
+                // the same way: skip this model for the process and try the next. A transient failure
+                // (memory, a lost device, IO) is deliberately not caught here — it says nothing about
+                // the model, and it is rethrown so the caller can retry the page.
+                MarkModelUnusable(modelPath, scale);
+                unusable.Add(Path.GetFileName(modelPath));
+                logger.LogWarning(
+                    ex,
+                    "Model {Model} failed on device {Device} with the {Provider} execution provider while upscaling; trying the next model.",
+                    Path.GetFileName(modelPath),
+                    deviceId,
+                    sessionFactory.GetEffectiveBackend()
+                );
+            }
         }
 
         // A transient probe failure is rethrown with its original type so the caller (via
@@ -1239,6 +1272,19 @@ public class OnnxUpscaleEngine(
     /// </summary>
     private static bool IsTransientProbeFailure(Exception ex) =>
         OnnxTiler.IsMemoryException(ex) || ex is IOException;
+
+    /// <summary>
+    /// True for a real-tile failure that means the model cannot serve this scale on this device, as
+    /// opposed to something a retry could get past. Mirrors how the probe classifies its own failures
+    /// (<see cref="IsTransientProbeFailure"/>), so a model that passes the 256 px probe and then fails
+    /// on the real grid is skipped rather than aborting the page while a working candidate follows.
+    /// Cancellation and a disposed session factory are not the model's fault and are never treated as
+    /// a model failure.
+    /// </summary>
+    internal static bool IsCandidateModelFailure(Exception ex) =>
+        ex is not OperationCanceledException
+        && ex is not ObjectDisposedException
+        && !IsTransientProbeFailure(ex);
 
     /// <summary>
     /// A deterministic RGB gradient. Content does not matter for the probe — it only asks whether

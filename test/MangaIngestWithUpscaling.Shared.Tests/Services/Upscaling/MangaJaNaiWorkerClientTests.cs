@@ -1,7 +1,9 @@
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.ML.OnnxRuntime;
 using NSubstitute;
 using Xunit;
 
@@ -444,10 +446,13 @@ public class MangaJaNaiWorkerClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ReleaseGpuCacheAsync_InvalidatesAllSessions()
+    public async Task ReleaseGpuCacheAsync_ReleasesSynchronouslyAtTheChapterBoundary()
     {
+        // IOnnxSessionFactory's contract for a chapter boundary is the synchronous release: a deferred
+        // retire hands back nothing, so the next chapter plans its budget against memory that is still
+        // held. This is the streaming path, which is the only production path now.
         var engine = Substitute.For<IOnnxUpscaleEngine>();
-        var factory = Substitute.For<IOnnxSessionFactory>();
+        var factory = new ReleaseRecordingSessionFactory();
         var client = new MangaJaNaiWorkerClient(
             engine,
             factory,
@@ -457,6 +462,38 @@ public class MangaJaNaiWorkerClientTests
         bool success = await client.ReleaseGpuCacheAsync(TestContext.Current.CancellationToken);
 
         Assert.True(success);
-        factory.Received(1).InvalidateAllSessions();
+        Assert.Equal(1, factory.SynchronousReleases);
+        Assert.Equal(0, factory.DeferredInvalidations);
+    }
+
+    /// <summary>
+    /// Records which release path was taken, so "the chapter boundary frees memory now" is asserted
+    /// rather than inferred from a substitute that would swallow both.
+    /// </summary>
+    private sealed class ReleaseRecordingSessionFactory : IOnnxSessionFactory
+    {
+        public int SynchronousReleases { get; private set; }
+        public int DeferredInvalidations { get; private set; }
+
+        public InferenceSession GetOrCreateSession(string modelPath) => null!;
+
+        public InferenceSession CreateSession(string modelPath) => null!;
+
+        public void InvalidateSession(string modelPath) => DeferredInvalidations++;
+
+        public void InvalidateAllSessions() => DeferredInvalidations++;
+
+        public GpuBackend GetEffectiveBackend() => GpuBackend.WebGPU;
+
+        public IDisposable EnterInferenceScope() => new NoOpScope();
+
+        public void ReleaseCachedSessions() => SynchronousReleases++;
+
+        public void Dispose() { }
+
+        private sealed class NoOpScope : IDisposable
+        {
+            public void Dispose() { }
+        }
     }
 }

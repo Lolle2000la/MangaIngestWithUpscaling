@@ -80,7 +80,7 @@ public sealed class OnnxSessionFactory(
 
             if (_sessions.TryGetValue(fullPath, out var existing))
             {
-                _lruOrder.Remove(fullPath);
+                RemoveFromLru(fullPath);
                 _lruOrder.AddLast(fullPath);
                 return existing;
             }
@@ -125,8 +125,29 @@ public sealed class OnnxSessionFactory(
                 return;
             if (_sessions.Remove(fullPath, out var session))
             {
-                _lruOrder.Remove(fullPath);
+                RemoveFromLru(fullPath);
                 RetireLocked(session);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes <paramref name="fullPath"/> from the LRU list regardless of casing.
+    /// <para>
+    /// <see cref="_sessions"/> compares paths case-insensitively but the list compares ordinally, so a
+    /// differently-cased spelling of the same path finds the session and then fails to match its own
+    /// entry. The list would accumulate one duplicate per spelling, and the eviction order would no
+    /// longer describe the sessions it exists to order.
+    /// </para>
+    /// </summary>
+    private void RemoveFromLru(string fullPath)
+    {
+        for (LinkedListNode<string>? node = _lruOrder.First; node is not null; node = node.Next)
+        {
+            if (string.Equals(node.Value, fullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _lruOrder.Remove(node);
+                return;
             }
         }
     }
@@ -735,7 +756,14 @@ public sealed class OnnxSessionFactory(
 
         if (backend != GpuBackend.Auto)
         {
-            return backend;
+            // The preference is not a promise: appending an explicit provider can fail (a missing
+            // runtime, an unsupported device) and CreateSession then silently builds a CPU session.
+            // Returning the preference unverified would let the engine identity, the calibration
+            // fingerprint and the logs name a backend that is not the one running — the opposite of
+            // what EngineIdentity documents. The same append the Auto path probes decides it here.
+            return CanAttach(backend, Math.Max(0, currentConfig.SelectedDeviceIndex - 1))
+                ? backend
+                : GpuBackend.CPU;
         }
 
         int deviceId = Math.Max(0, currentConfig.SelectedDeviceIndex - 1);
@@ -783,6 +811,32 @@ public sealed class OnnxSessionFactory(
         }
 
         return GpuBackend.CPU;
+    }
+
+    /// <summary>
+    /// Whether an explicitly configured provider can actually be attached on this host, by performing
+    /// the same append <see cref="CreateSession"/> would. Unlike the Auto path, a failure here is not
+    /// allowed to fall through to a provider the operator did not ask for: the session falls back to
+    /// CPU, so this reports CPU too.
+    /// <para>
+    /// The append is what can be checked without building a session. A provider that attaches but
+    /// still fails at session construction (an operator or graph the EP rejects) falls back to CPU in
+    /// <see cref="CreateSession"/> and is not distinguished here.
+    /// </para>
+    /// </summary>
+    private bool CanAttach(GpuBackend backend, int deviceId)
+    {
+        using var testOptions = new SessionOptions();
+        return backend switch
+        {
+            GpuBackend.WebGPU => TryConfigureWebGpu(testOptions, deviceId, "probe"),
+            GpuBackend.CUDA => TryConfigureCuda(testOptions, deviceId, "probe"),
+            GpuBackend.DirectML => TryConfigureDirectML(testOptions, deviceId, "probe"),
+            GpuBackend.OpenVINO => TryConfigureOpenVino(testOptions, deviceId, "probe"),
+            GpuBackend.MIGraphX => TryConfigureMIGraphX(testOptions, deviceId, "probe"),
+            // CPU attaches nothing; it is also what a failed append falls back to.
+            _ => backend == GpuBackend.CPU,
+        };
     }
 
     public void Dispose()

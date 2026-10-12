@@ -227,6 +227,16 @@ public sealed class PageStreamClient(
             // The upload loop and the chapter share a token so a rejected or dropped upload stops
             // the local worker instead of letting it upscale the whole remaining chapter (and fill
             // temp disk) only to fail at the end.
+            // Constructed before the upload loop starts: if this throws, nothing is running yet, and
+            // the writer completion below (which the upload loop waits on) is guaranteed by the
+            // try/finally that now covers everything from the upload loop onwards.
+            await using var progressReporter = new StreamingProgressReporter(
+                client,
+                taskId,
+                stoppingToken,
+                logger
+            );
+
             using var uploadFailureCts = CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken
             );
@@ -303,34 +313,26 @@ public sealed class PageStreamClient(
                 }
             }
 
-            await using var progressReporter = new StreamingProgressReporter(
-                client,
-                taskId,
-                stoppingToken,
-                logger
-            );
-
-            Task chapterTask = workerClient.RunChapterAsync(
-                chapterRequest,
-                FetchPagesAsync(
-                    client,
-                    taskId,
-                    manifest.TaskIdentity,
-                    missing,
-                    nameByIndex,
-                    sourceDirectory,
-                    uploadFailureCts.Token,
-                    preprocessing: ResolvePreprocessing(manifest)
-                ),
-                progressReporter.Progress,
-                OnPageDone,
-                uploadFailureCts.Token,
-                timeout: ChapterInactivityTimeout(manifest.MaxPagePixels)
-            );
-
             Exception? chapterError = null;
             try
             {
+                Task chapterTask = workerClient.RunChapterAsync(
+                    chapterRequest,
+                    FetchPagesAsync(
+                        client,
+                        taskId,
+                        manifest.TaskIdentity,
+                        missing,
+                        nameByIndex,
+                        sourceDirectory,
+                        uploadFailureCts.Token,
+                        preprocessing: ResolvePreprocessing(manifest)
+                    ),
+                    progressReporter.Progress,
+                    OnPageDone,
+                    uploadFailureCts.Token,
+                    timeout: ChapterInactivityTimeout(manifest.MaxPagePixels)
+                );
                 await chapterTask;
             }
             catch (Exception ex)

@@ -338,7 +338,13 @@ public class MangaJaNaiWorkerClient(
     {
         try
         {
-            sessionFactory.InvalidateAllSessions();
+            // Synchronous, not InvalidateAllSessions: the latter only retires the session and lets a
+            // background drain dispose it once no inference scope holds it, so a chapter boundary
+            // would hand back nothing — and the next chapter would plan its budget against memory
+            // that is still held. This is the contract IOnnxSessionFactory documents for a chapter
+            // boundary, and no scope is held here. (It also waits out a scope on another thread
+            // rather than deadlocking: the caller holds none.)
+            sessionFactory.ReleaseCachedSessions();
             GC.Collect();
             GC.WaitForPendingFinalizers();
             return Task.FromResult(true);

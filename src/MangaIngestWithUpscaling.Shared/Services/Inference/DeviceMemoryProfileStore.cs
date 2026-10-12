@@ -86,10 +86,31 @@ public sealed class DeviceMemoryProfileStore
                     System.IO.Directory.CreateDirectory(directory);
                 }
 
-                // Write to a temp file first so a crash mid-write cannot destroy the other profiles
-                string temp = path + ".tmp";
-                File.WriteAllText(temp, JsonSerializer.Serialize(profiles, Options));
-                File.Move(temp, path, overwrite: true);
+                // Write to a temp file first so a crash mid-write cannot destroy the other profiles.
+                // The name is unique per writer: this file is explicitly shared between hosts, and a
+                // fixed ".tmp" name lets two of them interleave the same temp file, so the move below
+                // would publish a torn mixture of both rather than one writer's snapshot.
+                string temp = TempPath(path);
+                try
+                {
+                    File.WriteAllText(temp, JsonSerializer.Serialize(profiles, Options));
+                    File.Move(temp, path, overwrite: true);
+                }
+                finally
+                {
+                    if (File.Exists(temp))
+                    {
+                        try
+                        {
+                            File.Delete(temp);
+                        }
+                        catch
+                        {
+                            // Left behind only if the move failed and the delete did too; a stale
+                            // uniquely-named temp file is inert, not a correctness problem.
+                        }
+                    }
+                }
                 cache = profiles;
                 cachePath = path;
                 cacheFileSignature = FileSignature(path);
@@ -104,6 +125,15 @@ public sealed class DeviceMemoryProfileStore
             }
         }
     }
+
+    /// <summary>
+    /// The scratch path a save writes to before moving it onto <paramref name="path"/>. Unique per
+    /// writer: the file is explicitly shared between hosts, and a fixed <c>.tmp</c> name lets two of
+    /// them interleave the same temp file, so the move would publish a torn mixture of both rather
+    /// than one writer's snapshot.
+    /// </summary>
+    internal static string TempPath(string path) =>
+        $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
 
     private Dictionary<string, DeviceMemoryProfile> Read(string modelsDirectory, bool forceReload)
     {

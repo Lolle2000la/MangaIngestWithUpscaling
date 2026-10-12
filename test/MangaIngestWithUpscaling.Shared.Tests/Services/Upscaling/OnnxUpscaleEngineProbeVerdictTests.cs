@@ -213,6 +213,29 @@ public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
         return path;
     }
 
+    [Fact]
+    public void IsCandidateModelFailure_SeparatesModelFaultsFromRetryableOnes()
+    {
+        // A model that passes the 256 px probe can still fail on the real grid — a shape the EP's
+        // kernel does not implement, an output whose geometry does not match the scale. That has to
+        // skip the candidate rather than abort the page while a working one follows.
+        Assert.True(
+            OnnxUpscaleEngine.IsCandidateModelFailure(new InvalidOperationException("shape"))
+        );
+        Assert.True(OnnxUpscaleEngine.IsCandidateModelFailure(new NonFiniteModelOutputException()));
+
+        // A resource hiccup or an IO error says nothing about the model: it must stay retryable, so
+        // the caller can retry the page instead of losing the model for the rest of the process.
+        Assert.False(OnnxUpscaleEngine.IsCandidateModelFailure(new OutOfMemoryException()));
+        Assert.False(OnnxUpscaleEngine.IsCandidateModelFailure(new IOException("disk")));
+
+        // Cancellation and a disposed session factory are not the model's fault either.
+        Assert.False(OnnxUpscaleEngine.IsCandidateModelFailure(new OperationCanceledException()));
+        Assert.False(
+            OnnxUpscaleEngine.IsCandidateModelFailure(new ObjectDisposedException("factory"))
+        );
+    }
+
     /// <summary>
     /// Delegates to a real factory, but makes the first <see cref="EnterInferenceScope"/> call fail
     /// with an <see cref="OutOfMemoryException"/> — the probe's failure mode on a transient device

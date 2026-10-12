@@ -159,6 +159,34 @@ public class DeviceMemoryProfileStoreTests : IDisposable
         Assert.True(document.RootElement.TryGetProperty("a", out JsonElement _));
     }
 
+    [Fact]
+    public void TempPath_IsUniquePerWriter()
+    {
+        // The store file is explicitly shared between hosts, so a fixed "<path>.tmp" name lets two
+        // writers interleave the same scratch file and the atomic move then publishes a torn mixture
+        // of both. Every save has to use its own.
+        string path = Path.Combine(tempDir, "device-memory-profile.json");
+
+        string first = DeviceMemoryProfileStore.TempPath(path);
+        string second = DeviceMemoryProfileStore.TempPath(path);
+
+        Assert.NotEqual(first, second);
+        Assert.NotEqual(path + ".tmp", first);
+        Assert.StartsWith(path, first, StringComparison.Ordinal);
+        Assert.EndsWith(".tmp", first, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Save_LeavesNoScratchFileBehind()
+    {
+        var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+
+        store.Save(tempDir, NewProfile("fp1", "gpu"));
+
+        Assert.Empty(Directory.GetFiles(tempDir, "*.tmp"));
+        Assert.True(File.Exists(DeviceMemoryProfileStore.PathFor(tempDir)));
+    }
+
     private static DeviceMemoryProfile NewProfile(string fingerprint, string deviceName) =>
         new()
         {
