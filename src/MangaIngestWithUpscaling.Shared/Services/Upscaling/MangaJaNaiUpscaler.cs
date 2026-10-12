@@ -331,6 +331,9 @@ public class MangaJaNaiUpscaler(
                     "c731f071ef59a823034950de567795f01412b9a64be6fee5f6ed7c2691863798"
                 },
                 {
+                    // Byte-identical to the same file in the fp16 archive: upstream ships one SPAN file
+                    // in both zips, so this hash legitimately repeats. Verified against the published
+                    // archives (same size, same SHA-256), so it is not a copy-paste slip to "fix".
                     "2x_IllustrationJaNai_V3denoise_SPAN_S_30k_fp16.onnx",
                     "1b96dd10e3241eeb76ce149342870f86e511ad861abba621b01d561cceca0f82"
                 },
@@ -359,6 +362,9 @@ public class MangaJaNaiUpscaler(
                     "f1de529a149c3290180e04421dd33e78b471392e2fc29ac382050ffd153a51ec"
                 },
                 {
+                    // Byte-identical to the same file in the fp16 archive: upstream ships one SPAN file
+                    // in both zips, so this hash legitimately repeats. Verified against the published
+                    // archives (same size, same SHA-256), so it is not a copy-paste slip to "fix".
                     "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
                     "77434949223b70bccd95869c1d52111397180cc9d23b18ef9585f9dc85c238e3"
                 },
