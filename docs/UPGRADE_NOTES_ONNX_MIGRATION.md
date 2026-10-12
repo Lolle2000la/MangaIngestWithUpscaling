@@ -66,23 +66,27 @@ configuration surface. Nothing here requires a data migration; the database sche
   the chapter shows as having pending splits until they are re-applied — the findings come from a
   different algorithm, so they are meant to be reviewed, not inherited. Chapters that need no split
   are re-marked without any action.
-* The detector now runs **one inference over the whole resized page** (width 768, height scaled to
-  keep the aspect ratio). The upstream reference (`manga-vert-split-nn`'s `detect_breaks.py`) instead
-  windowed the inference — chunks of 2048 rows with 512 rows of overlap — because its PyTorch pipeline
-  averaged raw logits and only then applied the sigmoid, the smoothing and the peak search. The ONNX
-  export this app uses has those three steps **inside the graph** (`export_onnx.py` wraps
-  `predict(apply_calibration=True)`), which makes its output a function of the whole sequence rather
-  than of a row's neighbourhood: measured against the shipped model, identical rows give different
-  probabilities (max difference 0.94) in a 2048-row and a 4000-row input, with peak counts of 3 and 1.
-  Windowing that graph is therefore *not* equivalent to a single pass, and single pass is what keeps
-  detection faithful to the calibrated model.
-* The practical consequence is memory: the detector's activations grow with the resized height —
-  measured at roughly **1.5 GiB for a 4000-row page** (against ~100 MiB for one 3072-row window).
-  Ordinary pages (a manga page at 2:1 or 3:2 aspect resizes to well under 2000 rows) are far from
-  that. Very tall pages — long webtoon strips — can exhaust device memory during detection; the
-  chapter is then retried and, if the failure repeats, fails with a memory error. Recovering that
-  case properly needs a logits-only export plus the smoothing and peak search reimplemented in C#;
-  it is not something that can be fixed by chunking this graph.
+* The detector runs its inference in **windows**, like the upstream reference: one window per 2048
+  rows plus context on either side. That is what bounds its memory: the activations grow with the
+  height of the input, and a whole-page pass needs roughly 1.5 GiB at 4000 resized rows and 5.6 GiB at
+  15000 rows (the top of the range the model's training strips cover, `STRIP_LENGTH_MAX`), while a
+  windowed pass stays at a few hundred MiB regardless of height.
+* The window carries **1536 rows of context** beyond the rows it is trusted for, deliberately more than
+  the reference's 512. The model's vertical receptive field is 1423 rows: the dilated residual stack
+  reaches ±1023 (ten 3x3 blocks with dilations 1, 2, 4, … 512), the smoothing convolution after the
+  sigmoid ±8, and the peak test's MaxPool ±400 (kernel 801, i.e. the calibrated `peak_distance` of
+  800). A window with less context scores the rows near its edges from a truncated neighbourhood. The
+  reference can use 512 because it windows the *logits* and applies the sigmoid, the smoothing and the
+  peak search afterwards; this export bakes those three into the graph, so its windows are already
+  post-calibration and the margin has to cover the whole receptive field instead. Measured against the
+  shipped model on 9000-row pages of three different kinds: with 1536 the windowed result is
+  **bit-identical** to a whole-page pass (max probability difference 0.0, no differing peaks), with
+  1024 it diverges by 3.8e-6, with 512 by 1.5e-1.
+* That also keeps the implementation on the evaluation the baked thresholds were calibrated on: the
+  calibration (`calibrate.py`) runs an **uncropped single pass** over whole strips, which is what the
+  windowed pass reproduces. The 2048-row window is the reference's window and the model's training
+  crop (`--crop_height` default 2048); it affects memory and speed, not the result.
+
 * Images with **transparency** are now decoded the way the reference decodes them: the alpha band is
   **dropped**, so the colour stored under a transparent pixel is what the detector sees. Previously
   the alpha was composited onto black, which turned a transparent page area into a black band; since

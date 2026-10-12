@@ -164,15 +164,11 @@ public class SplitDetectionServiceTests : IDisposable
     [Trait("Category", "Unit")]
     public async Task DetectSplitsAsync_TallPage_IsOneInferenceOverTheWholeResizedHeight()
     {
-        // The upstream reference (manga-vert-split-nn's detect_breaks.py) windows this inference:
-        // chunk_size 2048, overlap 512, accumulating and averaging the *logits* before the sigmoid,
-        // the smoothing and the peak detection run. This export cannot be windowed that way, because
-        // it bakes those three steps into the graph (export_onnx.py wraps predict(apply_calibration:
-        // True)), and its output is a function of the whole sequence: measured against the shipped
-        // model, the same rows give different probabilities — max |delta| 0.94 — in a 2048-row and a
-        // 4000-row input, and peak counts of 3 vs 1. So the detector deliberately runs one inference
-        // over the whole resized page, and this pins it: a chunked implementation hands back a
-        // chunk-sized output, which EnsureDetectorOutputGeometry rejects against the resized height.
+        // A page taller than one inference window is detected in several windows, and the result has to
+        // be the same as a whole-page pass. The window's context margin is what makes that hold (see
+        // DetectorWindowMargin); this pins the shape of the result: one row per resized row, with the
+        // 100-row edge margins applied to the page rather than to each window. A window whose output
+        // were handed back as-is would fail the per-window geometry check instead.
         string modelsDir = Path.Combine(_root, "tall_models");
         Directory.CreateDirectory(modelsDir);
         string modelPath = TinyOnnxModel.WritePeakMaskDetector(
@@ -263,6 +259,51 @@ public class SplitDetectionServiceTests : IDisposable
         // rather than the 0.0 that compositing onto black would produce.
         DetectedSplit transparentRow = result.Splits.Single(s => s.YOriginal == 150);
         Assert.Equal(200f / 255f, transparentRow.Confidence, 2);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_PageTallerThanAWindow_AssemblesEveryRowFromItsOwnWindow()
+    {
+        // A page taller than the inference window is detected in several windows, and every row has to
+        // come back from the window that was trusted for it. The synthetic detector's probability is
+        // the row mean, so filling row y with (y % 256) makes each row's value identify where it was
+        // read from: a window offset or margin mistake shifts the whole assembly and every confidence
+        // after the first window boundary comes out wrong.
+        string modelsDir = Path.Combine(_root, "window_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        // Four windows at the 2048-row chunk, the last one partial; 100 rows are dropped at each end.
+        const int height = 7000;
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteGradientImage("gradient.png", height),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        var expected = new List<(int YOriginal, double Confidence)>();
+        for (int y = 100; y < height - 100; y++)
+        {
+            expected.Add((y, Math.Round((128 + (y % 128)) / 255f, 4)));
+        }
+
+        Assert.Equal(expected, result.Splits.Select(s => (s.YOriginal, s.Confidence)).ToList());
     }
 
     [Fact]
@@ -627,6 +668,33 @@ public class SplitDetectionServiceTests : IDisposable
     /// factory, so a test that needs the operation to get past the pre-flight checks has to hand it
     /// a real image, not a few arbitrary bytes.
     /// </summary>
+    private string WriteGradientImage(string fileName, int height)
+    {
+        // 768 wide so the detector's resize is a no-op, with each row a constant whose value encodes the
+        // row index. The synthetic detector reports the row mean, so the detected confidence is a
+        // read-out of which row the value came from. The offset keeps every value above the model's
+        // 0.5 threshold, so *every* row in range is a peak: a row the assembly skipped shows up as a
+        // missing split rather than hiding in a below-threshold value.
+        const int width = 768;
+        var pixels = new byte[width * height * 3];
+        for (int y = 0; y < height; y++)
+        {
+            byte value = (byte)(128 + (y % 128));
+            for (int x = 0; x < width; x++)
+            {
+                int i = (y * width + x) * 3;
+                pixels[i] = value;
+                pixels[i + 1] = value;
+                pixels[i + 2] = value;
+            }
+        }
+
+        string path = Path.Combine(_root, fileName);
+        using var image = Image.NewFromMemory(pixels, width, height, 3, Enums.BandFormat.Uchar);
+        image.WriteToFile(path);
+        return path;
+    }
+
     private string WriteGrayscaleImage(string fileName, byte fill, int height)
     {
         // One band, written as a greyscale PNG so it reads back as B_W: the resize is still a no-op
