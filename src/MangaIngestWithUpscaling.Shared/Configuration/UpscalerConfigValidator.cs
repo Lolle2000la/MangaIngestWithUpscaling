@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Shared.Configuration;
@@ -53,6 +54,11 @@ public static class UpscalerConfigSizeValidation
 /// instead of the boot. The ranges mirror that check, including applying the smart-downscale ones
 /// only while the feature is enabled — a nonsense value on a disabled feature is inert.
 /// </para>
+/// <para>
+/// The architecture preference is checked for the same reason again: an unrecognised name would
+/// silently leave the built-in order in place, which is the opposite of what an operator asking for
+/// a specific order wants.
+/// </para>
 /// </summary>
 public sealed class UpscalerConfigValidator : IValidateOptions<UpscalerConfig>
 {
@@ -60,9 +66,39 @@ public sealed class UpscalerConfigValidator : IValidateOptions<UpscalerConfig>
     {
         List<string> invalid = options.FindInvalidSizeSettings().ToList();
         invalid.AddRange(options.FindInvalidPreprocessingSettings());
+        invalid.AddRange(options.FindInvalidArchitecturePreference());
         return invalid.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(invalid);
+    }
+}
+
+/// <summary>
+/// The model-architecture-preference half of <see cref="UpscalerConfigValidator"/>. The engine's
+/// <see cref="ModelArchitecturePreference.Resolve"/> skips an unrecognised name, so without this the
+/// setting would be silently ignored rather than the boot failing.
+/// </summary>
+public static class UpscalerConfigArchitectureValidation
+{
+    public static IEnumerable<string> FindInvalidArchitecturePreference(this UpscalerConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(config.PreferredModelArchitectures))
+        {
+            yield break;
+        }
+
+        foreach (
+            string token in config.PreferredModelArchitectures.Split(
+                [',', ';'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+            )
+        )
+        {
+            if (ModelArchitecturePreference.Parse(token) is null)
+            {
+                yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.PreferredModelArchitectures)} = \"{config.PreferredModelArchitectures}\": '{token}' is not a known architecture. Expected a comma-separated list of ESRGAN, SPAN, FDAT_M, FDAT_XL, DAT2 and HAT_L, most preferred first";
+            }
+        }
     }
 }
 

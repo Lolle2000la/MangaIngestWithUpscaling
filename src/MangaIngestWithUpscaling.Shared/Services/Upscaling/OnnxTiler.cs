@@ -273,6 +273,88 @@ public enum ModelArchitecture
 }
 
 /// <summary>
+/// The architecture preference vocabulary: the built-in order, the token parser the configuration
+/// validator uses, and the merge that turns a configured list into an order.
+/// </summary>
+public static class ModelArchitecturePreference
+{
+    /// <summary>
+    /// The built-in order, most preferred first: the fast, GPU-native architectures ahead of the
+    /// heavy transformers. This is what <c>Upscaler:PreferredModelArchitectures</c> re-orders, and
+    /// what an architecture the setting does not name keeps its place in.
+    /// </summary>
+    public static IReadOnlyList<ModelArchitecture> Default =>
+        [
+            ModelArchitecture.FdatM,
+            ModelArchitecture.Esrgan,
+            ModelArchitecture.Span,
+            ModelArchitecture.FdatXl,
+            ModelArchitecture.Dat2,
+            ModelArchitecture.HatL,
+        ];
+
+    /// <summary>
+    /// The architecture a configuration token names, or null when it names none. An exact match
+    /// against the spellings used here (<c>FDAT_M</c>, <c>FDAT_XL</c>, …), deliberately not
+    /// <see cref="OnnxTiler.DetectArchitecture"/>'s substring search: a typo has to fail the boot
+    /// rather than silently re-rank the models.
+    /// </summary>
+    public static ModelArchitecture? Parse(string? token) =>
+        token?.Trim().ToUpperInvariant() switch
+        {
+            "ESRGAN" => ModelArchitecture.Esrgan,
+            "SPAN" => ModelArchitecture.Span,
+            "FDAT_M" or "FDATM" => ModelArchitecture.FdatM,
+            "FDAT_XL" or "FDATXL" => ModelArchitecture.FdatXl,
+            "DAT2" => ModelArchitecture.Dat2,
+            "HAT_L" or "HATL" => ModelArchitecture.HatL,
+            _ => null,
+        };
+
+    /// <summary>
+    /// The order the configured tokens ask for, with every architecture the setting does not name
+    /// appended after them in its <see cref="Default"/> position. A partial list therefore re-ranks
+    /// without dropping models, and an empty one is the default order unchanged.
+    /// <para>
+    /// Unknown tokens are skipped here rather than thrown: the configuration validator rejects them
+    /// at startup, so this only meets one when a config was built in code (a test, or a call site
+    /// that bypassed the options pipeline).
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<ModelArchitecture> Resolve(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return Default;
+        }
+
+        var order = new List<ModelArchitecture>();
+        foreach (
+            string token in configured.Split(
+                [',', ';'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+            )
+        )
+        {
+            if (Parse(token) is ModelArchitecture architecture && !order.Contains(architecture))
+            {
+                order.Add(architecture);
+            }
+        }
+
+        foreach (ModelArchitecture architecture in Default)
+        {
+            if (!order.Contains(architecture))
+            {
+                order.Add(architecture);
+            }
+        }
+
+        return order;
+    }
+}
+
+/// <summary>
 /// Raised when an inference produces non-finite values instead of an image.
 /// <para>
 /// Some execution providers do not implement every kernel the transformer architectures need.

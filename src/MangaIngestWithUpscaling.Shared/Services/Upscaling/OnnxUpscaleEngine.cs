@@ -152,12 +152,14 @@ public class OnnxUpscaleEngine(
 
                 // A page resolves to a preference list rather than one model: whether the most
                 // preferred model can run at all is a property of the execution provider and
-                // the device, and is only discovered when it returns valid output.
+                // the device, and is only discovered when it returns valid output. The architecture
+                // order inside that list is the configured one.
                 IReadOnlyList<string> candidates = SelectModelCandidates(
                     ModelsDirectory,
                     isGrayscale,
                     origHeight,
-                    scale
+                    scale,
+                    ModelArchitecturePreference.Resolve(config.Value.PreferredModelArchitectures)
                 );
 
                 using var flattened = vipsImage.HasAlpha() ? vipsImage.Flatten() : vipsImage.Copy();
@@ -702,12 +704,21 @@ public class OnnxUpscaleEngine(
     /// the smaller file wins wherever it can run, and the fp32 copy is what the WebGPU EP falls
     /// back to for the architectures it cannot run in fp16.
     /// </para>
+    /// <para>
+    /// <paramref name="architecturePreference"/> re-orders the architectures, most preferred first;
+    /// it defaults to <see cref="ModelArchitecturePreference.Default"/> and is what
+    /// <c>Upscaler:PreferredModelArchitectures</c> feeds. The model <em>version</em> order
+    /// (V3detail, V3denoise, V2standard, V1) stays the outer one, so promoting an architecture
+    /// re-ranks it within each version. Every file in the directory is still somewhere in the
+    /// result: a file whose architecture is not in the list is reached by the trailing additions.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<string> SelectModelCandidates(
         string modelsDirectory,
         bool isGrayscale,
         int height,
-        int scale
+        int scale,
+        IReadOnlyList<ModelArchitecture>? architecturePreference = null
     )
     {
         if (!Directory.Exists(modelsDirectory))
@@ -765,10 +776,14 @@ public class OnnxUpscaleEngine(
                 $"{colorKey}V1_",
             ];
 
-            // Architectures ordered by WebGPU/GPU compatibility and inference speed:
-            // Prioritize fast, native architectures (FDAT_M, ESRGAN, SPAN) over experimental/heavy models (DAT2, HAT_L).
-            // Avoid _bf16 models which cannot run natively on WebGPU execution provider.
-            string[] preferredArchs = ["FDAT_M", "ESRGAN", "SPAN", "FDAT_XL", "DAT2", "HAT_L"];
+            // Architectures ordered by cost on this engine's typical device; the order is the
+            // configurable one (Upscaler:PreferredModelArchitectures), defaulting to FDAT_M, ESRGAN,
+            // SPAN, FDAT_XL, DAT2, HAT_L. Each file resolves to exactly one architecture, so it is
+            // added at most once here and a model the list does not name is still reached by the
+            // AddAll below. ArchRank then orders an architecture's own copies: fp16 before fp32, and
+            // a model the WebGPU EP cannot run natively (_bf16) last.
+            IReadOnlyList<ModelArchitecture> preferredArchs =
+                architecturePreference ?? ModelArchitecturePreference.Default;
 
             foreach (var pref in preferredVersions)
             {
@@ -778,14 +793,11 @@ public class OnnxUpscaleEngine(
                     )
                     .ToList();
 
-                foreach (var arch in preferredArchs)
+                foreach (ModelArchitecture arch in preferredArchs)
                 {
                     foreach (
                         var file in versionCandidates
-                            .Where(f =>
-                                Path.GetFileName(f)
-                                    .Contains(arch, StringComparison.OrdinalIgnoreCase)
-                            )
+                            .Where(f => OnnxTiler.DetectArchitecture(f) == arch)
                             .OrderBy(ArchRank)
                     )
                     {
@@ -837,8 +849,12 @@ public class OnnxUpscaleEngine(
         string modelsDirectory,
         bool isGrayscale,
         int height,
-        int scale
-    ) => SelectModelCandidates(modelsDirectory, isGrayscale, height, scale)[0];
+        int scale,
+        IReadOnlyList<ModelArchitecture>? architecturePreference = null
+    ) =>
+        SelectModelCandidates(modelsDirectory, isGrayscale, height, scale, architecturePreference)[
+            0
+        ];
 
     private static void AddMatch(
         List<string> candidates,

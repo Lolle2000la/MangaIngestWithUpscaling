@@ -190,6 +190,30 @@ public record UpscalerConfig
     }
 
     /// <summary>
+    ///     Order in which model architectures are preferred when several are available for the same
+    ///     scale and model version, most preferred first, as a comma-separated list of architecture
+    ///     names: <c>FDAT_XL,FDAT_M,ESRGAN</c>.
+    ///     <para>
+    ///     Recognised names are <c>ESRGAN</c>, <c>SPAN</c>, <c>FDAT_M</c>, <c>FDAT_XL</c>,
+    ///     <c>DAT2</c> and <c>HAT_L</c> (case-insensitive; <c>FDAT_M</c>/<c>FDATM</c> and
+    ///     <c>FDAT_XL</c>/<c>FDATXL</c> are equivalent). An unrecognised name fails startup.
+    ///     Architectures the value does not name keep their built-in relative order after the listed
+    ///     ones, so a partial list re-ranks without dropping models.
+    ///     </para>
+    ///     <para>
+    ///     The default (<c>FDAT_M,ESRGAN,SPAN,FDAT_XL,DAT2,HAT_L</c>) puts the fast, GPU-native
+    ///     architectures ahead of the transformers, which are considerably slower. Promote
+    ///     <c>FDAT_XL</c> — the most useful candidate to promote — when its quality is worth the time
+    ///     on this device.
+    ///     </para>
+    ///     <para>
+    ///     The model <em>version</em> order (V3detail, V3denoise, V2standard, V1) is not configurable
+    ///     and stays the outer one, so a promoted architecture is preferred within every version.
+    ///     </para>
+    /// </summary>
+    public string? PreferredModelArchitectures { get; set; }
+
+    /// <summary>
     /// Dedicated, app-owned directory the page-streaming spool is written to. The app creates its own
     /// <c>{process id}-{guid}</c> roots under it and sweeps only those, so do not point it at a
     /// directory that holds unrelated data. Defaults to a subdirectory of the system temp directory.

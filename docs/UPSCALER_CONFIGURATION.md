@@ -135,6 +135,33 @@ rot that never updates metadata) is not detected without re-hashing. Re-run with
 directory, or delete the `.verified_*` markers, to force a full re-verification if you suspect
 tampering that deliberately preserved metadata.
 
+### Model selection
+
+| Setting | ENV variable | Default | Description |
+|---|---|---|---|
+| `PreferredModelArchitectures` | `Ingest_Upscaler__PreferredModelArchitectures` | `FDAT_M,ESRGAN,SPAN,FDAT_XL,DAT2,HAT_L` | Order in which model architectures are preferred when several are available for the same scale, most preferred first, as a comma-separated list. An unrecognised name fails startup. |
+
+The recognised names are `ESRGAN`, `SPAN`, `FDAT_M`, `FDAT_XL`, `DAT2` and `HAT_L` (case-insensitive;
+`FDAT_M`/`FDATM` and `FDAT_XL`/`FDATXL` are equivalent). Architectures the value does not name keep
+their built-in relative order *after* the listed ones, so a partial list re-ranks without dropping
+models — naming one architecture cannot lock the others out.
+
+The default puts the fast, GPU-native architectures ahead of the transformers, which are
+considerably slower. The most useful thing to change is promoting `FDAT_XL`, which otherwise sits
+behind `FDAT_M`, `ESRGAN` and `SPAN` and is only reached when all three are missing:
+
+```yaml
+environment:
+  - Ingest_Upscaler__PreferredModelArchitectures=FDAT_XL,FDAT_M,ESRGAN,SPAN,DAT2,HAT_L
+```
+
+Two caveats. The **model version** order (V3detail, V3denoise, V2standard, V1) is *not* configurable
+and stays the outer one, so a promoted architecture is preferred **within** each version: with
+`FDAT_XL` first, the order is V3detail's `FDAT_XL`, then V3detail's `FDAT_M`, …, then V3denoise's
+`FDAT_XL`. And this changes the *preference*, not the fallback: a model the execution provider cannot
+run is still skipped for the next candidate, so a promoted architecture that fails everywhere costs
+one probe per page, not a failure.
+
 ### Preprocessing settings
 
 | Setting | ENV variable | Default | Description |
@@ -211,6 +238,7 @@ to your `appsettings.json`:
     "UseFp16": null,
     "UseCPU": false,
     "ModelsDirectory": "/models/MangaJaNai",
+    "PreferredModelArchitectures": "FDAT_XL,FDAT_M,ESRGAN,SPAN,DAT2,HAT_L",
     "RemoteOnly": false,
     "UpscaleTimeout": "00:01:00",
     "MaxDimensionBeforeUpscaling": null,

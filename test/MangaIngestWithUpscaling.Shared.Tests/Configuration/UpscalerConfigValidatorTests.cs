@@ -234,6 +234,29 @@ public class UpscalerConfigValidatorTests
     }
 
     [Fact]
+    public void Validate_RejectsAnUnknownArchitectureName()
+    {
+        // The engine skips an unrecognised token, so without this check the setting would be silently
+        // ignored rather than the boot failing — the same trade-off the size settings make.
+        Assert.False(
+            new UpscalerConfigValidator()
+                .Validate(null, new UpscalerConfig { PreferredModelArchitectures = "FDAT_M,BOGUS" })
+                .Succeeded
+        );
+
+        // Any accepted spelling passes, and unset means the built-in order.
+        Assert.True(
+            new UpscalerConfigValidator()
+                .Validate(
+                    null,
+                    new UpscalerConfig { PreferredModelArchitectures = "fdat_xl, FdatM" }
+                )
+                .Succeeded
+        );
+        Assert.True(new UpscalerConfigValidator().Validate(null, new UpscalerConfig()).Succeeded);
+    }
+
+    [Fact]
     public void OptionsCreate_BypassesValidation()
     {
         // Many call sites construct a config directly; those must not be affected by validation.

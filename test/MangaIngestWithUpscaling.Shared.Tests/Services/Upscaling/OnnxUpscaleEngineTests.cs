@@ -265,6 +265,95 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    public void SelectModelCandidates_PromotedArchitecture_IsPreferredWithinEachVersion()
+    {
+        // The architecture order is configurable, and FDAT_XL is the candidate most worth promoting:
+        // at its default rank it sits behind FDAT_M, ESRGAN and SPAN, so it is only reached when all
+        // three are missing. Promoted, it has to win inside a version — the version order stays the
+        // outer one, so V3detail's FDAT_M still beats V3denoise's FDAT_XL.
+        string[] modelFiles =
+        [
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+            "4x_IllustrationJaNai_V3detail_FDAT_XL_27k_fp16.onnx",
+            "4x_IllustrationJaNai_V3denoise_FDAT_M_47k_fp16.onnx",
+            "4x_IllustrationJaNai_V3denoise_FDAT_XL_32k_fp16.onnx",
+        ];
+        foreach (var file in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_tempDir, file), "dummy");
+        }
+
+        IReadOnlyList<string> byDefault = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: false,
+            height: 1600,
+            scale: 4
+        );
+        Assert.Equal(
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+            Path.GetFileName(byDefault[0])
+        );
+
+        IReadOnlyList<string> promoted = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: false,
+            height: 1600,
+            scale: 4,
+            ModelArchitecturePreference.Resolve("FDAT_XL")
+        );
+        Assert.Equal(
+            "4x_IllustrationJaNai_V3detail_FDAT_XL_27k_fp16.onnx",
+            Path.GetFileName(promoted[0])
+        );
+
+        int detailFdatM = promoted
+            .ToList()
+            .IndexOf(Path.Combine(_tempDir, "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx"));
+        int denoiseFdatXl = promoted
+            .ToList()
+            .IndexOf(
+                Path.Combine(_tempDir, "4x_IllustrationJaNai_V3denoise_FDAT_XL_32k_fp16.onnx")
+            );
+        Assert.True(
+            detailFdatM >= 0 && detailFdatM < denoiseFdatXl,
+            "the version order is the outer one, so V3detail's FDAT_M must precede V3denoise's FDAT_XL"
+        );
+        Assert.Equal(4, promoted.Count);
+    }
+
+    [Fact]
+    public void SelectModelCandidates_PartialPreference_StillOffersEveryModel()
+    {
+        // A partial list re-ranks instead of filtering: an architecture the setting does not name
+        // keeps its built-in position after the named ones, so naming one architecture cannot
+        // silently drop every other model.
+        string[] modelFiles =
+        [
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+            "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx",
+        ];
+        foreach (var file in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_tempDir, file), "dummy");
+        }
+
+        IReadOnlyList<string> candidates = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: false,
+            height: 1600,
+            scale: 4,
+            ModelArchitecturePreference.Resolve("DAT2")
+        );
+
+        Assert.Equal(
+            "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx",
+            Path.GetFileName(candidates[0])
+        );
+        Assert.Equal(3, candidates.Count);
+    }
+
+    [Fact]
     public void SelectModelCandidates_IncludesEveryModelInTheDirectory()
     {
         // The fallback must never run out of candidates: if the last model also fails, the page
