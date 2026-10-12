@@ -684,8 +684,13 @@ internal static class DeviceMemorySampler
 {
     public static long Read(int deviceId)
     {
-        var (used, _) = OnnxTiler.GetGpuMemoryUsage(deviceId);
-        return used;
+        // VRAM + GTT. A card that spills keeps part of the footprint in shared memory, and the engine's
+        // own recovery watches GTT growth for exactly that reason. Measuring VRAM alone would read a
+        // too-small footprint on a spilling card, fit bytes-per-pixel below the truth from it, and let
+        // the planner pick a larger tile than the device can really hold. On a card that does not spill
+        // GTT stays near zero, so the sum changes nothing there.
+        var (vram, gtt) = OnnxTiler.GetGpuMemoryUsage(deviceId);
+        return vram + gtt;
     }
 
     public static long Measure(int deviceId, Action action)

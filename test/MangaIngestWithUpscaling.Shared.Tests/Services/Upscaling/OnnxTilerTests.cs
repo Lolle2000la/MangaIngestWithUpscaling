@@ -35,6 +35,26 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void Blender_TileNarrowerThanTheBlendRegion_ThrowsInsteadOfReadingOutOfBounds()
+    {
+        // The blend reads o.Start * 2 columns from the tile, and the copy that follows starts at the
+        // same offset, so a tile narrower than that region is unrepresentable. Nothing enforced it: a
+        // manual TileSize below the padding — or a page small enough that TileSplit.For shrinks the
+        // derived tiles below it — reached here and read past the end of a tile row, blending every
+        // row with the pixel after it and the last row past the end of the array.
+        var blender = new TileBlender(64, 8, 3, BlendDirection.Horizontal);
+
+        // The first tile is wide enough and leaves _offset > 0, so the next one takes the blending path.
+        blender.AddTile(new byte[40 * 8 * 3], 40, 8, new TileOverlap(16, 16));
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            blender.AddTile(new byte[20 * 8 * 3], 20, 8, new TileOverlap(16, 16))
+        );
+
+        Assert.Contains("narrower than the blend region", ex.Message);
+    }
+
+    [Fact]
     public void ExtractCrop_ImpossibleCropSize_IsAnOutOfMemoryException()
     {
         var ex = Assert.Throws<OutOfMemoryException>(() =>

@@ -21,8 +21,8 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 - **Build commands may take 30+ seconds** - always set timeout to 120+ seconds
 
 ```bash
-# 1. Install .NET 10.0 SDK (if not installed)
-wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+# 1. Install .NET 10.0 SDK (if not installed). dotnet-install.sh is tracked in this repository, so
+#    run it from the checkout instead of downloading it again.
 chmod +x dotnet-install.sh
 ./dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet
 export PATH="$HOME/.dotnet:$PATH"

@@ -22,7 +22,7 @@ public enum GpuBackend
     [Obsolete("Use CUDA or Auto instead")]
     CUDA_12_8 = 102,
 
-    [Obsolete("Use WebGPU or OpenVINO instead")]
+    [Obsolete("Use WebGPU instead: this alias is remapped to it")]
     XPU = 103,
 }
 

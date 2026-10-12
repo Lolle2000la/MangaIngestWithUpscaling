@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Net;
 using System.Security.Cryptography;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -690,7 +691,18 @@ public class MangaJaNaiUpscaler(
             return sharedConfig.Value.UpscaleTimeout;
 
         double scalingFactor = Math.Max(1.0, maxPixels / 1_000_000.0);
-        TimeSpan scaledTimeout = sharedConfig.Value.UpscaleTimeout * scalingFactor;
+        // Saturating, because maxPixels comes from a CBZ whose declared image sizes can be absurd (a
+        // decompression bomb): TimeSpan * double throws OverflowException once the product passes
+        // TimeSpan.MaxValue, and an OverflowException is neither a memory nor an IO failure, so it would
+        // be classified as a permanent per-page failure. Computing in ticks lets the product be capped
+        // before the cast, which turns "instant overflow" into "merely a very long timeout".
+        TimeSpan scaledTimeout = TimeSpan.FromTicks(
+            (long)
+                Math.Min(
+                    sharedConfig.Value.UpscaleTimeout.Ticks * scalingFactor,
+                    TimeSpan.MaxValue.Ticks
+                )
+        );
 
         logger.LogDebug(
             "Scaled upscale timeout for {CbzPath}: {BaseTimeout} × {ScalingFactor:F2} = {ScaledTimeout} (max image: {MaxPixels} px)",
@@ -805,6 +817,13 @@ public class MangaJaNaiUpscaler(
             await VerifyPackageHashes(package, cancellationToken);
             await WriteMarkerAsync(markerPath, package, cancellationToken);
             return false;
+        }
+        catch (OperationCanceledException)
+        {
+            // A cancelled verification is not a failed one. Reporting "re-download required" would
+            // swallow the cancellation and start a fresh multi-gigabyte download during shutdown —
+            // its sibling WriteMarkerAsync already lets it through, and so does the caller.
+            throw;
         }
         catch (Exception ex)
         {
@@ -959,6 +978,11 @@ public class MangaJaNaiUpscaler(
                 when (attempt < DownloadAttempts
                     && !cancellationToken.IsCancellationRequested
                     && ex is not OperationCanceledException
+                    // Verification failures and 4xx answers will repeat verbatim on the next attempt.
+                    // Retrying them restarts a 0.5-2 GB transfer (nothing resumes) only to end in the
+                    // same failure that was going to be reported immediately.
+                    && ex is not ModelDownloadRejectedException
+                    && !IsDeterministicHttpFailure(ex)
                 )
             {
                 TimeSpan delay = TimeSpan.FromSeconds(1 << attempt);
@@ -1006,7 +1030,7 @@ public class MangaJaNaiUpscaler(
                     && declared > MaxPackageBytes
                 )
                 {
-                    throw new Exception(
+                    throw new ModelDownloadRejectedException(
                         localizer[
                             "Error_PackageTooLarge",
                             package.ZipUrl,
@@ -1024,7 +1048,7 @@ public class MangaJaNaiUpscaler(
                     total += read;
                     if (total > MaxPackageBytes)
                     {
-                        throw new Exception(
+                        throw new ModelDownloadRejectedException(
                             localizer[
                                 "Error_PackageTooLarge",
                                 package.ZipUrl,
@@ -1045,7 +1069,7 @@ public class MangaJaNaiUpscaler(
                 string hashString = Convert.ToHexStringLower(hash);
                 if (hashString != package.ZipHash)
                 {
-                    throw new Exception(
+                    throw new ModelDownloadRejectedException(
                         localizer[
                             "Error_ZipHashMismatch",
                             package.ZipUrl,
@@ -1102,7 +1126,7 @@ public class MangaJaNaiUpscaler(
             string hashString = Convert.ToHexStringLower(hash);
             if (hashString != expectedHash)
             {
-                throw new Exception(
+                throw new ModelDownloadRejectedException(
                     localizer[
                         "Error_ModelHashMismatch",
                         ModelFileNames.Resolve(fileName, package.PrecisionSuffix),
@@ -1118,4 +1142,34 @@ public class MangaJaNaiUpscaler(
             package.ZipUrl
         );
     }
+
+    /// <summary>
+    /// True for a response the server will answer the same way next time: a missing, forbidden or
+    /// otherwise rejected package. A transport error or a 5xx is left to the retry loop, which is what
+    /// it exists for.
+    /// </summary>
+    private static bool IsDeterministicHttpFailure(Exception ex) =>
+        ex
+            is HttpRequestException
+            {
+                StatusCode: >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError
+            };
+}
+
+/// <summary>
+/// A download that was rejected on its own terms rather than failing: a package the server does not
+/// serve, a body larger than the declared cap, or content that does not match the pinned hash.
+/// <para>
+/// These repeat verbatim, so <see cref="MangaJaNaiUpscaler"/>'s retry loop lets them through instead
+/// of restarting a 0.5-2 GB transfer (nothing can be resumed) three more times to report the same
+/// failure. Everything else — a reset connection, a truncated body, a 5xx — is still retried.
+/// </para>
+/// </summary>
+public sealed class ModelDownloadRejectedException : Exception
+{
+    public ModelDownloadRejectedException(string message)
+        : base(message) { }
+
+    public ModelDownloadRejectedException(string message, Exception innerException)
+        : base(message, innerException) { }
 }

@@ -107,6 +107,14 @@ than being serialised, and the eviction is made safe by retiring the session and
 once every scope has drained (`OnnxSessionFactory.RetireLocked` / `DrainRetired`) — and it is the
 deliberate price of keeping `C` to a single model.
 
+The detector's own footprint is not covered by the tile budget: it runs one inference over the whole
+resized page (see the detector section of
+[the migration notes](UPGRADE_NOTES_ONNX_MIGRATION.md#splits-and-detection)), and its activations
+grow with that height — measured at roughly 1.5 GiB for a 4000-row page. Ordinary pages resize to
+well under that; very tall strips can exhaust device memory during detection, and the chapter is
+retried and then failed. Windowing the export is not an option: its calibration is a function of the
+whole input sequence, so chunked inference returns different results.
+
 ---
 
 ## 2. How the split is derived
@@ -591,7 +599,7 @@ are measurement tools, not part of the app:
 
 To force a re-measurement in the app, set `Ingest_Upscaler__RecalibrateDeviceMemory=true` for one
 upscale and delete `<models>/device-memory-profile.json` (or just leave it — the fingerprint
-decides). Use `ulimit -v` around the Python step — making every intermediate a graph output is
+decides). Use `ulimit -v` around that Python script — making every intermediate a graph output is
 convenient for shape extraction but allocates tens of gigabytes on the big transformer models.
 
 To re-derive after adding a model: run `shape_peaks.py <model.onnx> 64,128`, then

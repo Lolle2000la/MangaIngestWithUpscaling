@@ -55,6 +55,13 @@ public class ByteSizeTests
     {
         Assert.False(ByteSize.TryParse("99999 EiB", out _));
         Assert.False(ByteSize.TryParse("99999999999999999999", out _));
+
+        // Representable as a decimal on its own, but not once multiplied by EiB: this is the
+        // multiplication's own overflow guard, which the two cases above never reach (the first is
+        // rejected by the long range check, the second by the decimal parse). Without the guard the
+        // overflow escapes TryParse as an exception instead of "not a size".
+        Assert.False(ByteSize.TryParse("10000000000000000000000000000 EiB", out _));
+        Assert.Throws<FormatException>(() => ByteSize.Parse("10000000000000000000000000000 EiB"));
     }
 
     [Fact]
@@ -237,14 +244,27 @@ public class ByteSizeTests
     [Fact]
     public void UpscalerConfig_EnvironmentVariableStyleKeys_Bind()
     {
-        // The container deployment path: Ingest_Upscaler__<Property>
-        IConfiguration configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(
-                new Dictionary<string, string?> { ["Ingest:Upscaler:MemoryBudgetBytes"] = "12 GiB" }
-            )
-            .Build();
-        UpscalerConfig config = configuration.GetSection("Ingest:Upscaler").Get<UpscalerConfig>()!;
+        // The container deployment path, mirroring how both hosts register it: Program.cs calls
+        // AddEnvironmentVariables("Ingest_"), so the prefix is *stripped* and `__` becomes the section
+        // separator — Ingest_Upscaler__MemoryBudgetBytes lands on Upscaler:MemoryBudgetBytes. The
+        // in-memory key this test used before ("Ingest:Upscaler:MemoryBudgetBytes") binds a section the
+        // application never reads, and exercises neither the prefix nor the double-underscore
+        // translation the containers depend on.
+        const string name = "Ingest_Upscaler__MemoryBudgetBytes";
+        string? previous = Environment.GetEnvironmentVariable(name);
+        Environment.SetEnvironmentVariable(name, "12 GiB");
+        try
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddEnvironmentVariables("Ingest_")
+                .Build();
+            UpscalerConfig config = configuration.GetSection("Upscaler").Get<UpscalerConfig>()!;
 
-        Assert.Equal(12884901888L, config.ResolvedMemoryBudgetBytes);
+            Assert.Equal(12884901888L, config.ResolvedMemoryBudgetBytes);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, previous);
+        }
     }
 }

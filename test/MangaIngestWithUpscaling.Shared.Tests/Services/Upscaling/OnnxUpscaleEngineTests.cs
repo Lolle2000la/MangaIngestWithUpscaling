@@ -183,6 +183,36 @@ public class OnnxUpscaleEngineTests : IDisposable
         );
     }
 
+    [Theory]
+    [InlineData("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx")]
+    [InlineData("4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx")]
+    [InlineData("4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx")]
+    public void SelectModelCandidates_OrdersTheFp32CopyFirstWhenFp16IsOff(string fp16Name)
+    {
+        // UseFp16 = false has to reach inference, not just the download step: the engine runs whichever
+        // file it picks here, and EngineIdentity records the same precision. Preferring the fp16 copy
+        // anyway would run fp16 while the identity said fp32 — contradicting the operator's setting and
+        // letting two workers that agree on the identity disagree on the pixels.
+        string fp32Name = ModelFileNames.Resolve(fp16Name, ModelFileNames.Fp32Suffix);
+        File.WriteAllText(Path.Combine(_tempDir, fp16Name), "dummy");
+        File.WriteAllText(Path.Combine(_tempDir, fp32Name), "dummy");
+
+        IReadOnlyList<string> candidates = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: false,
+            height: 1600,
+            scale: 4,
+            architecturePreference: null,
+            useFp16: false
+        );
+
+        Assert.True(
+            candidates.ToList().IndexOf(Path.Combine(_tempDir, fp32Name))
+                < candidates.ToList().IndexOf(Path.Combine(_tempDir, fp16Name)),
+            "the fp32 copy should be preferred when fp16 is switched off"
+        );
+    }
+
     [Fact]
     public void SelectModel_ReturnsTheExpectedTopPreferenceForEachImageKind()
     {

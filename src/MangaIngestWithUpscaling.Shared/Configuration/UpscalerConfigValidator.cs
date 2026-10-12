@@ -44,6 +44,17 @@ public static class UpscalerConfigSizeValidation
         {
             yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a finite fraction such as 0.97, or unset for automatic";
         }
+
+        // TileSize > 0 is a manual maximum that bypasses PlanTileSplit, so it is the one tile size the
+        // blender's own requirement never reaches: a tile must be at least twice the padding to carry
+        // the blend region (see TileBlender.RequireBlendRegion). The floor is twice that again because
+        // TileSplit.For distributes tiles evenly — a page only slightly wider than the bound halves its
+        // tiles — so a bound of 2 * DefaultTilePad still shrinks below the region. 0 (automatic) and
+        // -1 (single pass) are unaffected: the planner keeps its own MinimumTileSize floor.
+        if (config.TileSize > 0 && config.TileSize < 4 * OnnxTiler.DefaultTilePad)
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.TileSize)} = {config.TileSize}: a manual tile size below {4 * OnnxTiler.DefaultTilePad} px cannot be blended (the blend region alone is {2 * OnnxTiler.DefaultTilePad} px and the tile grid shrinks below the bound on small pages); use 0 for automatic, -1 for a single pass, or at least {4 * OnnxTiler.DefaultTilePad}";
+        }
     }
 }
 

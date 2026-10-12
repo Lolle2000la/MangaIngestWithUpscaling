@@ -309,6 +309,20 @@ public class UpscalerConfigValidatorTests
     }
 
     [Fact]
+    public void RejectsAManualTileSizeTooSmallToBlend()
+    {
+        // TileSize > 0 bypasses PlanTileSplit, so it is the one tile size the planner's MinimumTileSize
+        // floor never sees. Below twice the padding the blend region does not fit in a tile at all.
+        Assert.NotEmpty(new UpscalerConfig { TileSize = 16 }.FindInvalidSizeSettings());
+        Assert.NotEmpty(new UpscalerConfig { TileSize = 32 }.FindInvalidSizeSettings());
+        Assert.Empty(new UpscalerConfig { TileSize = 64 }.FindInvalidSizeSettings());
+        Assert.Empty(new UpscalerConfig { TileSize = 1024 }.FindInvalidSizeSettings());
+        // 0 is automatic and -1 is "single pass"; neither reaches the blender.
+        Assert.Empty(new UpscalerConfig { TileSize = 0 }.FindInvalidSizeSettings());
+        Assert.Empty(new UpscalerConfig { TileSize = -1 }.FindInvalidSizeSettings());
+    }
+
+    [Fact]
     public void RejectsANonFiniteVramUtilizationFraction()
     {
         // The same reason on the VRAM side: NaN survives CalculateVramBudget's clamp instead of being

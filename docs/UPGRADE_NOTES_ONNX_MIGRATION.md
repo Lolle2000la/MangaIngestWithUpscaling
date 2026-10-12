@@ -66,6 +66,23 @@ configuration surface. Nothing here requires a data migration; the database sche
   the chapter shows as having pending splits until they are re-applied — the findings come from a
   different algorithm, so they are meant to be reviewed, not inherited. Chapters that need no split
   are re-marked without any action.
+* The detector now runs **one inference over the whole resized page** (width 768, height scaled to
+  keep the aspect ratio). The upstream reference (`manga-vert-split-nn`'s `detect_breaks.py`) instead
+  windowed the inference — chunks of 2048 rows with 512 rows of overlap — because its PyTorch pipeline
+  averaged raw logits and only then applied the sigmoid, the smoothing and the peak search. The ONNX
+  export this app uses has those three steps **inside the graph** (`export_onnx.py` wraps
+  `predict(apply_calibration=True)`), which makes its output a function of the whole sequence rather
+  than of a row's neighbourhood: measured against the shipped model, identical rows give different
+  probabilities (max difference 0.94) in a 2048-row and a 4000-row input, with peak counts of 3 and 1.
+  Windowing that graph is therefore *not* equivalent to a single pass, and single pass is what keeps
+  detection faithful to the calibrated model.
+* The practical consequence is memory: the detector's activations grow with the resized height —
+  measured at roughly **1.5 GiB for a 4000-row page** (against ~100 MiB for one 3072-row window).
+  Ordinary pages (a manga page at 2:1 or 3:2 aspect resizes to well under 2000 rows) are far from
+  that. Very tall pages — long webtoon strips — can exhaust device memory during detection; the
+  chapter is then retried and, if the failure repeats, fails with a memory error. Recovering that
+  case properly needs a logits-only export plus the smoothing and peak search reimplemented in C#;
+  it is not something that can be fixed by chunking this graph.
 
 ## Models
 

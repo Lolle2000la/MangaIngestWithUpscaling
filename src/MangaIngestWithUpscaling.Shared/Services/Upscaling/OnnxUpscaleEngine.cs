@@ -159,7 +159,14 @@ public class OnnxUpscaleEngine(
                     isGrayscale,
                     origHeight,
                     scale,
-                    ModelArchitecturePreference.Resolve(config.Value.PreferredModelArchitectures)
+                    ModelArchitecturePreference.Resolve(config.Value.PreferredModelArchitectures),
+                    // The precision the operator asked for (or the backend's own answer when the
+                    // setting is unset). Which copy runs is decided here, while EngineIdentity records
+                    // that same precision: with fp16 switched off but the fp16 copy ranked first
+                    // anyway, the engine would run fp16 while the identity said fp32 — contradicting
+                    // the setting and letting two workers that agree on the identity disagree on the
+                    // pixels.
+                    config.Value.ResolveUseFp16(sessionFactory.GetEffectiveBackend())
                 );
 
                 using var flattened = vipsImage.HasAlpha() ? vipsImage.Flatten() : vipsImage.Copy();
@@ -718,7 +725,8 @@ public class OnnxUpscaleEngine(
         bool isGrayscale,
         int height,
         int scale,
-        IReadOnlyList<ModelArchitecture>? architecturePreference = null
+        IReadOnlyList<ModelArchitecture>? architecturePreference = null,
+        bool useFp16 = true
     )
     {
         if (!Directory.Exists(modelsDirectory))
@@ -739,6 +747,11 @@ public class OnnxUpscaleEngine(
 
         string scalePrefix = $"{scale}x_";
         var candidates = new List<string>();
+
+        // Which of two precision copies of the same architecture leads. The engine runs whichever file
+        // it picks, so this is where UseFp16 is honoured for inference (the download step only decides
+        // which copies exist).
+        bool preferFp32 = !useFp16;
 
         if (isGrayscale)
         {
@@ -798,7 +811,7 @@ public class OnnxUpscaleEngine(
                     foreach (
                         var file in versionCandidates
                             .Where(f => OnnxTiler.DetectArchitecture(f) == arch)
-                            .OrderBy(ArchRank)
+                            .OrderBy(f => ArchRank(f, preferFp32))
                     )
                     {
                         AddCandidate(candidates, file);
@@ -830,12 +843,15 @@ public class OnnxUpscaleEngine(
         !Path.GetFileName(path).Contains("bf16", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Order of two copies of the same architecture: the fp32 fallback comes last, because it is
-    /// the larger file and is only needed where fp16 does not run. Within one precision, a file
-    /// WebGPU cannot run natively comes after one it can — that is what the bf16 models need.
+    /// Order of two copies of the same architecture. The copy matching the requested precision leads:
+    /// with fp16 in use the fp32 copy comes last (it is the larger file, only needed where fp16 does
+    /// not run), and with fp16 switched off the fp32 copy comes first instead — the operator asked for
+    /// it, and <see cref="EngineIdentity"/> records that precision, so quietly running fp16 would
+    /// contradict both. Within one precision, a file WebGPU cannot run natively comes after one it can,
+    /// which is what the bf16 models need.
     /// </summary>
-    private static int ArchRank(string path) =>
-        (ModelFileNames.IsFp32(path) ? 2 : 0) + (NotBf16(path) ? 0 : 1);
+    private static int ArchRank(string path, bool preferFp32) =>
+        (ModelFileNames.IsFp32(path) == preferFp32 ? 0 : 2) + (NotBf16(path) ? 0 : 1);
 
     private static void AddCandidate(List<string> candidates, string file)
     {
@@ -850,11 +866,17 @@ public class OnnxUpscaleEngine(
         bool isGrayscale,
         int height,
         int scale,
-        IReadOnlyList<ModelArchitecture>? architecturePreference = null
+        IReadOnlyList<ModelArchitecture>? architecturePreference = null,
+        bool useFp16 = true
     ) =>
-        SelectModelCandidates(modelsDirectory, isGrayscale, height, scale, architecturePreference)[
-            0
-        ];
+        SelectModelCandidates(
+            modelsDirectory,
+            isGrayscale,
+            height,
+            scale,
+            architecturePreference,
+            useFp16
+        )[0];
 
     private static void AddMatch(
         List<string> candidates,

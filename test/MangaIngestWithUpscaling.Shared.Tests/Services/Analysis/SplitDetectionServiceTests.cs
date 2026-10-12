@@ -162,6 +162,56 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_TallPage_IsOneInferenceOverTheWholeResizedHeight()
+    {
+        // The upstream reference (manga-vert-split-nn's detect_breaks.py) windows this inference:
+        // chunk_size 2048, overlap 512, accumulating and averaging the *logits* before the sigmoid,
+        // the smoothing and the peak detection run. This export cannot be windowed that way, because
+        // it bakes those three steps into the graph (export_onnx.py wraps predict(apply_calibration:
+        // True)), and its output is a function of the whole sequence: measured against the shipped
+        // model, the same rows give different probabilities — max |delta| 0.94 — in a 2048-row and a
+        // 4000-row input, and peak counts of 3 vs 1. So the detector deliberately runs one inference
+        // over the whole resized page, and this pins it: a chunked implementation hands back a
+        // chunk-sized output, which EnsureDetectorOutputGeometry rejects against the resized height.
+        string modelsDir = Path.Combine(_root, "tall_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        // 768 wide, so the resize is a no-op and the resized height is the source height, several
+        // times the reference's chunk size.
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("tall.png", fill: 200, height: 3000),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal(3000, result.OriginalHeight);
+        Assert.Equal(768, result.OriginalWidth);
+
+        // Every row above the margin carries the synthetic peak, so the count also proves the whole
+        // height was seen: a single 3072-row chunk returning early would have produced a different
+        // count, and a shorter output would have failed the geometry check instead.
+        Assert.Equal(3000 - 2 * 100, result.Count);
+        Assert.Equal(2999 - 100, result.Splits[^1].YOriginal);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task DetectSplitsAsync_DisposedFactory_IsRethrownNotReportedAsAPageError()
     {
         // Shutdown races a page: the factory is torn down while detection runs. Reported as a per-page
@@ -438,13 +488,15 @@ public class SplitDetectionServiceTests : IDisposable
     /// factory, so a test that needs the operation to get past the pre-flight checks has to hand it
     /// a real image, not a few arbitrary bytes.
     /// </summary>
-    private string WriteDecodableImage(string fileName, byte fill = 128)
+    private string WriteDecodableImage(string fileName, byte fill = 128, int height = 4)
     {
-        // 768 wide so the detector's fixed-width resize is a no-op, and short so the packed tensor
-        // stays small. The content is irrelevant except where a test makes it matter through the
-        // model: a black page drives the row mean to 0, which is how the non-finite test reaches 0/0.
+        // 768 wide so the detector's fixed-width resize is a no-op, and normally short so the packed
+        // tensor stays small. A taller image is what makes the resize a no-op in the other direction
+        // too: at width 768 the resized height equals the source height, which is how the tall-page
+        // test reaches a resized height of several thousand rows. The content is irrelevant except
+        // where a test makes it matter through the model: a black page drives the row mean to 0, which
+        // is how the non-finite test reaches 0/0.
         const int width = 768;
-        const int height = 4;
         var pixels = new byte[width * height * 3];
         Array.Fill(pixels, fill);
 

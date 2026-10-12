@@ -100,6 +100,8 @@ public sealed class TileBlender
                     o = new TileOverlap(_lastEndOverlap, o.End);
                 }
 
+                RequireBlendRegion(currentTileWidth, o, "wide");
+
                 int nonBlendWidth = currentTileWidth - o.Start * 2;
                 if (nonBlendWidth > 0)
                 {
@@ -180,6 +182,8 @@ public sealed class TileBlender
                     o = new TileOverlap(_lastEndOverlap, o.End);
                 }
 
+                RequireBlendRegion(currentTileHeight, o, "tall");
+
                 int nonBlendHeight = currentTileHeight - o.Start * 2;
                 if (nonBlendHeight > 0)
                 {
@@ -226,6 +230,39 @@ public sealed class TileBlender
     public byte[] GetResult()
     {
         return _result;
+    }
+
+    /// <summary>
+    /// Rejects a tile too narrow (horizontal) or too short (vertical) to carry the blend region.
+    /// <para>
+    /// The blend reads <c>o.Start * 2</c> columns (or rows) from the tile, and the copy that follows
+    /// starts at that same offset, so a tile smaller than the region has no valid reading: the walk
+    /// runs past the end of a tile row — blending each row with the pixel after it — and past the end
+    /// of the array altogether on the last row. Nothing guaranteed the bound: a manual
+    /// <c>TileSize</c> reaches the blender directly, and <see cref="TileSplit.For"/> distributes tiles
+    /// evenly, so even a bound above the padding can shrink a page's derived tiles below it.
+    /// </para>
+    /// </summary>
+    /// <param name="tileExtent">The tile's width for a horizontal blender, its height for a vertical one.</param>
+    /// <param name="overlap">The overlap actually in force, which may have been narrowed above.</param>
+    /// <param name="dimension">"wide" or "tall", for the message.</param>
+    private static void RequireBlendRegion(int tileExtent, TileOverlap overlap, string dimension)
+    {
+        int required = overlap.Start * 2;
+        if (tileExtent >= required)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"The tile is {tileExtent} px {dimension} but its blend region is {required} px "
+                + $"({nameof(TileOverlap.Start)} = {overlap.Start} px per side), so the blend would "
+                + "read past the end of the tile. A tile narrower than the blend region cannot be "
+                + "blended in this direction. Raise TileSize — it has to stay at least "
+                + $"{4 * OnnxTiler.DefaultTilePad} px, twice the {2 * OnnxTiler.DefaultTilePad} px the "
+                + $"blend needs (TileSplit.For distributes tiles evenly, so it can shrink a page's "
+                + $"tiles below the bound) — or leave it at 0 and let the planner size the grid."
+        );
     }
 
     public static float[] GetBlendWeights(int blendSize)
@@ -838,7 +875,11 @@ public static class OnnxTiler
         }
 
         double measuredScale = profile.ScaleFor(modelNameOrPath, modelSizeBytes);
-        if (measuredScale is > 0 and < 12)
+        // The same range the calibrator refuses to write (DeviceMemoryCalibrator): a profile value
+        // outside it is corrupt. The old read bound (> 0 and < 12) accepted a value a hundred times too
+        // small, which shrinks the predicted activation and oversizes the tile, and rejected exactly
+        // 12.0, which the calibrator is willing to write.
+        if (measuredScale is >= 0.2 and <= 12.0)
         {
             activationScale = measuredScale;
         }

@@ -5,6 +5,8 @@ using System.Text;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.EP.WebGpu;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
@@ -104,6 +106,8 @@ public static class EngineIdentity
             .Append(engineVersion ?? CurrentEngineVersion)
             .Append('|')
             .Append(BuildVersion())
+            .Append('|')
+            .Append(RuntimeVersion())
             .Append('|');
         AppendDirectoryFingerprint(material, config.ResolvedModelsDirectory);
 
@@ -247,4 +251,27 @@ public static class EngineIdentity
             ?.InformationalVersion
         ?? typeof(EngineIdentity).Assembly.GetName().Version?.ToString()
         ?? "unknown";
+
+    /// <summary>
+    /// The ONNX Runtime the weights are actually executed by: the runtime assembly and the WebGPU
+    /// provider library that ships beside it.
+    /// <para>
+    /// <see cref="BuildVersion"/> is this repository's own version and does not move when the runtime
+    /// does — <c>OnnxRuntimeVersion</c> and <c>OnnxRuntimeFlavor</c> are build properties that swap the
+    /// bundled native library while leaving <c>InformationalVersion</c> untouched. Two workers on the
+    /// same backend but different runtimes can still turn the same graph into different pixels (kernel
+    /// selection and fp16 handling both differ between builds), which is the same seam the backend and
+    /// the weight fingerprint are hashed for.
+    /// </para>
+    /// <para>
+    /// Both versions come from compile-time type references rather than from the list of loaded
+    /// assemblies, whose contents depend on which provider has been touched already and would give two
+    /// equivalent workers different identities.
+    /// </para>
+    /// </summary>
+    private static string RuntimeVersion() =>
+        $"{AssemblyVersion(typeof(InferenceSession))}+{AssemblyVersion(typeof(WebGpuEp))}";
+
+    private static string AssemblyVersion(Type type) =>
+        type.Assembly.GetName().Version?.ToString() ?? "unknown";
 }

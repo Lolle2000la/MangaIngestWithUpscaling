@@ -11,6 +11,10 @@ on:
 
 jobs:
   generate-tag:
+    # workflow_run fires for every completed run, including a failed one, so without this guard the
+    # development image would be published from a red build. workflow_dispatch has no workflow_run
+    # payload at all, which is why the manual case is allowed through explicitly.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.settag.outputs.tag }}

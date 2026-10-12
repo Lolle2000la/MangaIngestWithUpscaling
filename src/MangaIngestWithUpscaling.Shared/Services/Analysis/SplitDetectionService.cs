@@ -163,7 +163,13 @@ public class SplitDetectionService(
     /// </para>
     /// </summary>
     private static bool IsRetryableDetectionFailure(Exception ex) =>
-        OnnxTiler.IsMemoryException(ex) || ex is IOException || ex is NonFiniteModelOutputException;
+        OnnxTiler.IsMemoryException(ex)
+        || ex is IOException
+        // Aligned with the upscaler's classifiers, which walk the chain for UnauthorizedAccessException:
+        // a mount that is briefly unavailable during detection should not permanently fail the chapter
+        // when the same condition during upscaling is treated as retryable.
+        || ex is UnauthorizedAccessException
+        || ex is NonFiniteModelOutputException;
 
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
