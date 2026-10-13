@@ -367,4 +367,80 @@ public class UpscalerConfigValidatorTests
 
         Assert.Empty(config.FindInvalidPreprocessingSettings());
     }
+
+    [Fact]
+    public void RejectsAnOutOfRangeConversionQualityEvenWhileSmartDownscaleIsOff()
+    {
+        // libvips clamps or ignores an out-of-range q rather than erroring, so a typo'd quality
+        // is silently applied as something other than what was configured. The rules apply
+        // regardless of smart downscaling, so the check sits outside that feature's gate.
+        var config = new UpscalerConfig
+        {
+            EnableSmartDownscale = false,
+            ImageFormatConversionRules =
+            [
+                new ImageFormatConversionRule
+                {
+                    FromFormat = ".png",
+                    ToFormat = ".webp",
+                    Quality = 101,
+                },
+            ],
+        };
+
+        List<string> invalid = config.FindInvalidPreprocessingSettings().ToList();
+
+        Assert.Single(invalid);
+        Assert.Contains("Quality = 101", invalid[0], StringComparison.Ordinal);
+        Assert.Contains("expected null or 1-100", invalid[0], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(100)]
+    public void AcceptsConversionQualitiesInRange(int? quality) =>
+        Assert.Empty(
+            new UpscalerConfig
+            {
+                ImageFormatConversionRules =
+                [
+                    new ImageFormatConversionRule
+                    {
+                        FromFormat = ".png",
+                        ToFormat = ".webp",
+                        Quality = quality,
+                    },
+                ],
+            }.FindInvalidPreprocessingSettings()
+        );
+
+    [Fact]
+    public void RejectsAnUndefinedNumericBackend()
+    {
+        // A numeric value binds to an undefined enum member without an error, and the session
+        // factory then disagrees with itself: the identity, the calibration fingerprint and the
+        // logs say CPU while the Auto discovery attaches a GPU. Set by name or fail the boot.
+        var config = new UpscalerConfig { PreferredGpuBackend = (GpuBackend)999 };
+
+        List<string> invalid = config.FindInvalidGpuBackendSettings().ToList();
+
+        Assert.Single(invalid);
+        Assert.Contains("not a defined backend", invalid[0], StringComparison.Ordinal);
+        Assert.Contains("by name", invalid[0], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(GpuBackend.Auto)]
+    [InlineData(GpuBackend.CPU)]
+    [InlineData(GpuBackend.WebGPU)]
+    [InlineData(GpuBackend.CUDA)]
+#pragma warning disable CS0618 // The obsolete aliases stay valid settings; they map forward.
+    [InlineData(GpuBackend.ROCm)]
+    [InlineData(GpuBackend.XPU)]
+#pragma warning restore CS0618
+    public void AcceptsEveryDefinedBackend(GpuBackend backend) =>
+        Assert.Empty(
+            new UpscalerConfig { PreferredGpuBackend = backend }.FindInvalidGpuBackendSettings()
+        );
 }

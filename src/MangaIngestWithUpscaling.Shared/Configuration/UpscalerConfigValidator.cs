@@ -86,9 +86,27 @@ public sealed class UpscalerConfigValidator : IValidateOptions<UpscalerConfig>
         List<string> invalid = options.FindInvalidSizeSettings().ToList();
         invalid.AddRange(options.FindInvalidPreprocessingSettings());
         invalid.AddRange(options.FindInvalidArchitecturePreference());
+        invalid.AddRange(options.FindInvalidGpuBackendSettings());
         return invalid.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(invalid);
+    }
+}
+
+/// <summary>
+/// The GPU-backend half of <see cref="UpscalerConfigValidator"/>. A numeric value binds to an
+/// undefined enum member without an error, and the session factory then disagrees with itself
+/// about what it means: the identity, the calibration fingerprint and the logs report CPU while
+/// the Auto discovery attaches a GPU — so an undefined value fails the boot here instead.
+/// </summary>
+public static class UpscalerConfigBackendValidation
+{
+    public static IEnumerable<string> FindInvalidGpuBackendSettings(this UpscalerConfig config)
+    {
+        if (!Enum.IsDefined(config.PreferredGpuBackend))
+        {
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.PreferredGpuBackend)} = {(int)config.PreferredGpuBackend}: not a defined backend. Set it by name — Auto, CPU, CUDA, DirectML, OpenVINO, MIGraphX or WebGPU — not by number";
+        }
     }
 }
 
@@ -133,6 +151,17 @@ public static class UpscalerConfigPreprocessingValidation
         if (config.MaxDimensionBeforeUpscaling is < 0)
         {
             yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.MaxDimensionBeforeUpscaling)} = {config.MaxDimensionBeforeUpscaling}: expected null, 0 or a positive maximum dimension";
+        }
+
+        // Checked before the smart-downscale gate: the rules apply regardless of it. libvips
+        // clamps or ignores an out-of-range q rather than erroring, so without this a typo'd
+        // quality is silently applied as something other than what was configured.
+        foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules)
+        {
+            if (rule.Quality is not null and (< 1 or > 100))
+            {
+                yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.ImageFormatConversionRules)}[{rule.FromFormat} -> {rule.ToFormat}].{nameof(rule.Quality)} = {rule.Quality}: expected null or 1-100";
+            }
         }
 
         if (!config.EnableSmartDownscale)

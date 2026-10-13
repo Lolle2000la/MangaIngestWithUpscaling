@@ -53,15 +53,17 @@ public class ByteSizeTests
     [Fact]
     public void Parse_RejectsOutOfRangeValues()
     {
-        Assert.False(ByteSize.TryParse("99999 EiB", out _));
+        Assert.False(ByteSize.TryParse("9223372036854775808 PiB", out _));
         Assert.False(ByteSize.TryParse("99999999999999999999", out _));
 
-        // Representable as a decimal on its own, but not once multiplied by EiB: this is the
-        // multiplication's own overflow guard, which the two cases above never reach (the first is
-        // rejected by the long range check, the second by the decimal parse). Without the guard the
-        // overflow escapes TryParse as an exception instead of "not a size".
-        Assert.False(ByteSize.TryParse("10000000000000000000000000000 EiB", out _));
-        Assert.Throws<FormatException>(() => ByteSize.Parse("10000000000000000000000000000 EiB"));
+        // Representable as a decimal on its own, but not once multiplied by the largest supported
+        // unit: this is the multiplication's own overflow guard, which the two cases above never
+        // reach (the first is rejected by the long range check, the second by the decimal parse).
+        // Without the guard the overflow escapes TryParse as an exception instead of "not a size".
+        // Every case has to use a supported unit — "EiB" is not one, so a case written with it is
+        // rejected at the unit lookup and never reaches the guard it claims to test.
+        Assert.False(ByteSize.TryParse("100000000000000 PiB", out _));
+        Assert.Throws<FormatException>(() => ByteSize.Parse("100000000000000 PiB"));
     }
 
     [Fact]

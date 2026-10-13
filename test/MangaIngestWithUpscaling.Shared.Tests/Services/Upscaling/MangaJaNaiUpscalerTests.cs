@@ -33,6 +33,14 @@ public class MangaJaNaiUpscalerTests : IDisposable
         _mockSessionFactory = Substitute.For<IOnnxSessionFactory>();
         _mockLogger = Substitute.For<ILogger<MangaJaNaiUpscaler>>();
         _mockFileSystem = Substitute.For<IFileSystem>();
+        // Creating directories is forwarded to the real file system: the download test relies on
+        // the production code's own CreateDirectory call for its fresh models directory (the point
+        // is that nothing is pre-installed), and a no-op substitute left that directory missing,
+        // so the download failed at its first File.Create. The other substitutes stay no-ops —
+        // no test depends on Move or ApplyPermissions doing real work.
+        _mockFileSystem
+            .When(fs => fs.CreateDirectory(Arg.Any<string>()))
+            .Do(call => Directory.CreateDirectory((string)call.Args()[0]));
         _mockMetadataHandling = Substitute.For<IMetadataHandlingService>();
         _mockJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         _mockImageResize = Substitute.For<IImageResizeService>();

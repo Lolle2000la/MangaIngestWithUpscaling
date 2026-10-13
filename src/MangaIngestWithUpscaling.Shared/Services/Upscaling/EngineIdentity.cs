@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using MangaIngestWithUpscaling.Shared.Configuration;
@@ -15,6 +16,13 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// The server records the first identity a chapter is spooled with and refuses pages produced by a
 /// different engine, so a chapter cannot be assembled from pages upscaled by different models, engine
 /// code or backend (which would leave a visible seam). The server never interprets the value.
+/// <para>
+/// The identity hashes the tile plan's stable configuration (a manual TileSize, an explicit
+/// MemoryBudgetBytes) but not its measured input: the free VRAM the default plan sizes the grid from
+/// varies between machines and moments, so two devices of the same backend can blend different
+/// seams under one identity while the plan is left on defaults. Pinning TileSize makes a spool
+/// shareable across them.
+/// </para>
 /// </summary>
 public static class EngineIdentity
 {
@@ -99,6 +107,24 @@ public static class EngineIdentity
                     ',',
                     ModelArchitecturePreference.Resolve(config.PreferredModelArchitectures)
                 )
+            )
+            .Append('|')
+            // The configured tile plan, because it changes the output bytes: a manual TileSize
+            // decides the grid, overlapping tiles are half-sine blended, so two workers with the
+            // same models but different tile plans blend different seams into the same page —
+            // the same seam the architecture order above is hashed for. The explicit
+            // MemoryBudgetBytes is hashed for the same reason when it is set. The *measured*
+            // free-VRAM budget deliberately is not: it varies between machines and moments, so
+            // hashing it would make two identical workers discard each other's spool on every
+            // measurement. With TileSize at 0 and no explicit budget the grid is therefore
+            // machine-dependent — a documented limitation of that default, and a reason to pin
+            // TileSize when a spool has to be shareable.
+            .Append(config.TileSize)
+            .Append('|')
+            .Append(
+                config.ResolvedMemoryBudgetBytes > 0
+                    ? config.ResolvedMemoryBudgetBytes.ToString(CultureInfo.InvariantCulture)
+                    : "auto"
             )
             .Append('|')
             // The engine code version: changes to engine execution code can be bumped explicitly
@@ -253,15 +279,19 @@ public static class EngineIdentity
         ?? "unknown";
 
     /// <summary>
-    /// The ONNX Runtime the weights are actually executed by: the runtime assembly and the WebGPU
-    /// provider library that ships beside it.
+    /// The ONNX Runtime the weights are actually executed by: the runtime assembly, the WebGPU
+    /// provider assembly that ships beside it, and a content fingerprint of the deployed native
+    /// runtime library.
     /// <para>
     /// <see cref="BuildVersion"/> is this repository's own version and does not move when the runtime
     /// does — <c>OnnxRuntimeVersion</c> and <c>OnnxRuntimeFlavor</c> are build properties that swap the
-    /// bundled native library while leaving <c>InformationalVersion</c> untouched. Two workers on the
-    /// same backend but different runtimes can still turn the same graph into different pixels (kernel
-    /// selection and fp16 handling both differ between builds), which is the same seam the backend and
-    /// the weight fingerprint are hashed for.
+    /// bundled native library while leaving <c>InformationalVersion</c> untouched. The managed
+    /// assemblies' versions do not distinguish the flavors either: the DirectML, CUDA and CPU
+    /// flavors carry the same managed assembly at the same version and differ only in the native
+    /// library, which is why the native fingerprint is part of this. Two workers on the same backend
+    /// but different runtimes can still turn the same graph into different pixels (kernel selection
+    /// and fp16 handling both differ between builds), which is the same seam the backend and the
+    /// weight fingerprint are hashed for.
     /// </para>
     /// <para>
     /// Both versions come from compile-time type references rather than from the list of loaded
@@ -269,8 +299,90 @@ public static class EngineIdentity
     /// equivalent workers different identities.
     /// </para>
     /// </summary>
-    private static string RuntimeVersion() =>
-        $"{AssemblyVersion(typeof(InferenceSession))}+{AssemblyVersion(typeof(WebGpuEp))}";
+    internal static string RuntimeVersion() =>
+        $"{AssemblyVersion(typeof(InferenceSession))}+{AssemblyVersion(typeof(WebGpuEp))}+{NativeRuntimeFingerprint()}";
+
+    /// <summary>
+    /// A fingerprint of the native ONNX Runtime library deployed beside the managed assembly — the
+    /// file the build's <c>OnnxRuntimeFlavor</c> swaps. Length plus the sampled content hash, like
+    /// the models fingerprint: cheap and stable across workers with the same deployment.
+    /// <para>
+    /// "missing" rather than an error when no candidate file is found: the library may sit somewhere
+    /// the file system does not show it from (an embedded deployment), and an identity computation
+    /// must not throw over it. An unreadable file still throws — the identity provider caches only
+    /// successful computations, so a transient ACL error is retried rather than baked in.
+    /// </para>
+    /// </summary>
+    private static string NativeRuntimeFingerprint()
+    {
+        string? candidate = null;
+        try
+        {
+            candidate = NativeRuntimeLibraryCandidates().FirstOrDefault(File.Exists);
+        }
+        catch
+        {
+            // Probing errors are not identity-relevant: same "missing" treatment.
+        }
+
+        if (candidate is null)
+        {
+            return "missing";
+        }
+
+        var material = new StringBuilder();
+        material.Append(Path.GetFileName(candidate)).Append(':');
+        AppendFilePrefixHash(material, candidate);
+        return material.ToString();
+    }
+
+    /// <summary>Where a deployment puts the native ONNX Runtime library, in probing order.</summary>
+    private static IEnumerable<string> NativeRuntimeLibraryCandidates()
+    {
+        string assemblyLocation = typeof(InferenceSession).Assembly.Location;
+        string baseDir =
+            Path.GetDirectoryName(
+                string.IsNullOrEmpty(assemblyLocation) ? AppContext.BaseDirectory : assemblyLocation
+            ) ?? AppContext.BaseDirectory;
+        string rid = RuntimeInformation.RuntimeIdentifier;
+
+        string os =
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win"
+            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx"
+            : "linux";
+        string arch = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            _ => "x86",
+        };
+
+        // The RID folders a deployment actually carries, in the order the runtime's RID graph
+        // resolves them. RuntimeIdentifier can itself be distro-specific — arch-x64 on Arch,
+        // alpine-x64 on Alpine — while the packages deploy the portable os-arch folder (and a
+        // musl host resolves through linux-musl-arch), so probing only the exact RID misses the
+        // file on exactly those hosts.
+        List<string> rids = [rid, $"{os}-{arch}"];
+        if (os == "linux")
+        {
+            rids.Insert(1, $"linux-musl-{arch}");
+        }
+
+        string[] names =
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ["onnxruntime.dll"]
+            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                ? ["libonnxruntime.dylib", "libonnxruntime.1.dylib"]
+            : ["libonnxruntime.so", "libonnxruntime.so.1"];
+
+        foreach (string name in names)
+        {
+            yield return Path.Combine(baseDir, name);
+            foreach (string folder in rids.Distinct())
+            {
+                yield return Path.Combine(baseDir, "runtimes", folder, "native", name);
+            }
+        }
+    }
 
     private static string AssemblyVersion(Type type) =>
         type.Assembly.GetName().Version?.ToString() ?? "unknown";

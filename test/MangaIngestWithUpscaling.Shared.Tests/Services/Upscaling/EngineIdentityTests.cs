@@ -50,6 +50,61 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_HashesTheTilePlanConfiguration()
+    {
+        // A manual TileSize decides the grid and overlapping tiles are half-sine blended, so two
+        // workers with the same models but different tile plans blend different seams into the
+        // same page — the same seam the architecture order is hashed for. The explicit
+        // MemoryBudgetBytes is hashed for the same reason when it is set; the measured budget
+        // deliberately is not (it varies between machines and moments, so hashing it would make
+        // two identical workers discard each other's spool on every measurement), which is what
+        // the stable "auto" token below pins.
+        UpscalerConfig baseline = Config();
+        UpscalerConfig manualTile = Config();
+        manualTile.TileSize = 512;
+
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(baseline),
+            EngineIdentity.ForUpscaler(manualTile)
+        );
+
+        UpscalerConfig explicitBudget = Config();
+        explicitBudget.MemoryBudgetBytes = "4GiB";
+
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(baseline),
+            EngineIdentity.ForUpscaler(explicitBudget)
+        );
+
+        // The resolved budget is hashed, not its spelling: two spellings of the same byte count
+        // are the same engine, exactly like the equivalent architecture-order spelling.
+        UpscalerConfig budgetSpelledDifferently = Config();
+        budgetSpelledDifferently.MemoryBudgetBytes = "4096MiB";
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(explicitBudget),
+            EngineIdentity.ForUpscaler(budgetSpelledDifferently)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void RuntimeVersion_FingerprintsTheDeployedNativeLibrary()
+    {
+        // The build's OnnxRuntimeFlavor swaps the native library while the managed assemblies'
+        // versions stay, so the flavor is only distinguished by fingerprinting the deployed file
+        // itself. The test deployment carries a real native library, so the third segment exists
+        // and is not the "missing" placeholder; it is stable within a process, so an identity
+        // computed twice agrees.
+        string runtime = EngineIdentity.RuntimeVersion();
+
+        Assert.Equal(3, runtime.Split('+').Length);
+        Assert.DoesNotContain("missing", runtime, StringComparison.Ordinal);
+        Assert.Equal(runtime, EngineIdentity.RuntimeVersion());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForUpscaler_IgnoresPreprocessingBecauseTheServerOwnsIt()
     {
         // The server owns preprocessing and folds the effective options into the content identity, so

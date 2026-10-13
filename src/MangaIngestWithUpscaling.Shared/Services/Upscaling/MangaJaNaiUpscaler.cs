@@ -447,6 +447,8 @@ public class MangaJaNaiUpscaler(
             fileSystem.CreateDirectory(ModelPath);
         }
 
+        SweepStaleDownloadScratch();
+
         foreach (var package in GetModelPackages())
         {
             string markerPath = Path.Combine(ModelPath, $".verified_{package.ZipHash}");
@@ -957,6 +959,62 @@ public class MangaJaNaiUpscaler(
         }
     }
 
+    /// <summary>
+    /// Age at which staging and extraction scratch counts as abandoned. A live download or
+    /// extraction owns its own uniquely named scratch for minutes to hours; a day is far past that,
+    /// so this only ever reclaims corpses — a run that died between creating the scratch and its
+    /// <c>finally</c> cleanup (a crash, a kill) is reclaimed by nothing else, and a models directory
+    /// that survives many such runs collects multi-GB leftovers.
+    /// </summary>
+    private static readonly TimeSpan StaleDownloadScratchAge = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Removes abandoned download staging (<c>model_pkg_*.zip.tmp</c>) and extraction scratch
+    /// (<c>.extract-*</c>) from the models directory. Nothing deletes them on the normal path except
+    /// their own <c>finally</c> blocks, which a hard kill skips; the engine identity's fingerprint
+    /// only ignores them. Per-entry failures are swallowed: a locked or unreadable entry is skipped
+    /// this run, and the sweep as a whole must never stop a startup.
+    /// </summary>
+    private void SweepStaleDownloadScratch()
+    {
+        try
+        {
+            DateTime cutoff = DateTime.UtcNow - StaleDownloadScratchAge;
+
+            foreach (string tmp in Directory.EnumerateFiles(ModelPath, "model_pkg_*.zip.tmp"))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(tmp) < cutoff)
+                    {
+                        File.Delete(tmp);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+
+            foreach (string scratch in Directory.EnumerateDirectories(ModelPath, ".extract-*"))
+            {
+                try
+                {
+                    if (Directory.GetLastWriteTimeUtc(scratch) < cutoff)
+                    {
+                        Directory.Delete(scratch, recursive: true);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to sweep stale download scratch from the models directory {ModelPath}",
+                ModelPath
+            );
+        }
+    }
+
     private async Task DownloadAndExtractPackage(
         ModelPackage package,
         CancellationToken cancellationToken
@@ -977,7 +1035,17 @@ public class MangaJaNaiUpscaler(
             catch (Exception ex)
                 when (attempt < DownloadAttempts
                     && !cancellationToken.IsCancellationRequested
-                    && ex is not OperationCanceledException
+                    // The shared client's own timeout must be retried: .NET surfaces an
+                    // HttpClient.Timeout expiry as a TaskCanceledException wrapping a TimeoutException,
+                    // and both are OperationCanceledException, which this filter would otherwise
+                    // exclude wholesale — so the one bounded-by-retry failure the download policy
+                    // documents was never retried at all, and a single stalled attempt failed the
+                    // package (and, from DownloadModelsIfNecessary, the whole startup). A real caller
+                    // cancellation never wraps a TimeoutException, so it still propagates untouched.
+                    && (
+                        ex is not OperationCanceledException
+                        || ex is OperationCanceledException { InnerException: TimeoutException }
+                    )
                     // Verification failures and 4xx answers will repeat verbatim on the next attempt.
                     // Retrying them restarts a 0.5-2 GB transfer (nothing resumes) only to end in the
                     // same failure that was going to be reported immediately.
