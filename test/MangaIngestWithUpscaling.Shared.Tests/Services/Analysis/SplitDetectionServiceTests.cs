@@ -319,6 +319,113 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_ContextDependentDetector_WindowedResultMatchesTheWholePagePass()
+    {
+        // Every other window test uses a detector whose score is a per-row reduction, so a window
+        // reproduces the whole-page rows no matter what context margin it carries — those tests cannot
+        // notice a margin below the model's receptive field. This stub convolves the row mean over
+        // +-1423 rows (the real detector's field, so the 1536-row DetectorWindowMargin covers it), so a
+        // row only scores from the context its field reaches. A single bright row makes the whole-page
+        // mask a simple band [bright - 1423, bright + 1423]; a window with too little margin loses that
+        // row's contribution near its boundaries and the two passes disagree.
+        const int contextRadius = 1423;
+        const int height = 7000;
+        const int brightRow = 1500;
+
+        string modelsDir = Path.Combine(_root, "context_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx",
+            contextRadius: contextRadius
+        );
+        string imagePath = WriteSingleBrightRowImage("context.png", height, brightRow);
+
+        SplitDetectionResult windowed = await DetectWithBudget(
+            modelsDir,
+            modelPath,
+            imagePath,
+            "64MiB"
+        );
+        SplitDetectionResult wholePage = await DetectWithBudget(
+            modelsDir,
+            modelPath,
+            imagePath,
+            "4GiB"
+        );
+
+        // The band has to exist, or the comparison below would pass vacuously for an empty result.
+        Assert.NotEmpty(wholePage.Splits);
+        Assert.All(
+            wholePage.Splits,
+            split =>
+                Assert.InRange(
+                    split.YOriginal,
+                    brightRow - contextRadius,
+                    brightRow + contextRadius
+                )
+        );
+
+        // The 64 MiB budget splits the 7000 rows into 512-row windows, the 4 GiB one runs the whole
+        // page in a single pass. With the 1536-row margin they must agree row for row, confidence and
+        // all; a margin below the 1423-row field cannot.
+        Assert.Equal(
+            wholePage.Splits.Select(s => (s.YOriginal, s.Confidence)).ToList(),
+            windowed.Splits.Select(s => (s.YOriginal, s.Confidence)).ToList()
+        );
+    }
+
+    private async Task<SplitDetectionResult> DetectWithBudget(
+        string modelsDir,
+        string modelPath,
+        string imagePath,
+        string budget
+    )
+    {
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(
+                new UpscalerConfig { ModelsDirectory = modelsDir, MemoryBudgetBytes = budget }
+            )
+        );
+
+        return Assert.Single(
+            await service.DetectSplitsAsync(
+                imagePath,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    private string WriteSingleBrightRowImage(string fileName, int height, int brightRow)
+    {
+        // 768 wide so the detector's resize is a no-op, otherwise black. One bright row keeps the
+        // context-dependent stub's mask a simple band, so a missing margin shows up as a band row the
+        // windowed pass lost rather than as a change in a value that is over the threshold anyway.
+        const int width = 768;
+        var pixels = new byte[width * height * 3];
+        for (int x = 0; x < width; x++)
+        {
+            int i = ((brightRow * width) + x) * 3;
+            pixels[i] = 255;
+            pixels[i + 1] = 255;
+            pixels[i + 2] = 255;
+        }
+
+        string path = Path.Combine(_root, fileName);
+        using var image = Image.NewFromMemory(pixels, width, height, 3, Enums.BandFormat.Uchar);
+        image.WriteToFile(path);
+        return path;
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task DetectSplitsAsync_GrayscalePage_IsReplicatedToThreeChannelsLikeTheReference()
     {
         // The reference feeds the model PIL's convert("RGB"), which replicates the single band of an

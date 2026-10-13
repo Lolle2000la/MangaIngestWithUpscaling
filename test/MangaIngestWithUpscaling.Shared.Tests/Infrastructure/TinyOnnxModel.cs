@@ -307,6 +307,8 @@ internal static class TinyOnnxModel
     private const string ReshapeShapeName = "shape";
     private const string ThresholdName = "threshold";
     private const string RowMeanFlatName = "row_mean_flat";
+    private const string ConvWeightName = "conv_weight";
+    private const string ContextRowMeanName = "context_row_mean";
 
     // The tensor is [1, 3, height, width], so width and channels are the axes these are indexed on.
     private const int WidthAxis = 3;
@@ -407,10 +409,21 @@ internal static class TinyOnnxModel
     /// exactly what a mis-executing execution provider returns, and it exercises the detector's
     /// non-finite guard instead of the silent zero-split it would otherwise produce.
     /// </param>
+    /// <param name="contextRadius">
+    /// Zero keeps the per-row reduction memoryless, which is all tests that only care about the row
+    /// values need. A positive value inserts a vertical convolution of that radius between the row
+    /// reduction and the peak threshold, so a row's score depends on the rows within
+    /// <paramref name="contextRadius"/> of it — that is roughly the real detector's receptive field
+    /// (1423 rows), and it is what makes a test able to notice a window context margin that is too
+    /// small. A window whose margin is at least the radius reproduces the whole-page result exactly,
+    /// because the convolution's context is fully inside the window; a smaller one reads the
+    /// window's zero padding where the whole-page pass reads real rows.
+    /// </param>
     public static string WritePeakMaskDetector(
         string directory,
         string fileName = "tiny-detector.onnx",
-        bool nonFiniteProbabilities = false
+        bool nonFiniteProbabilities = false,
+        int contextRadius = 0
     ) =>
         Write(
             directory,
@@ -460,13 +473,54 @@ internal static class TinyOnnxModel
                             }
                         );
 
+                        if (contextRadius > 0)
+                        {
+                            // A 1-C-in/1-C-out vertical box convolution of 2r+1 rows with pads r on
+                            // each side keeps the shape [1, 1, H, 1] and makes each row's score the
+                            // sum of the row means within r rows of it. The kernel is unnormalized so a
+                            // single 1.0 row still crosses the 0.5 threshold anywhere in its field,
+                            // which keeps the expected mask a simple band instead of a weighted ramp.
+                            int kernel = (2 * contextRadius) + 1;
+                            WriteMessage(
+                                graph,
+                                Node,
+                                node =>
+                                {
+                                    WriteString(node, NodeInput, "row_mean");
+                                    WriteString(node, NodeInput, ConvWeightName);
+                                    WriteString(node, NodeOutput, ContextRowMeanName);
+                                    WriteString(node, NodeOpType, "Conv");
+                                    WriteInt64ListAttribute(node, "kernel_shape", [kernel, 1]);
+                                    WriteInt64ListAttribute(
+                                        node,
+                                        "pads",
+                                        [contextRadius, 0, contextRadius, 0]
+                                    );
+                                }
+                            );
+                            WriteInitializer(
+                                graph,
+                                ConvWeightName,
+                                ElementTypeFp32,
+                                [1, 1, kernel, 1],
+                                Enumerable
+                                    .Repeat(1f, kernel)
+                                    .SelectMany(BitConverter.GetBytes)
+                                    .ToArray()
+                            );
+                        }
+
                         // Reshape drops the singleton dimensions so the row mean is [1, H].
                         WriteMessage(
                             graph,
                             Node,
                             node =>
                             {
-                                WriteString(node, NodeInput, "row_mean");
+                                WriteString(
+                                    node,
+                                    NodeInput,
+                                    contextRadius > 0 ? ContextRowMeanName : "row_mean"
+                                );
                                 WriteString(node, NodeInput, ReshapeShapeName);
                                 WriteString(
                                     node,

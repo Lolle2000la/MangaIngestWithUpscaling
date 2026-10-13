@@ -39,6 +39,15 @@ public class SplitDetectionService(
     internal const string PeakMaskOutputName = "peak_mask";
 
     /// <summary>
+    /// Width every page is resized to before the detector runs. The height stays dynamic (it is the
+    /// resized page height, or a window's height), so a model that bakes a fixed input width is a
+    /// different file than the pinned export: it would fail every Run with a shape error, which the
+    /// contract check turns into a clear message instead. Kept here rather than as a local constant so
+    /// the check and the resize cannot drift apart.
+    /// </summary>
+    private const int DetectorInputWidth = 768;
+
+    /// <summary>
     /// Chunk used when no memory budget could be measured at all (a device with no VRAM reporting, or
     /// CPU inference), where "no budget" is not evidence of abundance. It is the reference's window and
     /// the model's training crop, and it bounds the footprint to one window rather than the page;
@@ -429,7 +438,7 @@ public class SplitDetectionService(
                     int origWidth = vipsImage.Width;
                     int origHeight = vipsImage.Height;
 
-                    const int targetWidth = 768;
+                    const int targetWidth = DetectorInputWidth;
                     double scale = (double)targetWidth / origWidth;
                     int resizedHeight = Math.Max(1, (int)(origHeight * scale));
                     double hscale = (double)targetWidth / origWidth;
@@ -548,94 +557,141 @@ public class SplitDetectionService(
                             upscalerConfig?.Value.ResolvedVramExclusiveThresholdBytes
                         );
                     }
-                    (int chunkRows, int windowCount) = PlanDetectorWindows(actualHeight, budget);
+                    (int plannedChunkRows, int windowCount) = PlanDetectorWindows(
+                        actualHeight,
+                        budget
+                    );
                     logger.LogDebug(
                         "Detector: {Rows} resized rows in {Windows} window(s) of {ChunkRows} rows (budget {BudgetMiB} MiB).",
                         actualHeight,
                         windowCount,
-                        chunkRows,
+                        plannedChunkRows,
                         budget / 1024 / 1024
                     );
 
                     var probs = new float[actualHeight];
                     var peakMask = new bool[actualHeight];
 
-                    for (int windowStart = 0; windowStart < actualHeight; windowStart += chunkRows)
+                    // The plan is derived from a measured budget, not a guaranteed one: another
+                    // process can take VRAM between the measurement and the run. Without a descent an
+                    // over-committed page fails identically on every retry — the next attempt measures
+                    // the same budget and re-plans the same windows — and can never succeed. Each step
+                    // halves the chunk (the margin stays, so the window shrinks toward
+                    // margin + floor) and re-runs the pass from a clean probs/peakMask; the floor
+                    // bounds it at the size below which the margin dominates the work entirely, and
+                    // past it the failure is rethrown for the worker's requeue path.
+                    int chunkRows = plannedChunkRows;
+                    while (true)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-
-                        int windowEnd = Math.Min(windowStart + chunkRows, actualHeight);
-                        int inputStart = Math.Max(0, windowStart - DetectorWindowMargin);
-                        int inputEnd = Math.Min(actualHeight, windowEnd + DetectorWindowMargin);
-                        int windowHeight = inputEnd - inputStart;
-
-                        // The three planes of tensorData are contiguous, so a window is one BlockCopy
-                        // per plane. Rows outside the window are simply not fed. A window clamped to
-                        // the page's own edge ends there, so the graph pads exactly as it does in a
-                        // whole-page pass — the margin is only needed away from the page's edges.
-                        var windowData = new float[3 * windowHeight * actualWidth];
-                        for (int plane = 0; plane < 3; plane++)
+                        try
                         {
-                            Buffer.BlockCopy(
-                                tensorData,
-                                sizeof(float) * ((plane * planeSize) + (inputStart * actualWidth)),
-                                windowData,
-                                sizeof(float) * (plane * windowHeight * actualWidth),
-                                sizeof(float) * windowHeight * actualWidth
-                            );
+                            for (
+                                int windowStart = 0;
+                                windowStart < actualHeight;
+                                windowStart += chunkRows
+                            )
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+
+                                int windowEnd = Math.Min(windowStart + chunkRows, actualHeight);
+                                int inputStart = Math.Max(0, windowStart - DetectorWindowMargin);
+                                int inputEnd = Math.Min(
+                                    actualHeight,
+                                    windowEnd + DetectorWindowMargin
+                                );
+                                int windowHeight = inputEnd - inputStart;
+
+                                // The three planes of tensorData are contiguous, so a window is one BlockCopy
+                                // per plane. Rows outside the window are simply not fed. A window clamped to
+                                // the page's own edge ends there, so the graph pads exactly as it does in a
+                                // whole-page pass — the margin is only needed away from the page's edges.
+                                var windowData = new float[3 * windowHeight * actualWidth];
+                                for (int plane = 0; plane < 3; plane++)
+                                {
+                                    Buffer.BlockCopy(
+                                        tensorData,
+                                        sizeof(float)
+                                            * ((plane * planeSize) + (inputStart * actualWidth)),
+                                        windowData,
+                                        sizeof(float) * (plane * windowHeight * actualWidth),
+                                        sizeof(float) * windowHeight * actualWidth
+                                    );
+                                }
+
+                                var windowTensor = new DenseTensor<float>(
+                                    windowData,
+                                    [1, 3, windowHeight, actualWidth]
+                                );
+                                var inputs = new[]
+                                {
+                                    NamedOnnxValue.CreateFromTensor(ModelInputName, windowTensor),
+                                };
+
+                                // The two outputs are named explicitly rather than passing null for "all":
+                                // with a RunOptions the null-outputNames overload does not hand back every
+                                // output, and these are the only two this reads.
+                                using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> windowOutputs =
+                                    localSession.Run(
+                                        inputs,
+                                        new[] { PeakMaskOutputName, ProbabilitiesOutputName },
+                                        runOptions
+                                    );
+
+                                var windowPeakMask = windowOutputs
+                                    .First(o => o.Name == PeakMaskOutputName)
+                                    .AsTensor<bool>();
+                                var windowProbs =
+                                    (DenseTensor<float>)
+                                        windowOutputs
+                                            .First(o => o.Name == ProbabilitiesOutputName)
+                                            .AsTensor<float>();
+
+                                // A mis-executing execution provider can return an all-NaN output instead of
+                                // failing (the same failure class OnnxTiler rejects for the upscaler). Every
+                                // comparison against NaN is false, so without this the mask is all-false and
+                                // the page is reported as a successful detection with zero splits — a silent
+                                // miss.
+                                if (OnnxTiler.ContainsNonFinite(windowProbs.Buffer.Span))
+                                {
+                                    throw new NonFiniteModelOutputException();
+                                }
+
+                                // Both outputs must be one score per row of the window. A longer output would
+                                // be silently truncated below and a shorter one read past its end, so an
+                                // unexpected geometry is rejected rather than quietly mis-detected.
+                                EnsureDetectorOutputGeometry(
+                                    windowPeakMask,
+                                    windowProbs,
+                                    windowHeight
+                                );
+
+                                // Each window is trusted for its own rows only, which are the rows the margin
+                                // exists to make exact.
+                                int offset = windowStart - inputStart;
+                                for (int y = windowStart; y < windowEnd; y++)
+                                {
+                                    int index = offset + (y - windowStart);
+                                    probs[y] = windowProbs[0, index];
+                                    peakMask[y] = windowPeakMask[0, index];
+                                }
+                            }
+
+                            break;
                         }
-
-                        var windowTensor = new DenseTensor<float>(
-                            windowData,
-                            [1, 3, windowHeight, actualWidth]
-                        );
-                        var inputs = new[]
+                        catch (Exception ex)
+                            when (OnnxTiler.IsMemoryException(ex)
+                                && chunkRows > DetectorMinChunkRows
+                            )
                         {
-                            NamedOnnxValue.CreateFromTensor(ModelInputName, windowTensor),
-                        };
-
-                        // The two outputs are named explicitly rather than passing null for "all":
-                        // with a RunOptions the null-outputNames overload does not hand back every
-                        // output, and these are the only two this reads.
-                        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> windowOutputs =
-                            localSession.Run(
-                                inputs,
-                                new[] { PeakMaskOutputName, ProbabilitiesOutputName },
-                                runOptions
+                            logger.LogWarning(
+                                ex,
+                                "Detector: memory pressure at {ChunkRows}-row windows for {ImagePath}; halving the window and retrying.",
+                                chunkRows,
+                                imagePath
                             );
-
-                        var windowPeakMask = windowOutputs
-                            .First(o => o.Name == PeakMaskOutputName)
-                            .AsTensor<bool>();
-                        var windowProbs =
-                            (DenseTensor<float>)
-                                windowOutputs
-                                    .First(o => o.Name == ProbabilitiesOutputName)
-                                    .AsTensor<float>();
-
-                        // A mis-executing execution provider can return an all-NaN output instead of
-                        // failing (the same failure class OnnxTiler rejects for the upscaler). Every
-                        // comparison against NaN is false, so without this the mask is all-false and
-                        // the page is reported as a successful detection with zero splits — a silent
-                        // miss.
-                        if (OnnxTiler.ContainsNonFinite(windowProbs.Buffer.Span))
-                        {
-                            throw new NonFiniteModelOutputException();
-                        }
-
-                        // Both outputs must be one score per row of the window. A longer output would
-                        // be silently truncated below and a shorter one read past its end, so an
-                        // unexpected geometry is rejected rather than quietly mis-detected.
-                        EnsureDetectorOutputGeometry(windowPeakMask, windowProbs, windowHeight);
-
-                        // Each window is trusted for its own rows only, which are the rows the margin
-                        // exists to make exact.
-                        int offset = windowStart - inputStart;
-                        for (int y = windowStart; y < windowEnd; y++)
-                        {
-                            int index = offset + (y - windowStart);
-                            probs[y] = windowProbs[0, index];
-                            peakMask[y] = windowPeakMask[0, index];
+                            chunkRows = Math.Max(DetectorMinChunkRows, chunkRows / 2);
+                            Array.Clear(probs, 0, actualHeight);
+                            Array.Clear(peakMask, 0, actualHeight);
                         }
                     }
 
@@ -928,6 +984,25 @@ public class SplitDetectionService(
             throw new ModelContractMismatchException(
                 $"The detector model's '{ModelInputName}' input is {input.ElementType.Name}; float32 is "
                     + "required."
+            );
+        }
+
+        // The height is dynamic (the resized page or a window), but the width is always
+        // DetectorInputWidth. A model that bakes another width would reject every Run with a shape
+        // error that names neither the model nor the expectation, and — coming out of the session —
+        // would be remembered as a structural failure for the process. A fixed positive width other
+        // than the expected one is that same wrong file, reported clearly and once.
+        if (
+            input.Dimensions.Length == 4
+            && input.Dimensions[3] > 0
+            && input.Dimensions[3] != DetectorInputWidth
+        )
+        {
+            throw new ModelContractMismatchException(
+                $"The detector model's '{ModelInputName}' input has a fixed width of "
+                    + $"{input.Dimensions[3]}, but this build resizes every page to {DetectorInputWidth} "
+                    + "px. The file is not the page-break detector this build expects — delete it and let "
+                    + "the app download it again."
             );
         }
 
