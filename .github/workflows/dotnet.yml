@@ -73,5 +73,22 @@ jobs:
           context: .
           file: src/MangaIngestWithUpscaling/Dockerfile
           push: false
+      # The core service lives in the `default` profile and Compose never auto-enables a profile, so
+      # the tracked `.env` (COMPOSE_PROFILES=default) is what makes a plain `docker compose up` start
+      # it. Untracking that file once already left a fresh clone running only kavita while the header
+      # comment still promised otherwise; the image builds above cannot see a service-selection
+      # regression, so assert the selection here instead of leaving it to a user to discover.
+      - name: Verify the Compose service selection
+        run: |
+          set -euo pipefail
+          echo "plain: $(docker compose config --services | sort | tr '\n' ' ')"
+          docker compose config --services | grep -qx mangaingestwithupscaling || {
+            echo "::error::plain 'docker compose up' would not start the app service — is .env still tracked, and does it still set COMPOSE_PROFILES=default?"
+            exit 1
+          }
+          if docker compose --profile remote-only config --services | grep -qx mangaingestwithupscaling; then
+            echo "::error::'--profile remote-only' must exclude the standard app service"
+            exit 1
+          fi
       - name: Verify the CUDA base tag resolves
         run: docker manifest inspect nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04 > /dev/null
