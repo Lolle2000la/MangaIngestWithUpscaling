@@ -101,13 +101,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 return StreamingFailureKind.Restart;
             }
 
-            if (current is UpscaleWorkerCrashedException)
-            {
-                // A crash (OOM/CUDA fault) is recoverable: respawn the worker and resume. Reporting it
-                // would drop the already-spooled pages and consume the retry budget.
-                return StreamingFailureKind.Transient;
-            }
-
             if (current is TimeoutException)
             {
                 // A wedged/hung worker (a cold model load or a transient CUDA stall past the scaled
@@ -118,12 +111,15 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             if (current is NonFiniteModelOutputException or ObjectDisposedException)
             {
-                // The detector rethrows these instead of reporting a per-page error, precisely so the
-                // spool survives: a non-finite output is a mis-executing provider that a freshly built
-                // session can change (and the detector has no second model to fall back to), and an
-                // ObjectDisposedException is a shutdown racing the page. Without a case here the chain
-                // falls through to Permanent, the server clears the spool and fails the task — which
-                // would defeat the detector's rethrow and make its commit message false.
+                // Both the detector and the upscaler path deliver these here instead of reporting a
+                // per-page error, precisely so the spool survives: a non-finite output is a
+                // mis-executing provider that a freshly built session can change (the detector has no
+                // second model to fall back to, and the upscaler's candidate loop rethrows it once
+                // every candidate produced one), and an ObjectDisposedException is a shutdown or an
+                // eviction racing the page. MangaJaNaiWorkerClient.IsInfrastructureFailure lets them
+                // out of the per-page catch for the same reason. Without a case here the chain falls
+                // through to Permanent, the server clears the spool and fails the task — which would
+                // defeat both paths' rethrow.
                 return StreamingFailureKind.Transient;
             }
 

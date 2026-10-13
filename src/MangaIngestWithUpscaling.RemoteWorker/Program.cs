@@ -173,13 +173,15 @@ using (var scope = app.Services.CreateScope())
                         or StatusCode.Unauthenticated
                         or StatusCode.PermissionDenied
                         or StatusCode.Unimplemented
+                        or StatusCode.InvalidArgument
             )
         {
             // The server rejected this worker outright: a version or protocol it does not support
             // (FailedPrecondition, or Unimplemented when the server is too old to have the RPC at
-            // all), or an API key it does not accept. Retrying cannot help, and retrying forever
-            // would leave the worker in this loop with /health never served — a wrong key, or a
-            // server from before the protocol handshake, would look like a hang.
+            // all), an API key it does not accept, or a request it considers malformed
+            // (InvalidArgument). All are deterministic rejections. Retrying cannot help, and
+            // retrying forever would leave the worker in this loop with /health never served — a
+            // wrong key, or a server from before the protocol handshake, would look like a hang.
             logger.LogError("The server rejected this worker: {Detail}", ex.Status.Detail);
             throw;
         }

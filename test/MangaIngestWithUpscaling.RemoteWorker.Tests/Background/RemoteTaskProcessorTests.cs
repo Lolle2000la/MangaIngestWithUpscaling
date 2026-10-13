@@ -73,20 +73,6 @@ public class RemoteTaskProcessorTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ClassifyStreamingFailure_TreatsAWorkerCrashAsTransient()
-    {
-        // A crashed worker (OOM/CUDA fault) must not drop the already-spooled pages: respawn and
-        // resume instead of reporting a permanent failure.
-        Assert.Equal(
-            StreamingFailureKind.Transient,
-            RemoteTaskProcessor.ClassifyStreamingFailure(
-                new UpscaleWorkerCrashedException("Upscale worker process exited unexpectedly.")
-            )
-        );
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
     public void ClassifyStreamingFailure_TreatsTheDetectorsRethrowsAsTransient()
     {
         // The detector rethrows a non-finite output and a shutdown race instead of reporting a per-page

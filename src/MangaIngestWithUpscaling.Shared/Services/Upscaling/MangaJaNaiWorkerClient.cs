@@ -364,6 +364,15 @@ public class MangaJaNaiWorkerClient(
     /// propagate rather than being turned into a per-page error: a device hiccup or a full disk is
     /// classified Transient upstream precisely so the worker is requeued, and swallowing it here
     /// would commit a chapter whose page was never upscaled.
+    /// <para>
+    /// <see cref="NonFiniteModelOutputException"/> belongs here because the engine throws it for
+    /// an all-NaN output, which a driver reset or a mis-executing execution provider produces and a
+    /// freshly built session can stop producing — the same verdict <c>ClassifyStreamingFailure</c>
+    /// already reaches for the detection path. Converted into a page error instead, it escalated as
+    /// a permanent failure and dropped the spool of already-upscaled pages, the exact outcome the
+    /// transient classification exists to prevent. <see cref="ObjectDisposedException"/> is the
+    /// same class on the shutdown side: a session/eviction race, not a property of the page.
+    /// </para>
     /// </summary>
     private static bool IsInfrastructureFailure(Exception ex)
     {
@@ -376,7 +385,11 @@ public class MangaJaNaiWorkerClient(
         for (Exception? current = ex; current is not null; current = current.InnerException)
         {
             if (
-                current is IOException or UnauthorizedAccessException
+                current
+                    is IOException
+                        or UnauthorizedAccessException
+                        or NonFiniteModelOutputException
+                        or ObjectDisposedException
                 || OnnxTiler.IsMemoryException(current)
             )
             {

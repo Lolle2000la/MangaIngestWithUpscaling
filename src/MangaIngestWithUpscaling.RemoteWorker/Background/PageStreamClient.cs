@@ -687,6 +687,17 @@ public sealed class PageStreamClient(
         {
             await foreach (PageChunk chunk in call.ResponseStream.ReadAllAsync(cancellationToken))
             {
+                if (chunk.PageIndex == currentIndex && file is null)
+                {
+                    // A duplicate chunk for a page that already completed: its IsLast arrived, the
+                    // file is closed, and the page was yielded. This server never sends one (GetPages
+                    // iterates distinct indexes), but a protocol slip must not become a
+                    // NullReferenceException out of the write below — that escalates as a permanent
+                    // failure and drops the spool of already-fetched pages. Skip it; the next real
+                    // page has a different index and reopens the stream.
+                    continue;
+                }
+
                 if (chunk.PageIndex != currentIndex)
                 {
                     // The server always terminates a page with IsLast; a truncated page is dropped.

@@ -544,6 +544,37 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunAsync_ATerminatingChunkSentTwice_IsSkippedRatherThanCrashed()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_duplicate").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            server.DuplicateLastChunkForPage.Add(0);
+            var client = server.CreateClient();
+            var worker = new FakeWorkerClient();
+            var sut = CreateClient(worker);
+
+            // This server never sends a duplicate (GetPages iterates distinct indexes), but a
+            // protocol slip has to be skipped, not turned into a NullReferenceException out of
+            // the page writer: the duplicate arrives after its IsLast chunk already closed the
+            // file, and the NRE escalated as a permanent failure dropped the spool of
+            // already-fetched pages. The duplicate is skipped; every page still completes.
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            Assert.Equal(3, worker.ProcessedPages);
+            Assert.True(File.Exists(destination));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunAsync_SurfacesATerminalUploadFailureOverATransientChapterCrash()
     {
         string directory = Directory.CreateTempSubdirectory("page_stream_precedence").FullName;
@@ -554,11 +585,12 @@ public class PageStreamClientTests
             var server = new FakePageServer(source, destination);
             server.FailUploadForPage.Add(0);
             var client = server.CreateClient();
-            // The worker crashes right after page 0 while that page's upload is rejected terminally.
+            // The worker fails right after page 0 (an infrastructure-grade failure) while that
+            // page's upload is rejected terminally.
             var worker = new FakeWorkerClient
             {
                 DropAfterPages = 1,
-                DropException = new UpscaleWorkerCrashedException("simulated crash"),
+                DropException = new IOException("simulated crash"),
             };
             var sut = CreateClient(worker);
 
@@ -895,6 +927,13 @@ public class PageStreamClientTests
 
         /// <summary>Pages whose fetch yields only the terminating chunk (a 0-byte source entry).</summary>
         public HashSet<int> EmptyFetchForPage { get; } = new();
+
+        /// <summary>
+        /// Pages whose terminating chunk is sent twice, after the file it closed — a protocol slip
+        /// this server never makes (GetPages iterates distinct indexes), reproduced for the guard
+        /// against it.
+        /// </summary>
+        public HashSet<int> DuplicateLastChunkForPage { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
         public string PreprocessingJson { get; set; } = string.Empty;
@@ -1013,6 +1052,17 @@ public class PageStreamClientTests
                     ChunkNumber = chunkNumber,
                     IsLast = true,
                 };
+
+                if (DuplicateLastChunkForPage.Contains(index))
+                {
+                    yield return new PageChunk
+                    {
+                        TaskId = 1,
+                        PageIndex = index,
+                        ChunkNumber = chunkNumber,
+                        IsLast = true,
+                    };
+                }
             }
         }
 
