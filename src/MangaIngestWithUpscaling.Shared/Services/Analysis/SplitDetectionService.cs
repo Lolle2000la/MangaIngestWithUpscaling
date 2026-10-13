@@ -50,8 +50,9 @@ public class SplitDetectionService(
     /// <summary>
     /// Chunk used when the caller reported "no budget measurable" (<c>budgetBytes &lt;= 0</c>), where
     /// "no budget" is not evidence of abundance. It is the reference's window and the model's training
-    /// crop, and it bounds the footprint to one window rather than the page; anything smaller barely
-    /// helps, because the context margin dominates a window's size.
+    /// crop, and it bounds the inference footprint to one window rather than the page (the decoded page
+    /// itself still lives in a whole-page byte buffer); anything smaller barely helps, because the
+    /// context margin dominates a window's size.
     /// <para>
     /// The only production caller that can report this is the explicit CPU path
     /// (<see cref="DetectSingleImageAsync"/> treats a CPU backend as unmeasurable). A GPU with no
@@ -64,12 +65,13 @@ public class SplitDetectionService(
 
     /// <summary>
     /// Rows of context a window carries beyond the rows it is trusted for. Must be at least the model's
-    /// vertical receptive field, which is 1423 rows: the dilated CNN stack reaches +-1023 (ten 3x3
+    /// vertical receptive field, which is 1431 rows: the dilated CNN stack reaches +-1023 (ten 3x3
     /// residual blocks with dilations 1, 2, 4, ... 512, plus the input convolution), the smoothing
     /// convolution after the sigmoid +-8, and the peak test's MaxPool +-400 (kernel 801, matching the
-    /// calibrated peak_distance of 800). With at least that much context a window reproduces the
-    /// whole-page result exactly — verified bit-identical against the shipped model — so this bounds
-    /// memory without changing which rows are detected as peaks. 1536 is that bound rounded up.
+    /// calibrated peak_distance of 800). 1023 + 8 + 400 = 1431. With at least that much context a window
+    /// reproduces the whole-page result exactly — verified bit-identical against the shipped model — so
+    /// this bounds memory without changing which rows are detected as peaks. 1536 is that bound rounded
+    /// up.
     /// </summary>
     private const int DetectorWindowMargin = 1536;
 
@@ -496,20 +498,13 @@ public class SplitDetectionService(
                         );
                     }
 
+                    // The page stays in the interleaved RGB byte buffer the decode produced. The
+                    // detector's planar float tensor is built per window from it (below) rather than
+                    // as one whole-page copy: on a very tall strip that copy was hundreds of MB of
+                    // LOH managed memory regardless of the memory budget (the budget only bounds the
+                    // ONNX Run, not the host-side tensor), and an OutOfMemoryException there is
+                    // classified retryable, so such a page was requeued instead of ever failing.
                     byte[] mem = ucharRgb.WriteToMemory<byte>();
-                    int planeSize = actualHeight * actualWidth;
-                    float[] tensorData = new float[1 * 3 * actualHeight * actualWidth];
-                    int rOffset = 0;
-                    int gOffset = planeSize;
-                    int bOffset = planeSize * 2;
-
-                    for (int i = 0; i < planeSize; i++)
-                    {
-                        int bIdx = i * 3;
-                        tensorData[rOffset + i] = mem[bIdx] / 255.0f;
-                        tensorData[gOffset + i] = mem[bIdx + 1] / 255.0f;
-                        tensorData[bOffset + i] = mem[bIdx + 2] / 255.0f;
-                    }
 
                     cancellationToken.ThrowIfCancellationRequested();
 
@@ -610,21 +605,30 @@ public class SplitDetectionService(
                                 );
                                 int windowHeight = inputEnd - inputStart;
 
-                                // The three planes of tensorData are contiguous, so a window is one BlockCopy
-                                // per plane. Rows outside the window are simply not fed. A window clamped to
-                                // the page's own edge ends there, so the graph pads exactly as it does in a
-                                // whole-page pass — the margin is only needed away from the page's edges.
+                                // A window is de-interleaved straight out of the page's RGB bytes into
+                                // a window-sized planar float buffer, so no host buffer scales with the
+                                // page. Rows outside the window are simply not read. A window clamped
+                                // to the page's own edge ends there, so the graph pads exactly as it
+                                // does in a whole-page pass — the margin is only needed away from the
+                                // page's edges. The rows and their order are the ones the whole-page
+                                // packing this replaced produced, so the gathered probabilities and
+                                // mask are bit-identical.
                                 var windowData = new float[3 * windowHeight * actualWidth];
-                                for (int plane = 0; plane < 3; plane++)
+                                int windowPixels = windowHeight * actualWidth;
+                                for (int row = 0; row < windowHeight; row++)
                                 {
-                                    Buffer.BlockCopy(
-                                        tensorData,
-                                        sizeof(float)
-                                            * ((plane * planeSize) + (inputStart * actualWidth)),
-                                        windowData,
-                                        sizeof(float) * (plane * windowHeight * actualWidth),
-                                        sizeof(float) * windowHeight * actualWidth
-                                    );
+                                    int sourceRow = (inputStart + row) * actualWidth;
+                                    int destinationRow = row * actualWidth;
+                                    for (int x = 0; x < actualWidth; x++)
+                                    {
+                                        int source = (sourceRow + x) * 3;
+                                        int destination = destinationRow + x;
+                                        windowData[destination] = mem[source] / 255.0f;
+                                        windowData[windowPixels + destination] =
+                                            mem[source + 1] / 255.0f;
+                                        windowData[(2 * windowPixels) + destination] =
+                                            mem[source + 2] / 255.0f;
+                                    }
                                 }
 
                                 var windowTensor = new DenseTensor<float>(
@@ -1048,6 +1052,34 @@ public class SplitDetectionService(
                     + "px. The file is not the page-break detector this build expects — delete it and let "
                     + "the app download it again."
             );
+        }
+
+        // Batch and channel are fixed at 1 and 3 by the [1, 3, H, W] tensor the row loop builds. A
+        // model that bakes another value passes the name and element-type checks above and then fails
+        // inside Run with a shape error that names neither the model nor the expectation — and, coming
+        // out of the session, that failure is remembered as a structural one for the process. A
+        // non-positive dimension is dynamic and is deliberately left to the graph.
+        if (input.Dimensions.Length == 4)
+        {
+            if (input.Dimensions[0] > 0 && input.Dimensions[0] != 1)
+            {
+                throw new ModelContractMismatchException(
+                    $"The detector model's '{ModelInputName}' input has a fixed batch size of "
+                        + $"{input.Dimensions[0]}, but this build feeds one page at a time. The file is "
+                        + "not the page-break detector this build expects — delete it and let the app "
+                        + "download it again."
+                );
+            }
+
+            if (input.Dimensions[1] > 0 && input.Dimensions[1] != 3)
+            {
+                throw new ModelContractMismatchException(
+                    $"The detector model's '{ModelInputName}' input has a fixed channel count of "
+                        + $"{input.Dimensions[1]}, but this build feeds 3 (RGB). The file is not the "
+                        + "page-break detector this build expects — delete it and let the app download "
+                        + "it again."
+                );
+            }
         }
 
         RequireDetectorOutput(session, ProbabilitiesOutputName, typeof(float));

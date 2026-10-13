@@ -1,11 +1,20 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Api;
 
+/// <summary>
+/// Serves individual pages out of chapter archives for the Blazor dialogs that preview a split.
+/// The pages expose private library content, so the endpoint is authenticated in every
+/// configuration. When OIDC is disabled there is no global fallback authorization policy
+/// (see <c>Program.cs</c>), so the attribute here is what protects it; the default scheme is the
+/// Identity application cookie, which is registered whether or not OIDC is enabled.
+/// </summary>
 [ApiController]
+[Authorize]
 [Route("api/images")]
 public class ImageController(ApplicationDbContext dbContext, ILogger<ImageController> logger)
     : ControllerBase

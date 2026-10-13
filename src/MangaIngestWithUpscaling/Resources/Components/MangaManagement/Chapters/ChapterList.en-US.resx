@@ -100,6 +100,21 @@
   <data name="Tooltip_DeleteUpscaled" xml:space="preserve">
     <value>Delete upscaled version of this chapter.</value>
   </data>
+  <data name="Chip_Split" xml:space="preserve">
+    <value>Split</value>
+  </data>
+  <data name="Header_ChapterNumber" xml:space="preserve">
+    <value>Chapter Number</value>
+  </data>
+  <data name="Header_VolumeNumber" xml:space="preserve">
+    <value>Volume Number</value>
+  </data>
+  <data name="Header_PageCount" xml:space="preserve">
+    <value>Page Count</value>
+  </data>
+  <data name="Button_SplitSelected" xml:space="preserve">
+    <value>Split Selected (Experimental)</value>
+  </data>
   <data name="Chip_Pending" xml:space="preserve">
     <value>Pending</value>
   </data>

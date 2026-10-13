@@ -113,7 +113,7 @@ public class ImageResizeService(
         }
     }
 
-    public async Task PreprocessImageInPlaceAsync(
+    public async Task<string> PreprocessImageInPlaceAsync(
         string imagePath,
         ImagePreprocessingOptions options,
         CancellationToken cancellationToken
@@ -124,8 +124,10 @@ public class ImageResizeService(
         // without the downscale the engine identity claims.
         Validate(options);
 
-        // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then move
-        // the single result back over the original so the caller keeps the same path.
+        // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then
+        // install the single result next to the original. The pipeline may rename the page when a
+        // format conversion applies, so the resulting path is returned to the caller rather than
+        // assumed to equal the input path.
         string tempDir = Path.Combine(
             Path.GetTempPath(),
             $"manga_preprocess_page_{Guid.NewGuid()}"
@@ -160,27 +162,27 @@ public class ImageResizeService(
                     "Preprocessing {ImagePath} failed; keeping the original.",
                     imagePath
                 );
-                return;
+                return imagePath;
             }
 
             string[] results = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
             if (results.Length == 1)
             {
-                File.Move(results[0], imagePath, overwrite: true);
+                return InstallResult(results[0], imagePath);
             }
-            else if (results.Length == 0)
+
+            if (results.Length == 0)
             {
                 logger.LogWarning(
                     "Preprocessing {ImagePath} produced no output; keeping the original.",
                     imagePath
                 );
+                return imagePath;
             }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"Preprocessing {imagePath} produced {results.Length} files for one image."
-                );
-            }
+
+            throw new InvalidOperationException(
+                $"Preprocessing {imagePath} produced {results.Length} files for one image."
+            );
         }
         finally
         {
@@ -189,6 +191,51 @@ public class ImageResizeService(
                 Directory.Delete(tempDir, true);
             }
         }
+    }
+
+    /// <summary>
+    /// Moves the single result of the in-place pipeline next to <paramref name="originalPath"/>,
+    /// removing the original, and returns the path the caller must use.
+    /// <para>
+    /// <see cref="ProcessImage"/> performs a format conversion by writing a new file with the
+    /// converted extension and deleting its input, exactly as the whole-CBZ path does; the converted
+    /// name is the one the whole-CBZ archive keeps. Overwriting the original path with the converted
+    /// bytes instead would leave, say, JPEG bytes under a <c>.png</c> name, so the file's name and its
+    /// content would disagree. When the extension did not change (a resize or a same-format
+    /// re-encode) the original name already matches the content and is kept, which also absorbs the
+    /// numeric suffix <see cref="ProcessImage"/> adds when a same-format conversion writes a sibling
+    /// of the working copy.
+    /// </para>
+    /// </summary>
+    private static string InstallResult(string resultPath, string originalPath)
+    {
+        string directory = Path.GetDirectoryName(originalPath)!;
+        string resultExtension = Path.GetExtension(resultPath).ToLowerInvariant();
+        string originalExtension = Path.GetExtension(originalPath).ToLowerInvariant();
+
+        if (resultExtension == originalExtension)
+        {
+            File.Move(resultPath, originalPath, overwrite: true);
+            return originalPath;
+        }
+
+        string targetPath = Path.Combine(directory, Path.GetFileName(resultPath));
+        if (File.Exists(targetPath))
+        {
+            // A converted sibling already owns the name (e.g. a duplicate fetch inside one work
+            // directory). Keep both by suffixing rather than silently dropping either page.
+            string stem = Path.GetFileNameWithoutExtension(targetPath);
+            int suffix = 1;
+            do
+            {
+                targetPath = Path.Combine(directory, $"{stem}_{suffix}{resultExtension}");
+                suffix++;
+            } while (File.Exists(targetPath));
+        }
+
+        File.Move(resultPath, targetPath);
+        File.Delete(originalPath);
+        return targetPath;
     }
 
     public Task<long> GetMaxPixelCountFromCbzAsync(

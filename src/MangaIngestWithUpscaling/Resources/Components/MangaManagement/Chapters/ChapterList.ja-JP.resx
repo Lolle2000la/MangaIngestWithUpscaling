@@ -187,6 +187,9 @@
   <data name="Dialog_ApplySplits_Content" xml:space="preserve">
     <value>検出された分割を適用してもよろしいですか？これにより、チャプターが複数のファイルに分割され、オリジナルは削除されます。</value>
   </data>
+  <data name="Dialog_ManualSplit_Title" xml:space="preserve">
+    <value>手動画像分割</value>
+  </data>
   <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
     <value>選択した結合済みチャプターを元に戻す</value>
   </data>

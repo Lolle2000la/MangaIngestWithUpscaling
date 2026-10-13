@@ -187,6 +187,9 @@
   <data name="Dialog_ApplySplits_Content" xml:space="preserve">
     <value>Sind Sie sicher, dass Sie die erkannten Aufteilungen anwenden möchten? Dies wird das Kapitel in mehrere Dateien aufteilen und das Original löschen.</value>
   </data>
+  <data name="Dialog_ManualSplit_Title" xml:space="preserve">
+    <value>Manuelles Aufteilen von Bildern</value>
+  </data>
   <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
     <value>Ausgewählte zusammengeführte Kapitel zurücksetzen</value>
   </data>

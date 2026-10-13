@@ -454,8 +454,11 @@ public class ImageResizeServiceTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task PreprocessImageInPlaceAsync_ConvertsAMatchingFormatInPlace()
+    public async Task PreprocessImageInPlaceAsync_ConversionKeepsTheConvertedExtension()
     {
+        // A .png input whose rule targets .jpg must come out as page.jpg and report that path, exactly
+        // as the whole-CBZ path keeps the converted entry name. Renaming the converted bytes back over
+        // page.png would leave the file's name and content disagreeing.
         string directory = Directory.CreateTempSubdirectory("preprocess_page").FullName;
         try
         {
@@ -465,10 +468,11 @@ public class ImageResizeServiceTests
                 image.WriteToFile(path);
             }
 
-            await _service.PreprocessImageInPlaceAsync(
+            string result = await _service.PreprocessImageInPlaceAsync(
                 path,
                 new ImagePreprocessingOptions
                 {
+                    EnableSmartDownscale = false,
                     FormatConversionRules =
                     [
                         new MangaIngestWithUpscaling.Shared.Configuration.ImageFormatConversionRule
@@ -482,12 +486,50 @@ public class ImageResizeServiceTests
                 TestContext.Current.CancellationToken
             );
 
-            // The result replaces the file in place; libvips sniffs the content, and a JPEG starts
-            // with the SOI marker 0xFF 0xD8.
-            Assert.True(File.Exists(path));
-            byte[] bytes = File.ReadAllBytes(path);
+            // The returned path keeps the converted extension and the original file is replaced.
+            Assert.Equal(Path.Combine(directory, "page.jpg"), result);
+            Assert.False(
+                File.Exists(path),
+                "the original .png must be replaced by the converted page"
+            );
+            Assert.True(File.Exists(result));
+
+            // libvips sniffs the content; a JPEG starts with the SOI marker 0xFF 0xD8.
+            byte[] bytes = File.ReadAllBytes(result);
             Assert.Equal(0xFF, bytes[0]);
             Assert.Equal(0xD8, bytes[1]);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_ResizeKeepsTheOriginalName()
+    {
+        // A resize changes no extension, so the page stays at its original path and the returned path
+        // is the input path.
+        string directory = Directory.CreateTempSubdirectory("preprocess_page_resize").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "page.png");
+            using (Image image = Image.Black(64, 64))
+            {
+                image.WriteToFile(path);
+            }
+
+            string result = await _service.PreprocessImageInPlaceAsync(
+                path,
+                new ImagePreprocessingOptions { EnableSmartDownscale = false, MaxDimension = 32 },
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(path, result);
+            using Image resized = Image.NewFromFile(path);
+            Assert.Equal(32, resized.Width);
+            Assert.Equal(32, resized.Height);
         }
         finally
         {
@@ -527,12 +569,14 @@ public class ImageResizeServiceTests
         await File.WriteAllBytesAsync(imagePath, original, TestContext.Current.CancellationToken);
         try
         {
-            await _service.PreprocessImageInPlaceAsync(
+            string result = await _service.PreprocessImageInPlaceAsync(
                 imagePath,
                 new ImagePreprocessingOptions { MaxDimension = 100, FormatConversionRules = [] },
                 TestContext.Current.CancellationToken
             );
 
+            // Nothing was preprocessed, so the original is kept and its path is reported back.
+            Assert.Equal(imagePath, result);
             Assert.Equal(
                 original,
                 await File.ReadAllBytesAsync(imagePath, TestContext.Current.CancellationToken)

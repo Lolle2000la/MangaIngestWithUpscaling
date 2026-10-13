@@ -324,11 +324,11 @@ public class SplitDetectionServiceTests : IDisposable
         // Every other window test uses a detector whose score is a per-row reduction, so a window
         // reproduces the whole-page rows no matter what context margin it carries — those tests cannot
         // notice a margin below the model's receptive field. This stub convolves the row mean over
-        // +-1423 rows (the real detector's field, so the 1536-row DetectorWindowMargin covers it), so a
+        // +-1431 rows (the real detector's field, so the 1536-row DetectorWindowMargin covers it), so a
         // row only scores from the context its field reaches. A single bright row makes the whole-page
-        // mask a simple band [bright - 1423, bright + 1423]; a window with too little margin loses that
+        // mask a simple band [bright - 1431, bright + 1431]; a window with too little margin loses that
         // row's contribution near its boundaries and the two passes disagree.
-        const int contextRadius = 1423;
+        const int contextRadius = 1431;
         const int height = 7000;
         const int brightRow = 1500;
 
@@ -368,7 +368,7 @@ public class SplitDetectionServiceTests : IDisposable
 
         // The 64 MiB budget splits the 7000 rows into 512-row windows, the 4 GiB one runs the whole
         // page in a single pass. With the 1536-row margin they must agree row for row, confidence and
-        // all; a margin below the 1423-row field cannot.
+        // all; a margin below the 1431-row field cannot.
         Assert.Equal(
             wholePage.Splits.Select(s => (s.YOriginal, s.Confidence)).ToList(),
             windowed.Splits.Select(s => (s.YOriginal, s.Confidence)).ToList()
@@ -1118,6 +1118,85 @@ public class SplitDetectionServiceTests : IDisposable
         Assert.NotNull(result.Error);
         Assert.Contains("fixed width of 1024", result.Error);
         Assert.Contains("768", result.Error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_ModelWithAFixedChannelCountOtherThanThree_ReportsAContractError()
+    {
+        // The contract check validates the input name, its element type and a fixed width, but the
+        // channel dimension is just as fixed by the [1, 3, H, W] tensor the row loop builds. A model
+        // that bakes C=1 passes the other checks and then fails inside Run with a shape error that
+        // names neither the model nor the expectation — and, coming out of the session, that failure
+        // is remembered as a structural verdict for the process. It has to be reported once, by the
+        // contract check, instead.
+        string modelsDir = Path.Combine(_root, "fixed_channels_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx",
+            inputDims: [1, 1, -1, 768]
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("fixed_channels.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("fixed channel count of 1", result.Error);
+        Assert.Contains("3 (RGB)", result.Error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_ModelWithAFixedBatchOtherThanOne_ReportsAContractError()
+    {
+        // Same rationale as the channel and width checks: the batch dimension is fixed at 1 by the
+        // tensor the row loop builds, and a model that bakes another value would otherwise fail inside
+        // Run and be cached as an unusable detector for the process.
+        string modelsDir = Path.Combine(_root, "fixed_batch_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx",
+            inputDims: [2, 3, -1, 768]
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("fixed_batch.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("fixed batch size of 2", result.Error);
+        Assert.Contains("one page at a time", result.Error);
     }
 
     [Fact]
