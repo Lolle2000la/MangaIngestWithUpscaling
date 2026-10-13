@@ -46,10 +46,13 @@ public class GrpcTaskClaimSourceTests
         );
         Assert.Equal(7, first.TaskId);
 
-        // The skew is latched: later claims skip the doomed hint call instead of paying for the
-        // rejection again on every one of them. The hint is an optimization, so a server upgraded
-        // mid-process only picks it back up on the next worker start.
-        UpscaleTaskDelegationResponse second = await source.RequestTaskWithHintAsync(
+        // The skew is latched, and process-wide rather than per instance: the claim loop resolves
+        // ITaskClaimSource from a new DI scope on every iteration, so an instance field reset itself
+        // before it could ever help and the doomed hint call was paid again on every fetch. A second
+        // instance — exactly what the next iteration gets — has to know already. A server upgraded
+        // mid-process only picks the hint back up on the next worker start.
+        var nextIteration = new GrpcTaskClaimSource(client);
+        UpscaleTaskDelegationResponse second = await nextIteration.RequestTaskWithHintAsync(
             CancellationToken.None
         );
         Assert.Equal(7, second.TaskId);

@@ -66,19 +66,20 @@ public class OnnxUpscaleEngine(
     private readonly record struct ModelScaleKey(string Path, int Scale);
 
     /// <summary>
-    /// Compares keys case-insensitively on the path, matching how the rest of the engine resolves
-    /// model paths (candidate selection and the model-file checks are all
-    /// <see cref="StringComparison.OrdinalIgnoreCase"/>).
+    /// Compares keys on the path ordinally. Case-insensitive comparison would conflate two distinct
+    /// model files on a case-sensitive filesystem — every path here comes from the same candidate
+    /// string it is looked up with, so no normalisation is needed — and it would disagree with the
+    /// session factory and the detector, which key ordinal.
     /// </summary>
     private sealed class ModelScaleKeyComparer : IEqualityComparer<ModelScaleKey>
     {
         public static readonly ModelScaleKeyComparer Instance = new();
 
         public bool Equals(ModelScaleKey x, ModelScaleKey y) =>
-            x.Scale == y.Scale && string.Equals(x.Path, y.Path, StringComparison.OrdinalIgnoreCase);
+            x.Scale == y.Scale && string.Equals(x.Path, y.Path, StringComparison.Ordinal);
 
         public int GetHashCode(ModelScaleKey obj) =>
-            HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Path), obj.Scale);
+            HashCode.Combine(StringComparer.Ordinal.GetHashCode(obj.Path), obj.Scale);
     }
 
     /// <summary>
@@ -873,7 +874,10 @@ public class OnnxUpscaleEngine(
 
     private static void AddCandidate(List<string> candidates, string file)
     {
-        if (!candidates.Contains(file, StringComparer.OrdinalIgnoreCase))
+        // Ordinal: every caller passes the same full path string that the directory listing produced,
+        // so a duplicate is the same string; comparing case-insensitively would drop a genuinely
+        // distinct file (two names differing only in case) on a case-sensitive filesystem.
+        if (!candidates.Contains(file, StringComparer.Ordinal))
         {
             candidates.Add(file);
         }
@@ -914,7 +918,7 @@ public class OnnxUpscaleEngine(
             if (
                 Path.GetFileName(file).StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase)
                 && filter(file)
-                && !candidates.Contains(file, StringComparer.OrdinalIgnoreCase)
+                && !candidates.Contains(file, StringComparer.Ordinal)
             )
             {
                 candidates.Add(file);
@@ -989,7 +993,15 @@ public class OnnxUpscaleEngine(
             }
             catch (NonFiniteModelOutputException ex)
             {
-                MarkModelUnusable(modelPath, scale);
+                // Deliberately no permanent verdict here. Non-finite output is the transient failure
+                // this type exists for — a driver reset or a mis-executing provider produces it once,
+                // which is why it is classified retryable upstream. Recording it disabled every
+                // candidate for the process, so the retry skipped them all and threw the generic
+                // "already known to be unusable" InvalidOperationException: the first attempt was
+                // transient, the second terminal, and the spool of already-upscaled pages was gone —
+                // exactly what the rethrow below exists to prevent. The retry is bounded by the
+                // server's soft-failure cap, so a provider that really cannot run the models still
+                // ends in a visible failure.
                 unusable.Add(Path.GetFileName(modelPath));
                 nonFiniteCandidates++;
                 logger.LogWarning(
@@ -1134,9 +1146,8 @@ public class OnnxUpscaleEngine(
 
                 // The execution provider caches its buffers per tensor shape, so a page at a shape
                 // this session has not run yet would add a second set instead of reusing the first.
-                // Release the session first; see _sessionShape for the measurement behind this.
-                (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
-                ReleaseSessionForShapeChange(modelPath, paddedWidth, paddedHeight);
+                // The registration and release happen per attempt inside AcquireSessionForShape;
+                // see _sessionShape for the measurement behind this.
 
                 var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
                 logger.LogDebug(
@@ -1169,18 +1180,15 @@ public class OnnxUpscaleEngine(
                 {
                     try
                     {
-                        // Fetched per iteration, not once outside the loop: the memory-pressure path
-                        // below invalidates the cached session, which retires the very instance this
-                        // variable holds. InferenceSession has no disposed guard, so a Run on that
-                        // handle surfaces as an opaque native error that is not a memory exception —
-                        // it would land in the generic catch and lose the page instead of recovering
-                        // at the halved tile. The lookup itself is a dictionary hit on the warm path.
-                        // The scope is taken BEFORE the fetch so an eviction on another thread cannot
-                        // free the session between the two statements; the drain that disposes evicted
-                        // sessions takes the write lock and therefore waits for this scope to end.
-                        using (sessionFactory.EnterInferenceScope())
+                        // Registration, flush and fetch are one critical section against other pages
+                        // (see AcquireSessionForShape). The release is a write-lock operation that
+                        // waits for every in-flight scope, so a caller that decided under the gate
+                        // and released outside it could be interleaved with another page's fetch,
+                        // which would then run on a session cached for the previous shape.
+                        (IDisposable sessionScope, InferenceSession session) =
+                            AcquireSessionForShape(modelPath, attempt);
+                        using (sessionScope)
                         {
-                            InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
                             upscaledBytes = UpscaleViaTiler(
                                 inputBytes,
                                 width,
@@ -1327,41 +1335,64 @@ public class OnnxUpscaleEngine(
         );
 
     /// <summary>
-    /// Releases the cached session when the next page needs a padded tensor shape this model has not
-    /// run on it yet. See <see cref="_sessionShape"/> for why.
+    /// Registers the padded tensor shape the caller is about to run and returns the session to run it
+    /// on, releasing the cached session first when that shape changed — or is still unknown, which the
+    /// device probe's small tile leaves it as — so the execution provider's per-shape buffer cache
+    /// cannot accumulate across a chapter. See <see cref="_sessionShape"/> for the measurement.
     /// <para>
-    /// An unknown <see cref="_sessionShapeModel"/> also counts as a change: the session the caller is
-    /// about to fetch is the one the device probe ran a 256 px tile on, so the probe's buffers would
-    /// otherwise be kept alongside the page's shape — the accumulation this exists to prevent. It
-    /// costs one session rebuild per model per process.
+    /// The shape gate is held across the decision, the release and the fetch. Releasing is a
+    /// write-lock operation that waits for every in-flight inference scope to drain, so a caller that
+    /// only took the gate for the decision and released after it could interleave with another page:
+    /// that page's fetch would still find the previous shape's session cached and run on it, which is
+    /// the accumulation this exists to prevent. Holding the gate through the fetch makes the whole
+    /// registration/release/fetch sequence atomic, and the second page's release then waits for the
+    /// first page's scope to end, so the session it retires is one the first page has finished with —
+    /// no session ever carries two shapes. The cost is a brief serialisation of session acquisition.
     /// </para>
     /// </summary>
-    private void ReleaseSessionForShapeChange(string modelPath, int paddedWidth, int paddedHeight)
+    private (IDisposable Scope, InferenceSession Session) AcquireSessionForShape(
+        string modelPath,
+        OnnxTiler.TileSplit split
+    )
     {
-        bool changed;
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+
         lock (_sessionShapeGate)
         {
-            changed =
+            bool changed =
                 _sessionShapeModel is null
-                || !string.Equals(_sessionShapeModel, modelPath, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(_sessionShapeModel, modelPath, StringComparison.Ordinal)
                 || _sessionShape != (paddedWidth, paddedHeight);
             _sessionShapeModel = modelPath;
             _sessionShape = (paddedWidth, paddedHeight);
-        }
 
-        if (!changed)
-        {
-            return;
-        }
+            if (changed)
+            {
+                logger.LogDebug(
+                    "Tile shape for {Model} changed to {Width}x{Height}; releasing the cached session so the execution provider's per-shape buffer cache cannot accumulate across the chapter.",
+                    Path.GetFileName(modelPath),
+                    paddedWidth,
+                    paddedHeight
+                );
+                sessionFactory.ReleaseCachedSessions();
+                GC.Collect();
+            }
 
-        logger.LogDebug(
-            "Tile shape for {Model} changed to {Width}x{Height}; releasing the cached session so the execution provider's per-shape buffer cache cannot accumulate across the chapter.",
-            Path.GetFileName(modelPath),
-            paddedWidth,
-            paddedHeight
-        );
-        sessionFactory.ReleaseCachedSessions();
-        GC.Collect();
+            // Scope before fetch, so an eviction on another thread cannot free the session between
+            // the two statements; the drain that disposes evicted sessions takes the write lock and
+            // therefore waits for this scope to end.
+            IDisposable scope = sessionFactory.EnterInferenceScope();
+            try
+            {
+                InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+                return (scope, session);
+            }
+            catch
+            {
+                scope.Dispose();
+                throw;
+            }
+        }
     }
 
     /// <summary>
@@ -1427,15 +1458,22 @@ public class OnnxUpscaleEngine(
         }
         catch (NonFiniteModelOutputException ex)
         {
-            // Structural: the provider ran the model but produced NaN/Inf, so the model itself
-            // cannot serve this scale on this device. Cache the verdict.
+            // Transient, not structural: the provider ran the model but produced NaN/Inf, the
+            // failure a driver reset or a mis-executing provider produces once — the reason the
+            // type is classified retryable upstream. Caching it made the *first* attempt terminal
+            // already: the candidate loop skips a cached-unusable model and then throws the generic
+            // permanent "no model can upscale" error, so the probe path defeated the retry before
+            // the real page was ever reached. The type is handed to the caller instead, so a probe
+            // that only failed this way surfaces as the retryable failure it is.
             sessionFactory.InvalidateSession(modelPath);
             logger.LogWarning(
                 ex,
-                "Model {Model} produced non-finite output during the device probe; skipping it.",
+                "Model {Model} produced non-finite output during the device probe; it will be retried.",
                 Path.GetFileName(modelPath)
             );
             usable = false;
+            cacheVerdict = false;
+            transientFailure = ex;
         }
         catch (Exception ex) when (IsTransientProbeFailure(ex))
         {

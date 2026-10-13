@@ -752,6 +752,12 @@ public sealed class OnnxSessionFactory(
             if (webGpuDevice is null)
             {
                 logger.LogWarning("No WebGPU compatible device found for {Model}.", modelName);
+                // Unknown rather than absent: the device list can be empty because the driver is
+                // not ready yet. Marking it lets a CPU resolution it caused be retried instead of
+                // latched — this probe has no negative availability flag, so a later session
+                // creation re-probes anyway and could attach WebGPU while GetEffectiveBackend()
+                // still said CPU.
+                _probeWasTransient = true;
                 return false;
             }
 
@@ -777,6 +783,11 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append WebGPU execution provider. Will try next provider or CPU fallback."
             );
+            // Not latched — see the CUDA probe for why a plain failure is not an absence verdict.
+            // This was the one probe the un-latching missed, so a WebGPU failure latched CPU for
+            // the process while CreateSession kept re-probing and could attach GPU sessions under
+            // the CPU identity.
+            _probeWasTransient = true;
             return false;
         }
     }

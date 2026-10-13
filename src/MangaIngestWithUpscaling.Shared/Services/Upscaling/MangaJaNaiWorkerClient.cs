@@ -279,6 +279,14 @@ public class MangaJaNaiWorkerClient(
                     }
                     catch (Exception ex) when (!IsInfrastructureFailure(ex))
                     {
+                        // Recorded and the stream continues, unlike the whole-CBZ path, which lets the
+                        // page failure propagate and aborts its archive. The difference is deliberate:
+                        // the chapter fails either way once the spool is finalized with a failed page
+                        // (PageStreamClient collects these and reports the chapter failed), but the
+                        // streamed path keeps the upload pipeline draining so the failure names every
+                        // page it reached instead of stopping at the first one. Only page-level
+                        // failures land here — anything that says something about the machine
+                        // (IsInfrastructureFailure) propagates so the task is requeued with its spool.
                         logger.LogError(ex, "Failed to upscale page {PageName}", page.Name);
                         RecordPage(
                             new UpscaleJobFile(page.Name, outPath, UpscaleJobStatus.Error),
@@ -372,6 +380,10 @@ public class MangaJaNaiWorkerClient(
     /// a permanent failure and dropped the spool of already-upscaled pages, the exact outcome the
     /// transient classification exists to prevent. <see cref="ObjectDisposedException"/> is the
     /// same class on the shutdown side: a session/eviction race, not a property of the page.
+    /// <see cref="TimeoutException"/> is included for the same reason the task classifier lists it as
+    /// transient: a page that ran out of time says nothing about its content, and without it the
+    /// per-page catch turned the timeout into a permanent page error while
+    /// <c>ClassifyStreamingFailure</c> would have requeued it.
     /// </para>
     /// </summary>
     private static bool IsInfrastructureFailure(Exception ex)
@@ -390,6 +402,7 @@ public class MangaJaNaiWorkerClient(
                         or UnauthorizedAccessException
                         or NonFiniteModelOutputException
                         or ObjectDisposedException
+                        or TimeoutException
                 || OnnxTiler.IsMemoryException(current)
             )
             {

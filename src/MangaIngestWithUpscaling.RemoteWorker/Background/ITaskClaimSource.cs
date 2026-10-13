@@ -26,7 +26,14 @@ public interface ITaskClaimSource
 public sealed class GrpcTaskClaimSource(UpscalingService.UpscalingServiceClient client)
     : ITaskClaimSource
 {
-    private bool serverLacksHintRpc;
+    /// <summary>
+    /// Process-level, not per instance: the claim source is registered transient and the claim loop
+    /// resolves it from a new DI scope every iteration, so an instance field reset itself before it
+    /// could ever help — the doomed hint RPC was paid again on every fetch. This is a fact about the
+    /// server the worker is talking to, so its lifetime is the worker process. Volatile because any
+    /// thread that resolves a claim source may read it.
+    /// </summary>
+    private static volatile bool serverLacksHintRpc;
 
     public async Task<UpscaleTaskDelegationResponse> RequestTaskWithHintAsync(
         CancellationToken stoppingToken

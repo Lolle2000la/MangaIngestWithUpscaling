@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.RemoteWorker.Background;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
@@ -87,6 +88,49 @@ public class EngineIdentityProviderTests
             string identityWebGpu = providerWebGpu.Upscaler;
 
             Assert.NotEqual(identityCuda, identityWebGpu);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The identity is recomputed when the resolved backend changes. GetEffectiveBackend is
+    /// deliberately not final — a CPU resolution produced by a transient probe failure is retried
+    /// every 60 s — so memoizing the identity forever let pages run on the recovered GPU under an
+    /// identity that still described CPU: the same-identity/different-pixels seam the identity exists
+    /// to forbid, and it silently defeated the spool reset a genuine backend change must cause.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Upscaler_FollowsAResolvedBackendChange()
+    {
+        string directory = Directory.CreateTempSubdirectory("engine_provider_backend").FullName;
+        try
+        {
+            var factory = Substitute.For<IOnnxSessionFactory>();
+            factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+            var options = Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = directory,
+                    PreferredGpuBackend = GpuBackend.Auto,
+                }
+            );
+            var provider = new EngineIdentityProvider(options, factory);
+
+            string unrecovered = provider.Upscaler;
+
+            // The same backend stays cached, so the directory walk is not repeated per page.
+            Assert.Equal(unrecovered, provider.Upscaler);
+
+            factory.GetEffectiveBackend().Returns(GpuBackend.WebGPU);
+            string recovered = provider.Upscaler;
+
+            Assert.NotEqual(unrecovered, recovered);
+            Assert.Equal(recovered, provider.Upscaler);
         }
         finally
         {

@@ -318,6 +318,57 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task NonFiniteOutput_IsNotCachedAsAPermanentVerdict_SoTheRetryStaysTransient()
+    {
+        // A page whose model returns NaN/Inf (a driver reset, a mis-executing provider) throws
+        // NonFiniteModelOutputException, which is classified transient upstream precisely so the worker
+        // is requeued with its spool of already-upscaled pages. Recording the failure as a permanent
+        // "model unusable" verdict defeated that: the retry skipped the only candidate and fell through
+        // to the generic "no model … can upscale" InvalidOperationException, which is permanent — the
+        // first attempt retryable, the second terminal and the spool gone, the exact inversion the
+        // transient classification was added to prevent. Both attempts must therefore surface the
+        // non-finite failure; what ends a provider that really cannot run the model is the server's
+        // soft-failure cap, not a process-lifetime verdict.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = new MemoryPressureSessionFactory(modelPath, scopeFailures: false);
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new TilerFaultEngine(
+            new NonFiniteModelOutputException(),
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        )
+        {
+            FailuresLeft = int.MaxValue,
+        };
+
+        for (int attempt = 1; attempt <= 2; attempt++)
+        {
+            string outputPath = Path.Combine(_tempDir, $"nonfinite_{attempt}.webp");
+            await Assert.ThrowsAsync<NonFiniteModelOutputException>(() =>
+                engine.UpscaleFileAsync(
+                    inputPath,
+                    outputPath,
+                    scale,
+                    CompressionFormat.Webp,
+                    quality: 80,
+                    TestContext.Current.CancellationToken
+                )
+            );
+            Assert.False(File.Exists(outputPath), "a failed page must not be published");
+        }
+    }
+
     /// <summary>
     /// Captures the engine's warnings so a test can assert what it decided. Only the formatted message
     /// is kept; the tests read the floor value out of it.
