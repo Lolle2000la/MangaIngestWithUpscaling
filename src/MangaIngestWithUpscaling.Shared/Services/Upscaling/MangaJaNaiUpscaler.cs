@@ -1212,16 +1212,21 @@ public class MangaJaNaiUpscaler(
     }
 
     /// <summary>
-    /// True for a response the server will answer the same way next time: a missing, forbidden or
-    /// otherwise rejected package. A transport error or a 5xx is left to the retry loop, which is what
-    /// it exists for.
+    /// True for a response the server will answer the same way next time: a package it does not
+    /// serve, or a request it will keep rejecting. A transport error or a 5xx is left to the retry
+    /// loop, which is what it exists for.
+    /// <para>
+    /// <see cref="HttpStatusCode.RequestTimeout"/> (408) and <see cref="HttpStatusCode
+    /// .TooManyRequests"/> (429) sit inside the 4xx range but are not deterministic: a busy origin
+    /// returns them to say "come back", and GitHub does under load. Classified as deterministic they
+    /// aborted the package on the first rate-limit — and, from
+    /// <c>DownloadModelsIfNecessary</c>, the whole startup — instead of retrying like a 5xx.
+    /// </para>
     /// </summary>
-    private static bool IsDeterministicHttpFailure(Exception ex) =>
-        ex
-            is HttpRequestException
-            {
-                StatusCode: >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError
-            };
+    internal static bool IsDeterministicHttpFailure(Exception ex) =>
+        ex is HttpRequestException http
+        && http.StatusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError
+        && http.StatusCode is not (HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests);
 }
 
 /// <summary>

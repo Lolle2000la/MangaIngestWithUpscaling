@@ -73,6 +73,149 @@ public class DeviceMemoryProfileTests
     }
 
     [Fact]
+    public void ScaleFor_IgnoresAModelMeasurementBelowTheCalibratorsFloor()
+    {
+        // The calibrator rejects anything below 0.2, so 0.1 is a value it can never have written —
+        // corrupt, not a measurement. The reader used to accept "> 0" and hand it on, only for the
+        // consumer (ResolveProfileFactors) to discard it again; the two now use the same bound.
+        var profile = new DeviceMemoryProfile { ActivationScale = 0.90, DeviceWideMeasured = true };
+        profile.Models[Key] = new ModelMemoryProfile { ActivationScale = 0.1 };
+
+        Assert.Equal(0.90, profile.ScaleFor(Model, ModelBytes));
+    }
+
+    [Fact]
+    public void ReservationFor_AcceptsTheCalibratorsCap()
+    {
+        // The calibrator only zeroes a reservation *above* 8 GiB, so exactly 8 GiB is a value it can
+        // write. The reader and the consumer both used "< 8 GiB" and rejected it, silently swapping
+        // the 384 MiB default in; the bound is inclusive to match the producer.
+        var profile = new DeviceMemoryProfile();
+        profile.Models[Key] = new ModelMemoryProfile
+        {
+            SessionReservationBytes = 8L * 1024 * 1024 * 1024,
+        };
+
+        Assert.Equal(8L * 1024 * 1024 * 1024, profile.ReservationFor(Model, ModelBytes));
+    }
+
+    [Fact]
+    public void Store_RoundTripsTheDeviceWideMeasuredFlag()
+    {
+        // The flag is the only thing that separates a measured device-wide 0/1.0 from an untouched
+        // skeleton, so it has to survive the JSON round trip as well as the in-memory read.
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            store.Save(
+                dir,
+                new DeviceMemoryProfile
+                {
+                    Fingerprint = "fp",
+                    ActivationScale = 0.90,
+                    SessionReservationBytes = 0,
+                    DeviceWideMeasured = true,
+                }
+            );
+
+            var reopened = new DeviceMemoryProfileStore(
+                NullLogger<DeviceMemoryProfileStore>.Instance
+            );
+            DeviceMemoryProfile? loaded = reopened.Load(dir, "fp");
+
+            Assert.NotNull(loaded);
+            Assert.True(loaded!.DeviceWideMeasured);
+            Assert.Equal(0.90, loaded.ScaleFor(Model, ModelBytes));
+            Assert.Equal(0, loaded.ReservationFor(Model, ModelBytes));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Store_ProfileWrittenBeforeTheFlag_ReadsAsUnmeasured()
+    {
+        // A file written before deviceWideMeasured existed has no such field, so it deserialises to
+        // false — which is exactly what its device-wide halves are. Without that, the skeleton's
+        // default 1.0/0 stood in for a measurement.
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(
+                DeviceMemoryProfileStore.PathFor(dir),
+                """
+                {
+                  "fp": {
+                    "fingerprint": "fp",
+                    "activationScale": 4.5,
+                    "sessionReservationBytes": 1048576
+                  }
+                }
+                """
+            );
+
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            DeviceMemoryProfile? loaded = store.Load(dir, "fp");
+
+            Assert.NotNull(loaded);
+            Assert.False(loaded!.DeviceWideMeasured);
+            Assert.Null(loaded.ScaleFor(Model, ModelBytes));
+            Assert.Null(loaded.ReservationFor(Model, ModelBytes));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Store_NullModelEntry_FallsBackToTheBuiltInsInsteadOfThrowing()
+    {
+        // A JSON "key": null deserialises to a null entry in the dictionary. Read as a measurement it
+        // threw a NullReferenceException out of every later resolve; the entry is dropped on load, so
+        // the profile resolves to the built-ins ("no measurement") like any other entry-less profile,
+        // and the calibrator's ContainsKey cache-hit test does not mistake it for a measurement.
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string key = DeviceMemoryProfile.ModelKey(Model, ModelBytes);
+            File.WriteAllText(
+                DeviceMemoryProfileStore.PathFor(dir),
+                $$"""
+                {
+                  "fp": {
+                    "fingerprint": "fp",
+                    "deviceWideMeasured": false,
+                    "models": {
+                      "{{key}}": null
+                    }
+                  }
+                }
+                """
+            );
+
+            var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+            DeviceMemoryProfile? loaded = store.Load(dir, "fp");
+
+            Assert.NotNull(loaded);
+            Assert.DoesNotContain(key, loaded!.Models.Keys);
+            Assert.Empty(loaded.Models);
+            Assert.Null(loaded.ScaleFor(Model, ModelBytes));
+            Assert.Null(loaded.ReservationFor(Model, ModelBytes));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ResolveProfileFactors_HonorsACalibratedZeroReservation()
     {
         // A calibration that measured no tile-independent footprint is a legitimate answer (the

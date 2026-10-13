@@ -17,7 +17,12 @@ public static class SplitDetectionLayout
 
     /// <summary>
     /// Resolves the absolute path to the ONNX page break detector model, searching the configured
-    /// models directory, application base, and repository relative locations.
+    /// models directory first and the application base directory second. Nothing else is probed:
+    /// the repository-relative <c>test_data/</c> fallback this used to try was the one place a
+    /// production process could load a detector the startup pinned-hash verification never covered
+    /// (it only repairs files under the models directory), so a file planted at the process CWD was
+    /// run unverified. Tests point <see cref="Root"/> or the models directory at their own fixture
+    /// instead.
     /// </summary>
     public static string ResolveModelPath(string? modelsDirectory = null)
     {
@@ -35,47 +40,9 @@ public static class SplitDetectionLayout
             return OnnxModelPath;
         }
 
-        // Only search host/repository fallback locations when running under the default root.
-        if (Root == AppContext.BaseDirectory)
-        {
-            string directModelsPath = Path.Combine(
-                AppContext.BaseDirectory,
-                "models",
-                "page_break_detector.onnx"
-            );
-            if (File.Exists(directModelsPath))
-            {
-                return directModelsPath;
-            }
-
-            string currentTestData = Path.Combine(
-                Directory.GetCurrentDirectory(),
-                "test_data",
-                "models",
-                "page_break_detector.onnx"
-            );
-            if (File.Exists(currentTestData))
-            {
-                return currentTestData;
-            }
-
-            string upwardTestData = Path.Combine(
-                AppContext.BaseDirectory,
-                "..",
-                "..",
-                "..",
-                "..",
-                "..",
-                "test_data",
-                "models",
-                "page_break_detector.onnx"
-            );
-            if (File.Exists(upwardTestData))
-            {
-                return Path.GetFullPath(upwardTestData);
-            }
-        }
-
+        // Not found anywhere yet: return the path the model is expected at (the configured models
+        // directory when one is set, otherwise the base directory) so the caller reports a
+        // FileNotFoundException naming where it looked, rather than searching somewhere unverified.
         return !string.IsNullOrEmpty(modelsDirectory)
             ? Path.Combine(modelsDirectory, "page_break_detector.onnx")
             : OnnxModelPath;

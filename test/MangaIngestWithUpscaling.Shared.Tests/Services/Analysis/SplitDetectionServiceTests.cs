@@ -1080,6 +1080,158 @@ public class SplitDetectionServiceTests : IDisposable
         );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_ModelWithAFixedWidthOtherThan768_ReportsAContractError()
+    {
+        // The detector resizes every page to 768 px wide, and the height stays dynamic. A model that
+        // bakes a different fixed width is a different file than the pinned export: it would reject
+        // every Run with a shape error naming neither the model nor the expectation, and — coming out
+        // of the session — would be remembered as a structural failure for the process. The contract
+        // check turns it into a clear, once-per-file message instead.
+        string modelsDir = Path.Combine(_root, "fixed_width_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx",
+            inputDims: [1, 3, -1, 1024]
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteDecodableImage("fixed_width.png"),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("fixed width of 1024", result.Error);
+        Assert.Contains("768", result.Error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_OnMemoryPressure_HalvesTheWindowAndRecovers()
+    {
+        // The plan is derived from a *measured* budget, and another process can take VRAM between the
+        // measurement and the run, so an over-committed window fails identically on every retry. The
+        // descent halves the chunk (the margin stays) and re-runs from a clean probs/peakMask; this is
+        // the recovery the production memory-pressure path relies on. Injected at the detector's Run
+        // seam so it needs no GPU: any window taller than the threshold fails, the halved windows are
+        // short enough, and the page still comes back detected.
+        string modelsDir = Path.Combine(_root, "descent_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+        // CPU forces the bounded default chunk (2048 rows over 7000), so the plan is the same on any
+        // host with or without a GPU; the descent then steps 2048 -> 1024 -> 512.
+        factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+        const int failingWindowRows = 4000;
+        int largestWindow = 0;
+        // The seam is AsyncLocal, so this reaches only this test's logical call chain and never a
+        // test running beside it (the same guarantee OnnxTiler.RunImplOverride relies on).
+        SplitDetectionService.RunImplOverride.Value = (runSession, inputs, outputNames, options) =>
+        {
+            int windowRows = inputs.First().AsTensor<float>().Dimensions[2];
+            largestWindow = Math.Max(largestWindow, windowRows);
+            if (windowRows > failingWindowRows)
+            {
+                throw new OutOfMemoryException("injected device memory pressure");
+            }
+
+            return runSession.Run(inputs, outputNames, options);
+        };
+
+        var logger = new CapturingLogger();
+        var service = new SplitDetectionService(
+            factory,
+            logger,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteGradientImage("descent.png", 7000),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        // A window that would not fit was attempted (so the descent was needed)...
+        Assert.True(
+            largestWindow > failingWindowRows,
+            $"no over-budget window was attempted; largest was {largestWindow} rows"
+        );
+        Assert.Contains(
+            logger.Messages,
+            m => m.Contains("halving the window and retrying", StringComparison.Ordinal)
+        );
+        // ...and the page came back fully detected from the smaller windows.
+        Assert.Null(result.Error);
+        Assert.NotEmpty(result.Splits);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ResolveModelPath_DoesNotLoadATestDataFixtureUnderTheProcessCwd()
+    {
+        // The removed repository-relative fallback loaded <CWD>/test_data/models/page_break_detector.onnx
+        // as the detector, and the startup pinned-hash verification only covers the models directory,
+        // so a file planted there ran unverified. With it gone, the only places a missing detector is
+        // looked for are the configured models directory and the application base directory — even
+        // when the old fixture location exists and the root is the default one.
+        string previousRoot = SplitDetectionLayout.Root;
+        string fixtureDir = Path.Combine(Directory.GetCurrentDirectory(), "test_data", "models");
+        string fixture = Path.Combine(fixtureDir, "page_break_detector.onnx");
+        bool fixtureDirExisted = Directory.Exists(fixtureDir);
+        bool fixtureExisted = File.Exists(fixture);
+        SplitDetectionLayout.Root = AppContext.BaseDirectory;
+        try
+        {
+            Directory.CreateDirectory(fixtureDir);
+            File.WriteAllBytes(fixture, [1, 2, 3]);
+
+            string modelsDir = Path.Combine(_root, "empty_models");
+            Directory.CreateDirectory(modelsDir);
+
+            string resolved = SplitDetectionLayout.ResolveModelPath(modelsDir);
+
+            Assert.NotEqual(fixture, resolved);
+            Assert.Equal(Path.Combine(modelsDir, "page_break_detector.onnx"), resolved);
+        }
+        finally
+        {
+            SplitDetectionLayout.Root = previousRoot;
+            if (!fixtureExisted && File.Exists(fixture))
+            {
+                File.Delete(fixture);
+            }
+
+            if (!fixtureDirExisted && Directory.Exists(fixtureDir))
+            {
+                Directory.Delete(fixtureDir, recursive: true);
+            }
+        }
+    }
+
     /// <summary>An ILogger that records the formatted messages, for asserting logged decisions.</summary>
     private sealed class CapturingLogger : ILogger<SplitDetectionService>
     {

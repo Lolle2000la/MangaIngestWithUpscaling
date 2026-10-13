@@ -1951,6 +1951,72 @@ public class OnnxTilerTests : IDisposable
         Assert.InRange(free, 0, total - used);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void UpscaleRgb_CancelledBeforeTheDecode_ReleasesTheOutputCollectionOnTheCancelledPath()
+    {
+        // The pipelined path hands the native output collection to a Task.Run decode, and owns it only
+        // until that task takes it. When the token is cancelled before the task starts, the delegate
+        // never runs, so the continuation has to release the collection — the branch the direct
+        // DecodeOutputTensor test cannot reach. A multi-tile page forces the pipeline (the single-tile
+        // path decodes inline); the run override cancels the token and returns a collection that counts
+        // its disposals, so the assertion is that exactly one owner freed it.
+        string dir = CreateDir();
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(dir, scale: 2);
+        using var session = new InferenceSession(modelPath);
+
+        const int width = 512;
+        const int height = 512;
+        const int scale = 2;
+        byte[] rgb = new byte[width * height * 3];
+        OnnxTiler.TileSplit split = OnnxTiler.TileSplit.For(width, height, 128);
+        var outputs = new CountingEmptyOutputCollection();
+        using var cts = new CancellationTokenSource();
+
+        OnnxTiler.RunImplOverride.Value = (_, _) =>
+        {
+            cts.Cancel();
+            return outputs;
+        };
+
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+            OnnxTiler.UpscaleRgb(
+                rgb,
+                width,
+                height,
+                scale,
+                session,
+                split,
+                cancellationToken: cts.Token
+            )
+        );
+
+        Assert.Equal(1, outputs.DisposeCount);
+    }
+
+    /// <summary>
+    /// An empty ONNX output collection that counts how often it is disposed, so a test can tell a
+    /// single-owner release from a double one. Empty because the delegate that would read it never
+    /// runs on the cancelled path this is used for.
+    /// </summary>
+    private sealed class CountingEmptyOutputCollection
+        : IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
+    {
+        public int DisposeCount { get; private set; }
+
+        public int Count => 0;
+
+        public DisposableNamedOnnxValue this[int index] => throw new IndexOutOfRangeException();
+
+        public IEnumerator<DisposableNamedOnnxValue> GetEnumerator() =>
+            Enumerable.Empty<DisposableNamedOnnxValue>().GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+            GetEnumerator();
+
+        public void Dispose() => DisposeCount++;
+    }
+
     private string CreateDir()
     {
         string dir = Path.Combine(Path.GetTempPath(), $"tiler_tests_{Guid.NewGuid():N}");

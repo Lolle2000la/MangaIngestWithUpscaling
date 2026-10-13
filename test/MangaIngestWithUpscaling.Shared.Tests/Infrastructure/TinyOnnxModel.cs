@@ -94,6 +94,16 @@ internal static class TinyOnnxModel
     private const int TensorType = 1;
     private const int TensorElemType = 1;
 
+    // TypeProto.Tensor.shape -> TensorShapeProto { repeated Dimension dim = 1 }
+    private const int TypeProtoTensorShape = 2;
+
+    private const int TensorShapeDim = 1;
+
+    // TensorShapeProto.Dimension is a oneof of dim_value / dim_param
+    private const int TensorShapeDimensionDimValue = 1;
+
+    private const int TensorShapeDimensionDimParam = 2;
+
     /// <summary>
     /// Writes a model that upsamples its input by nearest-neighbour resampling: the output is
     /// (1, channels, H * <paramref name="scale"/>, W * <paramref name="scale"/>) and the values
@@ -419,11 +429,18 @@ internal static class TinyOnnxModel
     /// because the convolution's context is fully inside the window; a smaller one reads the
     /// window's zero padding where the whole-page pass reads real rows.
     /// </param>
+    /// <param name="inputDims">
+    /// Optional fixed input shape to declare on the graph input, as <c>[N, C, H, W]</c> (a
+    /// non-positive entry is written as a dynamic dimension). Omitting it leaves the input rankless,
+    /// as every other generated model is; a fixed width that is not the detector's 768 is what the
+    /// detector's contract check rejects.
+    /// </param>
     public static string WritePeakMaskDetector(
         string directory,
         string fileName = "tiny-detector.onnx",
         bool nonFiniteProbabilities = false,
-        int contextRadius = 0
+        int contextRadius = 0,
+        int[]? inputDims = null
     ) =>
         Write(
             directory,
@@ -581,7 +598,7 @@ internal static class TinyOnnxModel
                             BitConverter.GetBytes(0.5f)
                         );
 
-                        WriteValueInfo(graph, GraphInput, InputName, fp16: false);
+                        WriteValueInfo(graph, GraphInput, InputName, fp16: false, dims: inputDims);
                         WriteValueInfo(graph, GraphOutput, PeakMaskName, fp16: false, asBool: true);
                         WriteValueInfo(graph, GraphOutput, ProbabilitiesName, fp16: false);
                     }
@@ -594,7 +611,8 @@ internal static class TinyOnnxModel
         int field,
         string name,
         bool fp16,
-        bool asBool = false
+        bool asBool = false,
+        int[]? dims = null
     ) =>
         WriteMessage(
             graph,
@@ -619,6 +637,46 @@ internal static class TinyOnnxModel
                                     : fp16 ? ElementTypeFp16
                                     : ElementTypeFp32;
                                 WriteVarintField(tensor, TensorElemType, (ulong)elementType);
+
+                                if (dims is not null)
+                                {
+                                    WriteMessage(
+                                        tensor,
+                                        TypeProtoTensorShape,
+                                        shape =>
+                                        {
+                                            foreach (int dim in dims)
+                                            {
+                                                WriteMessage(
+                                                    shape,
+                                                    TensorShapeDim,
+                                                    dimension =>
+                                                    {
+                                                        if (dim > 0)
+                                                        {
+                                                            WriteVarintField(
+                                                                dimension,
+                                                                TensorShapeDimensionDimValue,
+                                                                (ulong)dim
+                                                            );
+                                                        }
+                                                        else
+                                                        {
+                                                            // A non-positive dimension is dynamic;
+                                                            // ONNX Runtime reports it as -1 in
+                                                            // NodeMetadata.Dimensions.
+                                                            WriteString(
+                                                                dimension,
+                                                                TensorShapeDimensionDimParam,
+                                                                "dyn"
+                                                            );
+                                                        }
+                                                    }
+                                                );
+                                            }
+                                        }
+                                    );
+                                }
                             }
                         );
                     }

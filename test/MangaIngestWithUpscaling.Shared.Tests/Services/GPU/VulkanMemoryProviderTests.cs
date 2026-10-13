@@ -54,6 +54,24 @@ public class VulkanMemoryProviderTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
+    public void MemoryPropertiesStruct_PinsThe64BitHeapStrideTheReaderIsGuardedTo()
+    {
+        // VkPhysicalDeviceMemoryProperties is read through an explicit layout whose VkMemoryHeap
+        // stride is 16 bytes — the native one on a 64-bit ABI only (the 8-byte VkDeviceSize member
+        // forces it). A 32-bit ABI can use 12, so QueryDeviceInternal returns null (no Vulkan metrics)
+        // below 64-bit rather than mis-striding the heap table; OnnxTiler then falls through to DRM
+        // sysfs / nvidia-smi. This pins the layout that guard exists for.
+        Assert.Equal(
+            (nint)264,
+            Marshal.OffsetOf<VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties>(
+                nameof(VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties.memoryHeapCount)
+            ) + sizeof(uint)
+        );
+        Assert.Equal(520, Marshal.SizeOf<VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties>());
+    }
+
+    [Fact]
     public void IsAvailable_DoesNotThrow()
     {
         // Calling IsAvailable should probe safely and never throw an unhandled native exception

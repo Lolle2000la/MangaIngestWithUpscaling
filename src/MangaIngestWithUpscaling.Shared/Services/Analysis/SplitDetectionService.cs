@@ -48,10 +48,17 @@ public class SplitDetectionService(
     private const int DetectorInputWidth = 768;
 
     /// <summary>
-    /// Chunk used when no memory budget could be measured at all (a device with no VRAM reporting, or
-    /// CPU inference), where "no budget" is not evidence of abundance. It is the reference's window and
-    /// the model's training crop, and it bounds the footprint to one window rather than the page;
-    /// anything smaller barely helps, because the context margin dominates a window's size.
+    /// Chunk used when the caller reported "no budget measurable" (<c>budgetBytes &lt;= 0</c>), where
+    /// "no budget" is not evidence of abundance. It is the reference's window and the model's training
+    /// crop, and it bounds the footprint to one window rather than the page; anything smaller barely
+    /// helps, because the context margin dominates a window's size.
+    /// <para>
+    /// The only production caller that can report this is the explicit CPU path
+    /// (<see cref="DetectSingleImageAsync"/> treats a CPU backend as unmeasurable). A GPU with no
+    /// working VRAM query does <em>not</em> reach it: <see cref="OnnxTiler.GetAvailableVramBudget"/>
+    /// falls through to a fabricated 4 GiB, which is a budget, not "no budget" — so that plan is
+    /// trusted and only the memory-pressure descent below recovers an over-commit.
+    /// </para>
     /// </summary>
     private const int DetectorDefaultChunkRows = 2048;
 
@@ -107,9 +114,11 @@ public class SplitDetectionService(
             return (1, 0);
         }
 
-        // No budget could be measured: neither the page nor a window has a known ceiling, so use the
-        // bounded default rather than assuming the device is roomy (the tile planner reaches for its
-        // quality floor in the same situation).
+        // The caller reported no measurable budget. In production that is only the explicit CPU path
+        // (DetectSingleImageAsync), where "no budget" is genuine; a GPU whose VRAM cannot be queried
+        // gets OnnxTiler's fabricated 4 GiB instead and never lands here. Either way "no budget" is
+        // not evidence of abundance, so use the bounded default rather than assuming the device is
+        // roomy (the tile planner reaches for its quality floor in the same situation).
         if (budgetBytes <= 0)
         {
             int defaultChunk = Math.Min(pageRows, DetectorDefaultChunkRows);
@@ -631,9 +640,10 @@ public class SplitDetectionService(
                                 // with a RunOptions the null-outputNames overload does not hand back every
                                 // output, and these are the only two this reads.
                                 using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> windowOutputs =
-                                    localSession.Run(
+                                    RunDetector(
+                                        localSession,
                                         inputs,
-                                        new[] { PeakMaskOutputName, ProbabilitiesOutputName },
+                                        [PeakMaskOutputName, ProbabilitiesOutputName],
                                         runOptions
                                     );
 
@@ -891,6 +901,40 @@ public class SplitDetectionService(
     /// safe to free.
     /// </summary>
     internal static bool RunIsStillGoing(Task? abandoned) => abandoned is { IsCompleted: false };
+
+    /// <summary>
+    /// The detector's <c>session.Run</c>, as a test seam that mirrors
+    /// <see cref="OnnxTiler.RunImplOverride"/>: a test injects a run that fails with memory pressure
+    /// above a window size, so the detector's memory-pressure descent can be exercised without a GPU
+    /// and without an unreproducible allocation. The override is <see cref="AsyncLocal{T}"/> so a
+    /// test's injection is visible only to its own logical call chain; production never sets it and
+    /// the real call always runs.
+    /// </summary>
+    internal static AsyncLocal<
+        Func<
+            InferenceSession,
+            IReadOnlyCollection<NamedOnnxValue>,
+            IReadOnlyCollection<string>,
+            RunOptions,
+            IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
+        >
+    > RunImplOverride { get; } = new();
+
+    private static readonly Func<
+        InferenceSession,
+        IReadOnlyCollection<NamedOnnxValue>,
+        IReadOnlyCollection<string>,
+        RunOptions,
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
+    > DefaultRun = static (session, inputs, outputNames, runOptions) =>
+        session.Run(inputs, outputNames, runOptions);
+
+    private static IDisposableReadOnlyCollection<DisposableNamedOnnxValue> RunDetector(
+        InferenceSession session,
+        IReadOnlyCollection<NamedOnnxValue> inputs,
+        IReadOnlyCollection<string> outputNames,
+        RunOptions runOptions
+    ) => (RunImplOverride.Value ?? DefaultRun)(session, inputs, outputNames, runOptions);
 
     /// <summary>
     /// Observe the fault of a detection task that <c>Task.WaitAsync</c> may abandon on a timeout or

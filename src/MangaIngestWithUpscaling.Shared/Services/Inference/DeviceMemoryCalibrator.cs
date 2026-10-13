@@ -169,15 +169,22 @@ public sealed class DeviceMemoryCalibrator(
                 ? null
                 : DeviceMemoryProfile.ModelKey(modelPath, FileLength(modelPath));
 
-            // Nothing to measure: the profile is cached and, when a model was named, it already
-            // carries that model's own measurement. Returning the stored profile untouched is what
-            // keeps a cached device from touching the GPU at all. Skipped on a forced run, which is
-            // asking for exactly the measurement this check would short-circuit.
-            if (
-                !force
-                && cached is not null
-                && (modelKey is null || cached.Models.ContainsKey(modelKey))
-            )
+            // Nothing to measure: the profile is cached and already carries the requested measurement
+            // — the model's own entry when a model was named, the measured device-wide default for the
+            // device-wide entry point. Returning the stored profile untouched is what keeps a cached
+            // device from touching the GPU at all. Skipped on a forced run, which is asking for exactly
+            // the measurement this check would short-circuit.
+            //
+            // The device-wide test is DeviceWideMeasured, not "the profile exists": the production path
+            // (GetOrCalibrateForModelAsync) writes per-model entries and leaves the device-wide fields
+            // at their CLR defaults, so a cached profile with a model key is not evidence that the
+            // device-wide half was ever measured. Treating it as one left the device-wide default
+            // unmeasured — contrary to GetOrCalibrateAsync's contract — and a later model without its
+            // own entry then got no measurement at all instead of the device-wide fallback.
+            bool alreadyMeasured = modelKey is null
+                ? cached is not null && cached.DeviceWideMeasured
+                : cached is not null && cached.Models.ContainsKey(modelKey);
+            if (!force && alreadyMeasured)
             {
                 return cached;
             }

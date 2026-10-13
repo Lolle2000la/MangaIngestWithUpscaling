@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -1209,6 +1210,40 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 package,
                 markerPath,
                 TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(HttpStatusCode.BadRequest, true)] // 400: the request itself is wrong
+    [InlineData(HttpStatusCode.NotFound, true)] // 404: the package is not served
+    [InlineData(HttpStatusCode.Forbidden, true)] // 403: the package is not served to us
+    [InlineData(HttpStatusCode.RequestTimeout, false)] // 408: transient, retry
+    [InlineData(HttpStatusCode.TooManyRequests, false)] // 429: a rate limit says "come back"
+    [InlineData(HttpStatusCode.InternalServerError, false)] // 5xx
+    [InlineData(HttpStatusCode.BadGateway, false)]
+    public void IsDeterministicHttpFailure_OnlyRejectsTheStatusesThatCannotChange(
+        HttpStatusCode status,
+        bool expected
+    )
+    {
+        // The 4xx range was deterministic wholesale, so GitHub's 429 (and 408) under load aborted the
+        // package on the first response — and, from DownloadModelsIfNecessary, the whole startup.
+        // Those two are transient and now retry like a 5xx; the rest repeat verbatim.
+        var ex = new HttpRequestException("download failed", inner: null, status);
+
+        Assert.Equal(expected, MangaJaNaiUpscaler.IsDeterministicHttpFailure(ex));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void IsDeterministicHttpFailure_ATransportErrorWithoutStatusIsRetried()
+    {
+        // A reset connection carries no status and must reach the retry loop.
+        Assert.False(
+            MangaJaNaiUpscaler.IsDeterministicHttpFailure(
+                new HttpRequestException("connection reset")
             )
         );
     }

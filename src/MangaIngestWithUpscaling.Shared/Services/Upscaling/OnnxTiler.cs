@@ -900,11 +900,16 @@ public static class OnnxTiler
         // null means nothing was measured for this model (neither its own entry nor a measured
         // device-wide default), so the built-in stays; a *measured* 0 is a value and is honored.
         double? measuredScale = profile.ScaleFor(modelNameOrPath, modelSizeBytes);
-        // The same range the calibrator refuses to write (DeviceMemoryCalibrator): a profile value
-        // outside it is corrupt. The old read bound (> 0 and < 12) accepted a value a hundred times too
-        // small, which shrinks the predicted activation and oversizes the tile, and rejected exactly
-        // 12.0, which the calibrator is willing to write.
-        if (measuredScale is { } scale and >= 0.2 and <= 12.0)
+        // The same closed range the calibrator refuses to write outside (DeviceMemoryCalibrator) and
+        // the profile reader applies (DeviceMemoryProfile.MinActivationScale/MaxActivationScale): a
+        // profile value outside it is corrupt. Kept here too because this method is also the consumer
+        // of a profile handed in directly (tests, callers) rather than only through the reader.
+        if (
+            measuredScale is { } scale
+            && scale
+                is >= DeviceMemoryProfile.MinActivationScale
+                    and <= DeviceMemoryProfile.MaxActivationScale
+        )
         {
             activationScale = scale;
         }
@@ -914,7 +919,12 @@ public static class OnnxTiler
         // session lives inside the activation estimate) is a legitimate answer, and the
         // calibrator writes exactly 0 for one. Rejecting it silently swapped the 384 MiB
         // default in, oversizing every tile of that model for the rest of the profile's life.
-        if (measuredReservation is { } reservation and >= 0 and < 8L * 1024 * 1024 * 1024)
+        // The upper bound is inclusive, matching the calibrator's cap (it zeroes a reservation
+        // only *above* DeviceMemoryProfile.MaxSessionReservationBytes).
+        if (
+            measuredReservation is { } reservation
+            && reservation is >= 0 and <= DeviceMemoryProfile.MaxSessionReservationBytes
+        )
         {
             sessionReservation = reservation;
         }
@@ -1886,9 +1896,26 @@ public static class OnnxTiler
                     }
 
                     prevJob = currentJob;
+                    // Ownership of the native output collection is handed to whichever path gets there
+                    // first. Task.Run returns an already-cancelled task without running the delegate
+                    // when the token is signalled before it starts, so the delegate is not the
+                    // guaranteed owner; but the task is *also* cancelled when the delegate ran and
+                    // threw OperationCanceledException (DecodeOutputTensor's own check), and the
+                    // delegate disposes the collection itself in that case. A flag set by the delegate
+                    // before it touches the collection is what tells the continuation which of the two
+                    // happened, so exactly one path frees it. (ONNX Runtime's output collections guard
+                    // Dispose on an _disposed flag, so a second dispose would be a no-op today, but
+                    // the "task is Canceled" test alone cannot tell "never ran" from "ran and
+                    // cancelled" — the ownership must not rest on that coincidence.)
+                    var outputOwnership = new OutputCollectionOwnership();
                     prevDecodeTask = Task.Run(
                         () =>
-                            DecodeOutputTensor(
+                        {
+                            // Claimed before anything else touches `outputs`; the continuation runs
+                            // after this task completes, so a started delegate is always visible to
+                            // it.
+                            outputOwnership.TryClaim();
+                            return DecodeOutputTensor(
                                 outputs,
                                 currentJob.PaddedW,
                                 currentJob.PaddedH,
@@ -1896,18 +1923,18 @@ public static class OnnxTiler
                                 effPaddedH,
                                 scale,
                                 cancellationToken
-                            ),
+                            );
+                        },
                         cancellationToken
                     );
 
-                    // Task.Run returns an already-cancelled task without running the delegate when the
-                    // token is signalled first, so ownership of `outputs` never reaches
-                    // DecodeOutputTensor. Release it in that case; when the delegate does run it
-                    // disposes the collection itself (see DecodeOutputTensor).
                     prevDecodeTask.ContinueWith(
                         completed =>
                         {
-                            if (completed.IsCanceled)
+                            // Claim only when the delegate never ran (a task cancelled before it
+                            // started): a delegate that did run already owns the collection through
+                            // DecodeOutputTensor.
+                            if (completed.IsCanceled && outputOwnership.TryClaim())
                             {
                                 outputs.Dispose();
                             }
@@ -2014,6 +2041,23 @@ public static class OnnxTiler
         {
             // Observed and dropped: the primary exception is what the caller needs to see.
         }
+    }
+
+    /// <summary>
+    /// Single-owner handoff for a native output collection in the pipelined tiling path. The decode
+    /// delegate and the continuation that reacts to its cancellation both have a reason to release it,
+    /// and exactly one of them may: <see cref="TryClaim"/> returns true for the first caller only. The
+    /// delegate claims before it touches the collection; the continuation claims only when the task
+    /// was cancelled before the delegate started. ONNX Runtime's output collections guard
+    /// <c>Dispose</c> on their own <c>_disposed</c> flag, so a second dispose is a no-op today, but
+    /// that is the runtime's implementation detail and is not what ownership should rest on.
+    /// </summary>
+    private sealed class OutputCollectionOwnership
+    {
+        private int _claimed;
+
+        /// <summary>True for the first caller; false for every later one.</summary>
+        public bool TryClaim() => Interlocked.CompareExchange(ref _claimed, 1, 0) == 0;
     }
 
     private readonly record struct TileJob(

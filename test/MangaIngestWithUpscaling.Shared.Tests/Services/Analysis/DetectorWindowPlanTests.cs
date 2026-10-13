@@ -36,8 +36,13 @@ public class DetectorWindowPlanTests
             budgetBytes: 2 * GiB
         );
 
-        Assert.True(windowCount > 1, $"expected more than one window, got {windowCount}");
-        Assert.Equal((15000 + chunkRows - 1) / chunkRows, windowCount);
+        // Pinned literally, not recomputed from the production constants: these are the documented
+        // measurement (DetectorBytesPerRow = 420000 B/row, DetectorFixedBytes = 32 MiB), so a change
+        // to either shows up here instead of quietly re-deriving a passing expectation. 2 GiB × 0.9
+        // leaves 1899180851 B for a window; minus 32 MiB that is 4521 affordable *window* rows, and
+        // the 1536-row margin on both sides leaves a 1449-row chunk — 11 windows over 15000 rows.
+        Assert.Equal(1449, chunkRows);
+        Assert.Equal(11, windowCount);
 
         // The window, not the chunk, is what has to fit: chunk plus the margin on each side (clamped
         // to the page, which the first and last window are).

@@ -104,6 +104,11 @@ public static class VulkanMemoryProvider
         public uint flags;
     }
 
+    /// <summary>
+    /// 64-bit layout only: the heap stride below is 16 bytes, which is what the native struct uses on
+    /// a 64-bit ABI. A 32-bit ABI can use 12, so <see cref="QueryDeviceInternal"/> refuses to read
+    /// this struct unless <see cref="IntPtr.Size"/> is 8 rather than return mis-strided heaps.
+    /// </summary>
     [StructLayout(LayoutKind.Explicit, Size = 520)]
     internal unsafe struct VkPhysicalDeviceMemoryProperties
     {
@@ -117,7 +122,7 @@ public static class VulkanMemoryProvider
         public uint memoryHeapCount;
 
         [FieldOffset(264)]
-        public fixed byte memoryHeaps[16 * 16]; // 16 * VkMemoryHeap (16 bytes each)
+        public fixed byte memoryHeaps[16 * 16]; // 16 * VkMemoryHeap (16 bytes each on a 64-bit ABI)
     }
 
     // Sequential, not explicit offsets: both structs carry an IntPtr pNext, whose offset differs
@@ -568,6 +573,19 @@ public static class VulkanMemoryProvider
         int acceleratorIndex
     )
     {
+        // The heap table is read through VkPhysicalDeviceMemoryProperties, whose explicit layout uses
+        // a 16-byte VkMemoryHeap stride — correct on a 64-bit ABI, where the struct's 8-byte
+        // VkDeviceSize member forces that alignment. A 32-bit ABI can lay VkMemoryHeap out at 12
+        // bytes (Linux/i386's 4-byte alignment for 64-bit integers), so every heap past the first
+        // would be read at the wrong offset and reported as garbage. The native stride is not
+        // recoverable from managed code — it is 16 under the Windows x86 ABI — so rather than guess,
+        // report no Vulkan metrics on a non-64-bit runtime and let OnnxTiler.GetAvailableVramBudget
+        // fall through to DRM sysfs / nvidia-smi, which do not depend on this struct.
+        if (IntPtr.Size != 8)
+        {
+            return null;
+        }
+
         if (
             _physicalDevices == null
             || physicalIndex < 0
@@ -811,8 +829,11 @@ public static class VulkanMemoryProvider
                     return;
                 }
 
-                // Register process exit hook to cleanly destroy Vulkan instance
-                AppDomain.CurrentDomain.ProcessExit += (_, _) => Shutdown();
+                // Register process exit hook to cleanly destroy Vulkan instance. It must not free the
+                // loader: the exit path can run while another thread is mid-query, and the native
+                // function pointers this class holds point into that library, so freeing it there is
+                // a use-after-free. Leaving it mapped at exit costs nothing — the OS reclaims it.
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => Shutdown(freeLoader: false);
 
                 IntPtr pfnProps2 = _vkGetInstanceProcAddr(
                     _instance,
@@ -926,7 +947,7 @@ public static class VulkanMemoryProvider
             catch
             {
                 // Silently handle any initialization failure and degrade gracefully
-                Shutdown();
+                Shutdown(freeLoader: true);
             }
             finally
             {
@@ -940,7 +961,18 @@ public static class VulkanMemoryProvider
         }
     }
 
-    private static void Shutdown()
+    /// <summary>
+    /// Destroys the Vulkan instance and clears the provider's published state.
+    /// <para>
+    /// <paramref name="freeLoader"/> must be false when this runs from the process-exit hook: the
+    /// native function pointers this class holds point into the loader library, so freeing it while
+    /// another thread may still be inside a query is a use-after-free. It is true only on the
+    /// initialization-failure path, where <see cref="EnsureInitialized"/> still holds
+    /// <see cref="InitLock"/> and no query can be in flight (<c>_initAttempted</c> is not published
+    /// until the finally).
+    /// </para>
+    /// </summary>
+    private static void Shutdown(bool freeLoader)
     {
         lock (InitLock)
         {
@@ -973,8 +1005,9 @@ public static class VulkanMemoryProvider
             // The loader's reference is process-lifetime otherwise: it was loaded once and never
             // freed, so a forked process or anything inspecting our library set kept seeing it.
             // Freed only after the instance is destroyed and nothing can call into it anymore
-            // (_initAttempted stays true, so nothing re-initializes into a freed library).
-            if (_vulkanLib != IntPtr.Zero)
+            // (_initAttempted stays true, so nothing re-initializes into a freed library) — and only
+            // when the caller can prove no query is in flight.
+            if (freeLoader && _vulkanLib != IntPtr.Zero)
             {
                 try
                 {

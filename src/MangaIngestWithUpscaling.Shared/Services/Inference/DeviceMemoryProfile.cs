@@ -97,8 +97,41 @@ public sealed class DeviceMemoryProfile
         // same before and after a round trip. Ordinal rather than OrdinalIgnoreCase: the key is
         // generated from the same path string it is looked up with, and the engine's model maps are
         // ordinal so that distinct files stay distinct.
-        set => _models = new(value ?? [], StringComparer.Ordinal);
+        //
+        // A JSON null value ("model": null, e.g. a hand-edited or truncated file) deserialises to a
+        // null entry at runtime. Dropped here rather than only guarded at the read sites below: an
+        // entry that is *present* but null otherwise reads to the calibrator as "already measured"
+        // (its cache-hit test is ContainsKey), so the model would never be benchmarked and would
+        // silently keep the built-in coefficients forever.
+        set =>
+            _models = value is null
+                ? new Dictionary<string, ModelMemoryProfile>(StringComparer.Ordinal)
+                : value
+                    .Where(entry => entry.Value is not null)
+                    .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// The closed range the calibrator writes and the planner accepts for
+    /// <see cref="ActivationScale"/>. The calibrator refuses a measurement outside it
+    /// (<c>DeviceMemoryCalibrator.RunBenchmark</c>), so a value outside this range is a corrupt profile
+    /// rather than a measurement, and reading it as one would replace the built-in with nonsense. Both
+    /// ends are inclusive because the calibrator's own check is <c>&lt; 0.2 or &gt; 12.0</c>: exactly
+    /// 12.0 is a real measurement taken at the cap, and rejecting it discarded that model's own
+    /// measurement.
+    /// </summary>
+    internal const double MinActivationScale = 0.2;
+
+    internal const double MaxActivationScale = 12.0;
+
+    /// <summary>
+    /// Upper bound, inclusive, on <see cref="SessionReservationBytes"/> and its per-model counterpart,
+    /// shared by the calibrator, this resolver and the planner. 0 is a valid measurement, not "no
+    /// measurement" — the calibrator writes exactly 0 when it measures no tile-independent footprint —
+    /// so the bound is closed at both ends and the distinction from "unmeasured" is
+    /// <see cref="DeviceWideMeasured"/>, never the value.
+    /// </summary>
+    internal const long MaxSessionReservationBytes = 8L * 1024 * 1024 * 1024;
 
     /// <summary>
     /// The activation scale to plan <paramref name="modelNameOrPath"/> with: its own measurement if
@@ -110,16 +143,24 @@ public sealed class DeviceMemoryProfile
         // The same closed bound the calibrator writes and the tiler's consumer accepts: the
         // calibrator stores exactly 12.0 when a model measures at the cap, and a reader rejecting
         // the boundary silently substituted the device-wide default for that model's own
-        // measurement.
+        // measurement. The lower bound is the writer's (0.2), not "> 0": a value between 0 and 0.2 is
+        // one the calibrator would have refused, so it is corruption, and the consumer would discard
+        // it anyway — returning it only to be filtered is the same as not having the bound at all.
         if (
             Models.TryGetValue(ModelKey(modelNameOrPath, modelSizeBytes), out ModelMemoryProfile? m)
-            && m.ActivationScale is > 0 and <= 12
+            && m is not null
+            && m.ActivationScale is >= MinActivationScale and <= MaxActivationScale
         )
         {
             return m.ActivationScale;
         }
 
-        return DeviceWideMeasured ? ActivationScale : null;
+        // The device-wide half is held to the same range: it is written by the same calibrator and its
+        // value is only ever used when DeviceWideMeasured says the producer really filled it in.
+        return
+            DeviceWideMeasured && ActivationScale is >= MinActivationScale and <= MaxActivationScale
+            ? ActivationScale
+            : null;
     }
 
     /// <summary>
@@ -132,13 +173,17 @@ public sealed class DeviceMemoryProfile
     {
         if (
             Models.TryGetValue(ModelKey(modelNameOrPath, modelSizeBytes), out ModelMemoryProfile? m)
-            && m.SessionReservationBytes is >= 0 and < 8L * 1024 * 1024 * 1024
+            && m is not null
+            && m.SessionReservationBytes is >= 0 and <= MaxSessionReservationBytes
         )
         {
             return m.SessionReservationBytes;
         }
 
-        return DeviceWideMeasured ? SessionReservationBytes : null;
+        return
+            DeviceWideMeasured && SessionReservationBytes is >= 0 and <= MaxSessionReservationBytes
+            ? SessionReservationBytes
+            : null;
     }
 
     /// <summary>
