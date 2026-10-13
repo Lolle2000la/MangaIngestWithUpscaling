@@ -78,7 +78,10 @@ configuration surface. Nothing here requires a data migration; the database sche
   difference 0.0, no differing peaks) — so the budget is free to buy the faster whole-page pass. What
   makes a window exact is its context margin, not its length.
 * The window carries **1536 rows of context** beyond the rows it is trusted for, deliberately more than
-  the reference's 512. The model's vertical receptive field is 1423 rows: the dilated residual stack
+  the reference's 512. Throughout this section *the reference* is the upstream project
+  [Lolle2000la/manga-vert-split-nn](https://github.com/Lolle2000la/manga-vert-split-nn) — the model's
+  training/calibration code, so `calibrate.py` and `STRIP_LENGTH_MAX` are its files, not this
+  repository's. The model's vertical receptive field is 1423 rows: the dilated residual stack
   reaches ±1023 (ten 3x3 blocks with dilations 1, 2, 4, … 512), the smoothing convolution after the
   sigmoid ±8, and the peak test's MaxPool ±400 (kernel 801, i.e. the calibrated `peak_distance` of
   800). A window with less context scores the rows near its edges from a truncated neighbourhood. The
@@ -90,7 +93,10 @@ configuration surface. Nothing here requires a data migration; the database sche
 * That also keeps the implementation on the evaluation the baked thresholds were calibrated on: the
   calibration (`calibrate.py`) runs an **uncropped single pass** over whole strips, which is what the
   windowed pass reproduces. The reference's 2048-row window is the model's training crop
-  (`--crop_height` default 2048); here it is only the fallback when no budget can be measured.
+  (`--crop_height` default 2048); here it is the fallback when inference runs on the CPU, where a
+  VRAM-shaped budget says nothing about the host RAM the pass actually lives in (the budget
+  helper's floor exists for GPU tile planning and can never report "nothing measurable"), or when
+  nothing could be measured at all.
 
 * Images with **transparency** are now decoded the way the reference decodes them: the alpha band is
   **dropped**, so the colour stored under a transparent pixel is what the detector sees. Previously

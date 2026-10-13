@@ -22,13 +22,13 @@ The important configuration sections are:
 ```
 
 - `WorkerConfig:ApiKey`: This is the secret key used to authenticate with the main application's API. You can find the API key in the main application's UI under **`https://your-main-app-url:port/Account/Manage/ApiKeys`**.
-- `WorkerConfig:ApiUrl`: This is the HTTPS URL of the main application's API. If you are running the remote worker on a different machine, you will need to change this to the IP address or hostname of the machine running the main application.
+- `WorkerConfig:ApiUrl`: This is the URL of the main application's API. HTTPS is strongly recommended; an `http://` URL works too (gRPC h2c) as a deliberate choice for a trusted LAN, and the worker logs a startup warning that the API key then travels in cleartext. If you are running the remote worker on a different machine, you will need to change this to the IP address or hostname of the machine running the main application.
 
 In addition, you can use environment variables to override the settings in `appsettings.json`. The environment variable names are prefixed with `Ingest_`, for example, `Ingest_WorkerConfig__ApiKey` and `Ingest_WorkerConfig__ApiUrl`. Configuring the upscaling is done in exactly the same way as in the server. 
 
 ## Communication
 
-The remote worker communicates with the main application exclusively over HTTPS. gRPC, the underlying communication protocol, requires HTTP/2. Modern reverse proxies, when configured for HTTPS, will typically use HTTP/2 automatically for clients that support it. Ensure your reverse proxy hosting the main application has HTTPS and HTTP/2 enabled.
+The remote worker communicates with the main application over gRPC, which requires HTTP/2. HTTPS is strongly recommended: modern reverse proxies, when configured for HTTPS, will typically use HTTP/2 automatically for clients that support it, so ensure your reverse proxy hosting the main application has HTTPS and HTTP/2 enabled. A plain `http://` URL is also accepted (gRPC h2c), but the worker logs a startup warning that the API key travels in cleartext on such a connection — reserve it for a trusted LAN.
 
 ## Page streaming
 

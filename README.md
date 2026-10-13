@@ -42,6 +42,9 @@ The application runs pure C# using ONNX Runtime for ML inference. There is no Py
 - **Automatic Model Provisioning** — optimized ONNX models are downloaded into the `/models/MangaJaNai` directory from GitHub releases once at startup (skipped in `RemoteOnly` mode)
 - **Persistent models** — models are cached in `/models/MangaJaNai` across updates
 
+Operators upgrading from the previous Python/PyTorch backend should read the
+[ONNX migration upgrade notes](./docs/UPGRADE_NOTES_ONNX_MIGRATION.md), which cover the visible behaviour changes.
+
 ### Docker Image Flavors & Hardware Acceleration
 
 Only two images are needed to cover all hardware:
@@ -82,6 +85,8 @@ services:
     devices:
       - /dev/dri # GPU access for Vulkan (Mesa RADV / ANV)
 ```
+
+The repository's `docker-compose.yml` passes the same `/dev/dri` node, and Compose aborts `docker compose up` when the host has no render node; on a CPU-only host, comment that `devices:` block out or run `docker compose --profile remote-only up` (see [Remote-Only Mode](#remote-only-mode)).
 
 ### NVIDIA GPU (CUDA)
 

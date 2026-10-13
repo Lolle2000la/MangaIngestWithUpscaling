@@ -109,11 +109,21 @@ deliberate price of keeping `C` to a single model.
 
 The detector infers one window at a time, sized to the same budget tile sizing uses: the whole page in
 a single pass when it fits, otherwise the largest window that does (a window's context rows are
-re-inferred, so windowing costs time). Its own footprint is therefore bounded independently of the page
+re-inferred, so windowing costs time). On the CPU the bounded default window (2048 rows) applies
+instead — a VRAM-shaped budget says nothing about the host RAM the pass lives in there. Its own
+footprint is therefore bounded independently of the page
 height — a whole-page pass would need ~1.5 GiB at 4000 resized rows and ~5.6 GiB at 15000. The window's
 context margin is what makes it exact: it covers the model's 1423-row receptive field, so the result is
 bit-identical to a whole-page pass at any window size (see the detector section of
 [the migration notes](UPGRADE_NOTES_ONNX_MIGRATION.md#splits-and-detection)).
+
+The chapter and session-cache boundaries also run deliberate full `GC.Collect()` calls
+(`OnnxUpscaleEngine`, `MangaJaNaiWorkerClient.ReleaseGpuCacheAsync`, the calibrator). These are
+stop-the-world collections — a real cost, paid once per chapter/boundary rather than per page — and
+they are deliberate: the memory they free is native (session handles, provider buffer caches) that the
+managed GC does not bound on its own, so the next chapter's budget is not planned against memory this
+one still holds. Without them, freed-but-uncollected sessions kept the measured free VRAM lower than
+the card actually had available.
 
 ---
 

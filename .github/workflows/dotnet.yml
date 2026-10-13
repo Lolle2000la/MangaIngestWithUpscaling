@@ -65,13 +65,13 @@ jobs:
           push: false
       # The Compose image. This one is built by neither CI nor the release workflows (only
       # docker-compose.yml uses it), yet this migration rewrote it — the Python removal, the Vulkan
-      # packages, PreferredGpuBackend=WebGPU, the removed migrator — so `docker compose up` was the
-      # first thing to find out whether it still builds.
+      # packages, PreferredGpuBackend=WebGPU, the migrator publish that now overlaps the app's
+      # dependencies — so `docker compose up` was the first thing to find out whether it still builds.
       - name: Build the Compose image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: src/MangaIngestWithUpscaling/Dockerfile
           push: false
-      - name: Verify the CUDA base image resolves
-        run: docker pull --quiet nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04
+      - name: Verify the CUDA base tag resolves
+        run: docker manifest inspect nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04 > /dev/null

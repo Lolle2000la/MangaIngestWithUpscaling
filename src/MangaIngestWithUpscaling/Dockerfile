@@ -1,6 +1,7 @@
-# Local/Compose image, built by docker-compose.yml (single-arch, no Production env, no healthcheck,
-# no bundled migrator). The release image published to GHCR is the separate root ./Dockerfile, which
-# is multi-arch and adds those. The two are intentionally not the same file.
+# Local/Compose image, built by docker-compose.yml (single-arch, no Production env, no healthcheck).
+# It bundles the DbMigrator alongside the app (published below and run by overriding the entrypoint).
+# The release image published to GHCR is the separate root ./Dockerfile, which is multi-arch and adds
+# the Production env and healthcheck. The two are intentionally not the same file.
 #
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
