@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 using Xunit;
 using VulkanHeapInfo = MangaIngestWithUpscaling.Shared.Services.GPU.VulkanMemoryProvider.VulkanHeapInfo;
@@ -14,6 +15,43 @@ public class VulkanMemoryProviderTests
         + "QueryDevice falls through to DRM sysfs / nvidia-smi and has no metrics to assert about";
 
     private const uint DeviceLocalBit = 0x00000001; // VK_MEMORY_HEAP_DEVICE_LOCAL_BIT
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void MemoryProbeStructs_FollowThePointerSizeInsteadOfHardcodedOffsets()
+    {
+        // The two probe structs that carry an IntPtr pNext are Sequential, not explicit offsets:
+        // pNext sits at IntPtr.Size and everything after it moves with it, so a 32-bit runtime
+        // reads the native layout instead of a skewed one (pNext @ 4, not @ 8). On 64-bit the
+        // computed offsets are exactly the ones the explicit layout used to hardcode, which is
+        // what the assertions below state without assuming the bitness they run on.
+        Assert.Equal(
+            (nint)IntPtr.Size,
+            Marshal.OffsetOf<VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties2>(
+                nameof(VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties2.pNext)
+            )
+        );
+        Assert.Equal(
+            (nint)(2 * IntPtr.Size),
+            Marshal.OffsetOf<VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties2>(
+                nameof(VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties2.memoryProperties)
+            )
+        );
+        Assert.Equal(
+            (nint)(2 * IntPtr.Size),
+            Marshal.OffsetOf<VulkanMemoryProvider.VkPhysicalDeviceMemoryBudgetPropertiesEXT>(
+                nameof(VulkanMemoryProvider.VkPhysicalDeviceMemoryBudgetPropertiesEXT.heapBudget)
+            )
+        );
+        Assert.Equal(
+            2 * IntPtr.Size + 520,
+            Marshal.SizeOf<VulkanMemoryProvider.VkPhysicalDeviceMemoryProperties2>()
+        );
+        Assert.Equal(
+            2 * IntPtr.Size + 256,
+            Marshal.SizeOf<VulkanMemoryProvider.VkPhysicalDeviceMemoryBudgetPropertiesEXT>()
+        );
+    }
 
     [Fact]
     public void IsAvailable_DoesNotThrow()

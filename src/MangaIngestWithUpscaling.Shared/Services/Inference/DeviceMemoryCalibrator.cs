@@ -498,13 +498,22 @@ public sealed class DeviceMemoryCalibrator(
         long baseline = DeviceMemorySampler.Read(deviceId);
 
         long peak;
-        using (sessionFactory.EnterInferenceScope())
+        try
         {
-            InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
-            peak = MeasureTile(session, deviceId, n, scale);
+            using (sessionFactory.EnterInferenceScope())
+            {
+                InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+                peak = MeasureTile(session, deviceId, n, scale);
+            }
+        }
+        finally
+        {
+            // A benchmark that threw left its freshly created session cached: nothing released it
+            // on the throw path, so the one-shot bookkeeping around it saw its memory resident
+            // and the next page's planning started from a polluted cache.
+            sessionFactory.ReleaseCachedSessions();
         }
 
-        sessionFactory.ReleaseCachedSessions();
         return Math.Max(0, peak - baseline);
     }
 

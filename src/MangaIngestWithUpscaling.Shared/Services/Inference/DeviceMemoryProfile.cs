@@ -81,9 +81,13 @@ public sealed class DeviceMemoryProfile
     /// </summary>
     public double ScaleFor(string modelNameOrPath, long modelSizeBytes)
     {
+        // The same closed bound the calibrator writes and the tiler's consumer accepts: the
+        // calibrator stores exactly 12.0 when a model measures at the cap, and a reader rejecting
+        // the boundary silently substituted the device-wide default for that model's own
+        // measurement.
         if (
             Models.TryGetValue(ModelKey(modelNameOrPath, modelSizeBytes), out ModelMemoryProfile? m)
-            && m.ActivationScale is > 0 and < 12
+            && m.ActivationScale is > 0 and <= 12
         )
         {
             return m.ActivationScale;

@@ -35,7 +35,7 @@ public record VulkanGpuMemory(
 public static class VulkanMemoryProvider
 {
     private static readonly Lock InitLock = new();
-    private static bool _initAttempted;
+    private static volatile bool _initAttempted;
     private static IntPtr _vulkanLib;
     private static IntPtr _instance;
     private static IntPtr[]? _physicalDevices;
@@ -105,7 +105,7 @@ public static class VulkanMemoryProvider
     }
 
     [StructLayout(LayoutKind.Explicit, Size = 520)]
-    private unsafe struct VkPhysicalDeviceMemoryProperties
+    internal unsafe struct VkPhysicalDeviceMemoryProperties
     {
         [FieldOffset(0)]
         public uint memoryTypeCount;
@@ -120,32 +120,30 @@ public static class VulkanMemoryProvider
         public fixed byte memoryHeaps[16 * 16]; // 16 * VkMemoryHeap (16 bytes each)
     }
 
-    [StructLayout(LayoutKind.Explicit, Size = 536)]
-    private struct VkPhysicalDeviceMemoryProperties2
+    // Sequential, not explicit offsets: both structs carry an IntPtr pNext, whose offset differs
+    // between 64-bit (8) and 32-bit (4) processes, and the nested/embedded fields move with it.
+    // Hardcoded 64-bit offsets read skewed garbage on a 32-bit runtime; Sequential keeps the native
+    // layout on both. On 64-bit the computed offsets are exactly the ones the explicit layout had
+    // (pNext @ 8, memoryProperties/heapBudget @ 16), which the layout tests pin.
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VkPhysicalDeviceMemoryProperties2
     {
-        [FieldOffset(0)]
         public uint sType;
 
-        [FieldOffset(8)]
         public IntPtr pNext;
 
-        [FieldOffset(16)]
         public VkPhysicalDeviceMemoryProperties memoryProperties;
     }
 
-    [StructLayout(LayoutKind.Explicit, Size = 272)]
-    private unsafe struct VkPhysicalDeviceMemoryBudgetPropertiesEXT
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct VkPhysicalDeviceMemoryBudgetPropertiesEXT
     {
-        [FieldOffset(0)]
         public uint sType;
 
-        [FieldOffset(8)]
         public IntPtr pNext;
 
-        [FieldOffset(16)]
         public fixed ulong heapBudget[16];
 
-        [FieldOffset(144)]
         public fixed ulong heapUsage[16];
     }
 
@@ -743,7 +741,6 @@ public static class VulkanMemoryProvider
                 return;
             }
 
-            _initAttempted = true;
             try
             {
                 _vulkanLib = LoadVulkanLibrary();
@@ -931,6 +928,15 @@ public static class VulkanMemoryProvider
                 // Silently handle any initialization failure and degrade gracefully
                 Shutdown();
             }
+            finally
+            {
+                // Published only once initialization has run to its end — success, graceful
+                // degradation or failure: the unsynchronized read above could otherwise
+                // observe true while the fields it guards are still being assigned, and act
+                // on a half-initialized view of the provider. The volatile declaration gives
+                // that publication release/acquire semantics on the fast path.
+                _initAttempted = true;
+            }
         }
     }
 
@@ -962,6 +968,23 @@ public static class VulkanMemoryProvider
                     // Ignore shutdown errors
                 }
                 _instance = IntPtr.Zero;
+            }
+
+            // The loader's reference is process-lifetime otherwise: it was loaded once and never
+            // freed, so a forked process or anything inspecting our library set kept seeing it.
+            // Freed only after the instance is destroyed and nothing can call into it anymore
+            // (_initAttempted stays true, so nothing re-initializes into a freed library).
+            if (_vulkanLib != IntPtr.Zero)
+            {
+                try
+                {
+                    NativeLibrary.Free(_vulkanLib);
+                }
+                catch
+                {
+                    // Ignore shutdown errors
+                }
+                _vulkanLib = IntPtr.Zero;
             }
 
             _physicalDevices = null;

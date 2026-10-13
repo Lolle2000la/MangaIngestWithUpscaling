@@ -24,6 +24,27 @@ public sealed class OnnxSessionFactory(
     private readonly Lock _lock = new();
     private readonly Lock _backendGate = new();
     private GpuBackend? _resolvedBackend;
+
+    /// <summary>
+    /// Set by a provider probe that failed without an absence verdict (see the CUDA probe's broad
+    /// catch), and read by <see cref="GetEffectiveBackend"/> to decide whether a CPU resolution is
+    /// final or merely what a not-yet-ready driver left. Volatile only through the
+    /// <see cref="_backendGate"/> lock on the reading side; a stale true costs one redundant probe.
+    /// </summary>
+    private bool _probeWasTransient;
+
+    /// <summary>Whether the cached CPU resolution was produced by such a transient failure.</summary>
+    private bool _backendResolutionWasTransient;
+
+    private DateTime _lastBackendResolutionUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// How long a CPU resolution that a transient probe failure produced stays cached before the
+    /// probe is retried. Long enough that a persistently failing provider does not re-probe on every
+    /// call (the resolution is real work, and it once ran once per page), short enough that a driver
+    /// that becomes ready after boot is picked up without a process restart.
+    /// </summary>
+    private static readonly TimeSpan BackendTransientRetryInterval = TimeSpan.FromSeconds(60);
     private readonly Dictionary<string, InferenceSession> _sessions = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _lruOrder = new();
 
@@ -45,7 +66,7 @@ public sealed class OnnxSessionFactory(
         LockRecursionPolicy.SupportsRecursion
     );
     public const int MaxCachedSessions = 1;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public IDisposable EnterInferenceScope()
     {
@@ -533,7 +554,11 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append CUDA execution provider. Will try next provider or CPU fallback."
             );
-            _cudaAvailable = false;
+            // Not latched: unlike a missing entry point or library, this failure does not say the
+            // provider is absent — a driver that is not ready yet at boot produces it, and the next
+            // session creation re-probes and can attach the provider once it is. Latching here is
+            // what pinned a boot-time blip to CPU for the whole process.
+            _probeWasTransient = true;
             return false;
         }
     }
@@ -577,7 +602,8 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append OpenVINO execution provider. Will try next provider or CPU fallback."
             );
-            _openVinoAvailable = false;
+            // Not latched — see the CUDA probe for why a plain failure is not an absence verdict.
+            _probeWasTransient = true;
             return false;
         }
     }
@@ -620,7 +646,8 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append MIGraphX execution provider. Will try next provider or CPU fallback."
             );
-            _migraphxAvailable = false;
+            // Not latched — see the CUDA probe for why a plain failure is not an absence verdict.
+            _probeWasTransient = true;
             return false;
         }
     }
@@ -643,13 +670,28 @@ public sealed class OnnxSessionFactory(
             _directMlAvailable = true;
             return true;
         }
+        catch (EntryPointNotFoundException)
+        {
+            logger.LogDebug(
+                "DirectML execution provider entry point not found in this ONNX Runtime build."
+            );
+            _directMlAvailable = false;
+            return false;
+        }
+        catch (DllNotFoundException)
+        {
+            logger.LogDebug("DirectML runtime libraries not found on this system.");
+            _directMlAvailable = false;
+            return false;
+        }
         catch (Exception ex)
         {
             logger.LogWarning(
                 ex,
                 "Failed to append DirectML execution provider. Will try CPU fallback."
             );
-            _directMlAvailable = false;
+            // Not latched — see the CUDA probe for why a plain failure is not an absence verdict.
+            _probeWasTransient = true;
             return false;
         }
     }
@@ -741,14 +783,37 @@ public sealed class OnnxSessionFactory(
 
     public GpuBackend GetEffectiveBackend()
     {
-        // Resolved once per process. The probe below builds a SessionOptions and asks the runtime to
-        // attach each candidate provider, which is real work — and it ran on every call, i.e. once
-        // per page through the calibrator's fingerprint. The answer cannot change while the process
-        // runs: the configuration is a fixed snapshot (IOptions, not IOptionsMonitor) and neither
-        // the accelerator nor the runtime changes underneath it.
+        // Cached once the answer is final. The probe below builds a SessionOptions and asks the
+        // runtime to attach each candidate provider, which is real work — and it once ran on every
+        // call, i.e. once per page through the calibrator's fingerprint. The answer is final while
+        // the configuration is a fixed snapshot (IOptions, not IOptionsMonitor) and neither the
+        // accelerator nor the runtime changes underneath it — except for the one case that is not
+        // an answer: a probe that failed without an absence verdict (a driver not ready at boot)
+        // produced the CPU fallback. That resolution is retried on the interval below instead of
+        // being latched, so the engine identity, the calibration fingerprint and the fp16
+        // resolution do not stay on a CPU that nothing but bad timing chose. A mid-process change
+        // resets the spool of the task being streamed — correct, since the pages really would have
+        // been upscaled by a different backend.
         lock (_backendGate)
         {
-            return _resolvedBackend ??= ResolveEffectiveBackend();
+            if (
+                _resolvedBackend is { } resolved
+                && (
+                    resolved != GpuBackend.CPU
+                    || !_backendResolutionWasTransient
+                    || DateTime.UtcNow - _lastBackendResolutionUtc < BackendTransientRetryInterval
+                )
+            )
+            {
+                return resolved;
+            }
+
+            _probeWasTransient = false;
+            GpuBackend backend = ResolveEffectiveBackend();
+            _lastBackendResolutionUtc = DateTime.UtcNow;
+            _backendResolutionWasTransient = backend == GpuBackend.CPU && _probeWasTransient;
+            _resolvedBackend = backend;
+            return backend;
         }
     }
 
@@ -859,9 +924,14 @@ public sealed class OnnxSessionFactory(
 
     public void Dispose()
     {
-        if (_disposed)
+        // Compare-exchanged, not checked-then-set: two threads disposing concurrently (the DI
+        // container and a shutdown path) could both pass a plain check and both run the teardown,
+        // double-entering the write lock below. Readers keep the plain read — the worst a torn
+        // read costs them is one throw on an operation that was racing disposal anyway.
+        if (Interlocked.Exchange(ref _disposed, true))
+        {
             return;
-        _disposed = true;
+        }
 
         List<InferenceSession> sessionsToDispose;
         lock (_lock)
