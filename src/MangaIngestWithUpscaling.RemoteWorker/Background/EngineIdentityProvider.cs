@@ -31,6 +31,7 @@ public sealed class EngineIdentityProvider(
     private string? _upscaler;
     private GpuBackend? _upscalerBackend;
     private string? _detector;
+    private GpuBackend? _detectorBackend;
 
     public string Upscaler
     {
@@ -69,9 +70,26 @@ public sealed class EngineIdentityProvider(
         {
             lock (_lock)
             {
-                return _detector ??= EngineIdentity.ForDetector(
-                    config.Value.ResolvedModelsDirectory
+                // The detector identity folds in the resolved backend and runtime for the same
+                // reason the upscaler one does: the detector runs on that backend, and the server
+                // gates a task's spool on the identity, so two workers with the same detector file
+                // but a different execution provider must not share one. Recomputed when the
+                // backend changes, exactly like Upscaler — a resolution produced by a transient
+                // probe failure is deliberately retried.
+                GpuBackend effectiveBackend =
+                    sessionFactory?.GetEffectiveBackend() ?? config.Value.PreferredGpuBackend;
+
+                if (_detector is not null && _detectorBackend == effectiveBackend)
+                {
+                    return _detector;
+                }
+
+                _detector = EngineIdentity.ForDetector(
+                    config.Value.ResolvedModelsDirectory,
+                    effectiveBackend
                 );
+                _detectorBackend = effectiveBackend;
+                return _detector;
             }
         }
     }

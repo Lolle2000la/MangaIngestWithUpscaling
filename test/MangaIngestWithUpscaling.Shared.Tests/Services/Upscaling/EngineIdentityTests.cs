@@ -467,6 +467,49 @@ public class EngineIdentityTests
         });
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForDetector_ChangesWithTheResolvedBackend()
+    {
+        // The detector runs on the resolved execution provider and its findings are peak positions in
+        // that provider's output, so two workers that share the detector file but run it on different
+        // backends can report different splits. The identity must separate them or the server blends
+        // the findings into one chapter under a single engine identity.
+        WithDetectorRoot(() =>
+        {
+            WriteDetectorFiles(model: "model");
+
+            Assert.NotEqual(
+                EngineIdentity.ForDetector(resolvedBackend: GpuBackend.CPU),
+                EngineIdentity.ForDetector(resolvedBackend: GpuBackend.WebGPU)
+            );
+
+            // An unresolved backend is not a concrete one and must not collide with any of them.
+            Assert.NotEqual(
+                EngineIdentity.ForDetector(resolvedBackend: GpuBackend.CPU),
+                EngineIdentity.ForDetector()
+            );
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForDetector_ChangesWithTheRuntimeVersion()
+    {
+        // The runtime turns the same detector graph into potentially different peaks, so it is folded
+        // in like ForUpscaler's. RuntimeVersion() is stable within a process, so the override pins
+        // that the component is actually hashed without needing a second deployment.
+        WithDetectorRoot(() =>
+        {
+            WriteDetectorFiles(model: "model");
+
+            Assert.NotEqual(
+                EngineIdentity.ForDetector(runtimeVersion: "runtime-a"),
+                EngineIdentity.ForDetector(runtimeVersion: "runtime-b")
+            );
+        });
+    }
+
     private static void WithDetectorRoot(Action test)
     {
         string previousRoot = SplitDetectionLayout.Root;

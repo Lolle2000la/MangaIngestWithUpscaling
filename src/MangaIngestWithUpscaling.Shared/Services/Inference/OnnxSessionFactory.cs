@@ -27,22 +27,28 @@ public sealed class OnnxSessionFactory(
 
     /// <summary>
     /// Set by a provider probe that failed without an absence verdict (see the CUDA probe's broad
-    /// catch), and read by <see cref="GetEffectiveBackend"/> to decide whether a CPU resolution is
-    /// final or merely what a not-yet-ready driver left. Volatile only through the
-    /// <see cref="_backendGate"/> lock on the reading side; a stale true costs one redundant probe.
+    /// catch), and read by <see cref="GetEffectiveBackend"/> to decide whether the resolution it
+    /// produced is final or merely what a not-yet-ready driver left. A resolution that skipped a
+    /// higher-priority candidate for such a reason is provisional whether it landed on CPU or on a
+    /// lower-priority accelerator. Volatile only through the <see cref="_backendGate"/> lock on the
+    /// reading side; a stale true costs one redundant probe.
     /// </summary>
     private bool _probeWasTransient;
 
-    /// <summary>Whether the cached CPU resolution was produced by such a transient failure.</summary>
+    /// <summary>
+    /// Whether the cached resolution was produced while some higher-priority provider was skipped for
+    /// a transient reason (or the resolution itself failed transiently and fell back to CPU). Such a
+    /// resolution is retried on <see cref="BackendTransientRetryInterval"/> rather than latched.
+    /// </summary>
     private bool _backendResolutionWasTransient;
 
     private DateTime _lastBackendResolutionUtc = DateTime.MinValue;
 
     /// <summary>
-    /// How long a CPU resolution that a transient probe failure produced stays cached before the
-    /// probe is retried. Long enough that a persistently failing provider does not re-probe on every
-    /// call (the resolution is real work, and it once ran once per page), short enough that a driver
-    /// that becomes ready after boot is picked up without a process restart.
+    /// How long a resolution produced under a transient probe failure stays cached before the probe is
+    /// retried. Long enough that a persistently failing provider does not re-probe on every call (the
+    /// resolution is real work, and it once ran once per page), short enough that a driver that
+    /// becomes ready after boot is picked up without a process restart.
     /// </summary>
     private static readonly TimeSpan BackendTransientRetryInterval = TimeSpan.FromSeconds(60);
     private readonly Dictionary<string, InferenceSession> _sessions = new(StringComparer.Ordinal);
@@ -370,13 +376,20 @@ public sealed class OnnxSessionFactory(
             return new InferenceSession(modelPath, options);
         }
 
-        // Try GPU providers based on platform and backend configuration
-        bool gpuConfigured = TryConfigureGpuProvider(
-            options,
-            currentConfig,
-            deviceId,
-            Path.GetFileName(modelPath)
-        );
+        // Attach the provider GetEffectiveBackend resolved, rather than probing Auto again here. The
+        // engine identity, the calibration fingerprint and the fp16 choice all describe that one
+        // resolution; a second, independent probe let a session run on a provider the resolution had
+        // rejected or had not yet accepted, so pages could be produced by one backend under another's
+        // identity and blended into one chapter.
+        GpuBackend effectiveBackend = GetEffectiveBackend();
+        bool gpuConfigured =
+            effectiveBackend != GpuBackend.CPU
+            && TryConfigureGpuProvider(
+                options,
+                effectiveBackend,
+                deviceId,
+                Path.GetFileName(modelPath)
+            );
 
         try
         {
@@ -435,91 +448,31 @@ public sealed class OnnxSessionFactory(
         message.Contains("not enabled in this build", StringComparison.OrdinalIgnoreCase)
         || message.Contains("Failed to load shared library", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Attaches the provider <see cref="GetEffectiveBackend"/> resolved to the session options.
+    /// <para>
+    /// The backend is already concrete and normalised: <see cref="ResolveEffectiveBackend"/> ran the
+    /// Auto discovery and collapsed the legacy aliases (ROCm/XPU to WebGPU, CUDA_12_8 to CUDA), so it
+    /// is never <see cref="GpuBackend.Auto"/>. Re-running that discovery here is what let the session
+    /// and the advertised backend diverge.
+    /// </para>
+    /// </summary>
     private bool TryConfigureGpuProvider(
         SessionOptions options,
-        UpscalerConfig currentConfig,
+        GpuBackend backend,
         int deviceId,
         string modelName
-    )
-    {
-        GpuBackend backend = currentConfig.PreferredGpuBackend;
-
-#pragma warning disable CS0618
-        if (backend is GpuBackend.ROCm or GpuBackend.ROCm_GFX120X or GpuBackend.XPU)
+    ) =>
+        backend switch
         {
-            backend = GpuBackend.WebGPU;
-        }
-        else if (backend is GpuBackend.CUDA_12_8)
-        {
-            backend = GpuBackend.CUDA;
-        }
-#pragma warning restore CS0618
-
-        if (backend == GpuBackend.WebGPU)
-        {
-            return TryConfigureWebGpu(options, deviceId, modelName);
-        }
-
-        if (backend == GpuBackend.CUDA)
-        {
-            return TryConfigureCuda(options, deviceId, modelName);
-        }
-
-        if (backend == GpuBackend.DirectML)
-        {
-            return TryConfigureDirectML(options, deviceId, modelName);
-        }
-
-        if (backend == GpuBackend.OpenVINO)
-        {
-            return TryConfigureOpenVino(options, deviceId, modelName);
-        }
-
-        if (backend == GpuBackend.MIGraphX)
-        {
-            return TryConfigureMIGraphX(options, deviceId, modelName);
-        }
-
-        // GpuBackend.Auto: Platform-specific discovery
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            // Auto on Linux: Try CUDA -> WebGPU -> CPU
-            if (TryConfigureCuda(options, deviceId, modelName))
-            {
-                return true;
-            }
-
-            if (TryConfigureWebGpu(options, deviceId, modelName))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            // Auto on Windows: Try WebGPU -> DirectML -> CUDA -> CPU
-            if (TryConfigureWebGpu(options, deviceId, modelName))
-            {
-                return true;
-            }
-
-            if (TryConfigureDirectML(options, deviceId, modelName))
-            {
-                return true;
-            }
-
-            return TryConfigureCuda(options, deviceId, modelName);
-        }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            return TryConfigureWebGpu(options, deviceId, modelName);
-        }
-
-        return false;
-    }
+            GpuBackend.WebGPU => TryConfigureWebGpu(options, deviceId, modelName),
+            GpuBackend.CUDA => TryConfigureCuda(options, deviceId, modelName),
+            GpuBackend.DirectML => TryConfigureDirectML(options, deviceId, modelName),
+            GpuBackend.OpenVINO => TryConfigureOpenVino(options, deviceId, modelName),
+            GpuBackend.MIGraphX => TryConfigureMIGraphX(options, deviceId, modelName),
+            // CPU attaches nothing; anything else (Auto) cannot reach here through ResolveEffectiveBackend.
+            _ => false,
+        };
 
     private bool TryConfigureCuda(SessionOptions options, int deviceId, string modelName)
     {
@@ -866,20 +819,22 @@ public sealed class OnnxSessionFactory(
         // runtime to attach each candidate provider, which is real work — and it once ran on every
         // call, i.e. once per page through the calibrator's fingerprint. The answer is final while
         // the configuration is a fixed snapshot (IOptions, not IOptionsMonitor) and neither the
-        // accelerator nor the runtime changes underneath it — except for the one case that is not
-        // an answer: a probe that failed without an absence verdict (a driver not ready at boot)
-        // produced the CPU fallback. That resolution is retried on the interval below instead of
-        // being latched, so the engine identity, the calibration fingerprint and the fp16
-        // resolution do not stay on a CPU that nothing but bad timing chose. A mid-process change
-        // resets the spool of the task being streamed — correct, since the pages really would have
-        // been upscaled by a different backend.
+        // accelerator nor the runtime changes underneath it — except when a probe failed without an
+        // absence verdict (a driver not ready at boot). Such a resolution is not an answer: on the
+        // Auto path it can have skipped a higher-priority provider (CUDA blips, so WebGPU is
+        // resolved), so it is provisional whether it landed on CPU or on a lower provider. Retrying
+        // it on the interval below keeps the engine identity, the calibration fingerprint and the
+        // fp16 resolution off a backend that nothing but bad timing chose, and — because
+        // CreateSession attaches this same resolution rather than probing again — keeps the backend a
+        // session runs on equal to the one they advertise. A mid-process change resets the spool of
+        // the task being streamed, which is correct: the pages really would have been upscaled by a
+        // different backend.
         lock (_backendGate)
         {
             if (
                 _resolvedBackend is { } resolved
                 && (
-                    resolved != GpuBackend.CPU
-                    || !_backendResolutionWasTransient
+                    !_backendResolutionWasTransient
                     || DateTime.UtcNow - _lastBackendResolutionUtc < BackendTransientRetryInterval
                 )
             )
@@ -890,7 +845,10 @@ public sealed class OnnxSessionFactory(
             _probeWasTransient = false;
             GpuBackend backend = ResolveEffectiveBackend();
             _lastBackendResolutionUtc = DateTime.UtcNow;
-            _backendResolutionWasTransient = backend == GpuBackend.CPU && _probeWasTransient;
+            // Provisional whenever any candidate was skipped for a transient reason, not only when
+            // the fallback reached CPU: the skipped provider can recover, and latching the lower one
+            // would pin both the advertised backend and (now) the session to it for the process.
+            _backendResolutionWasTransient = _probeWasTransient;
             _resolvedBackend = backend;
             return backend;
         }

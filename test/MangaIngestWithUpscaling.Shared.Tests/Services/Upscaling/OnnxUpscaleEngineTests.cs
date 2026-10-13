@@ -244,6 +244,46 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    public void SelectModelCandidates_Grayscale_HonorsTheArchitecturePreference()
+    {
+        // A grayscale page has no version ladder, so the architecture order is the only ordering the
+        // preference can apply — but it still has to apply it, the way the colour path and
+        // EngineIdentity do. Before the fix the grayscale branch ordered only by ArchRank, so with
+        // both copies present the file-name order picked ESRGAN regardless of the setting.
+        File.WriteAllText(
+            Path.Combine(_tempDir, "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx"),
+            "dummy"
+        );
+        File.WriteAllText(
+            Path.Combine(_tempDir, "4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx"),
+            "dummy"
+        );
+
+        IReadOnlyList<string> byDefault = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: true,
+            height: 1600,
+            scale: 4
+        );
+        Assert.Equal(
+            "4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx",
+            Path.GetFileName(byDefault[0])
+        );
+
+        IReadOnlyList<string> promotedEsrgan = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: true,
+            height: 1600,
+            scale: 4,
+            ModelArchitecturePreference.Resolve("ESRGAN")
+        );
+        Assert.Equal(
+            "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx",
+            Path.GetFileName(promotedEsrgan[0])
+        );
+    }
+
+    [Fact]
     public void SelectModel_ReturnsTheExpectedTopPreferenceForEachImageKind()
     {
         // SelectModel is defined as SelectModelCandidates(...)[0], so comparing the two (the old

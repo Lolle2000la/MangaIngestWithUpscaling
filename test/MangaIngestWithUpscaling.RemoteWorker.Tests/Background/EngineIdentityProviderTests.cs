@@ -137,4 +137,45 @@ public class EngineIdentityProviderTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    /// <summary>
+    /// The detector identity follows the resolved backend for the same reason the upscaler one does:
+    /// the detector runs on that backend, and the server gates a task's spool on the identity, so two
+    /// workers with the same detector file but a different execution provider must not share one.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Detector_FollowsAResolvedBackendChange()
+    {
+        string directory = Directory.CreateTempSubdirectory("engine_provider_detector").FullName;
+        try
+        {
+            var factory = Substitute.For<IOnnxSessionFactory>();
+            factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+            var options = Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = directory,
+                    PreferredGpuBackend = GpuBackend.Auto,
+                }
+            );
+            var provider = new EngineIdentityProvider(options, factory);
+
+            string unrecovered = provider.Detector;
+
+            // The same backend stays cached, so nothing is recomputed per page.
+            Assert.Equal(unrecovered, provider.Detector);
+
+            factory.GetEffectiveBackend().Returns(GpuBackend.WebGPU);
+            string recovered = provider.Detector;
+
+            Assert.NotEqual(unrecovered, recovered);
+            Assert.Equal(recovered, provider.Detector);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }

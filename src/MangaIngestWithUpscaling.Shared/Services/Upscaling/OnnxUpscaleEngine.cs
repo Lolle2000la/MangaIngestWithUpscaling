@@ -743,8 +743,10 @@ public class OnnxUpscaleEngine(
     /// it defaults to <see cref="ModelArchitecturePreference.Default"/> and is what
     /// <c>Upscaler:PreferredModelArchitectures</c> feeds. The model <em>version</em> order
     /// (V3detail, V3denoise, V2standard, V1) stays the outer one, so promoting an architecture
-    /// re-ranks it within each version. Every file in the directory is still somewhere in the
-    /// result: a file whose architecture is not in the list is reached by the trailing additions.
+    /// re-ranks it within each version. A grayscale page has no version ladder, so the preference is
+    /// the only architecture order it applies, over its resolution rungs. Every file in the
+    /// directory is still somewhere in the result: a file whose architecture is not in the list is
+    /// reached by the trailing additions.
     /// </para>
     /// </summary>
     public static IReadOnlyList<string> SelectModelCandidates(
@@ -780,6 +782,9 @@ public class OnnxUpscaleEngine(
         // which copies exist).
         bool preferFp32 = !useFp16;
 
+        IReadOnlyList<ModelArchitecture> preferredArchs =
+            architecturePreference ?? ModelArchitecturePreference.Default;
+
         if (isGrayscale)
         {
             string res;
@@ -798,12 +803,19 @@ public class OnnxUpscaleEngine(
             else
                 res = "2048p";
 
-            // Within each rung of the ladder below, the precision copy matching UseFp16 leads — the
-            // same ArchRank the colour branch applies. Without it the raw ordinal order runs the
-            // fp16 copy on a grayscale page (the fp16 file name sorts first) while the colour path
-            // and EngineIdentity record fp32, exactly the inconsistency the ranking exists to
-            // prevent.
-            string[] rankedFiles = onnxFiles.OrderBy(f => ArchRank(f, preferFp32)).ToArray();
+            // The configured architecture preference leads, then the precision copy matching
+            // UseFp16 (the same ArchRank the colour branch applies). The first level is what makes a
+            // grayscale page honour Upscaler:PreferredModelArchitectures the way the colour branch and
+            // EngineIdentity do: without it a pinned architecture was ignored here while it decided
+            // the colour path, so the two kinds of page in one chapter could run models the operator
+            // ranked differently. The second level keeps the precision choice consistent with UseFp16
+            // — the raw ordinal order would run the fp16 copy (its name sorts first) while the colour
+            // path and EngineIdentity recorded fp32.
+            string[] rankedFiles = onnxFiles
+                .OrderBy(f => ArchitecturePreferenceRank(f, preferredArchs))
+                .ThenBy(f => ArchRank(f, preferFp32))
+                .ThenBy(Path.GetFileName, StringComparer.Ordinal)
+                .ToArray();
 
             AddMatch(candidates, rankedFiles, $"{scalePrefix}MangaJaNai_{res}");
             AddMatch(candidates, rankedFiles, $"{scalePrefix}MangaJaNai_");
@@ -829,9 +841,6 @@ public class OnnxUpscaleEngine(
             // added at most once here and a model the list does not name is still reached by the
             // AddAll below. ArchRank then orders an architecture's own copies: fp16 before fp32, and
             // a model the WebGPU EP cannot run natively (_bf16) last.
-            IReadOnlyList<ModelArchitecture> preferredArchs =
-                architecturePreference ?? ModelArchitecturePreference.Default;
-
             foreach (var pref in preferredVersions)
             {
                 // Ranked by the requested precision: the arch loop below filters within this order,
@@ -897,6 +906,29 @@ public class OnnxUpscaleEngine(
     /// </summary>
     private static int ArchRank(string path, bool preferFp32) =>
         (ModelFileNames.IsFp32(path) == preferFp32 ? 0 : 2) + (NotBf16(path) ? 0 : 1);
+
+    /// <summary>
+    /// Position of a file's architecture in <paramref name="preferredArchs"/>, so a page can order
+    /// its candidates the way the operator ranked the architectures. An architecture the preference
+    /// does not name sorts after every named one, which is how the colour branch also appends the
+    /// files no preferred architecture claims.
+    /// </summary>
+    private static int ArchitecturePreferenceRank(
+        string path,
+        IReadOnlyList<ModelArchitecture> preferredArchs
+    )
+    {
+        ModelArchitecture architecture = OnnxTiler.DetectArchitecture(path);
+        for (int i = 0; i < preferredArchs.Count; i++)
+        {
+            if (preferredArchs[i] == architecture)
+            {
+                return i;
+            }
+        }
+
+        return preferredArchs.Count;
+    }
 
     private static void AddCandidate(List<string> candidates, string file)
     {
@@ -1514,6 +1546,19 @@ public class OnnxUpscaleEngine(
         {
             throw;
         }
+        catch (ObjectDisposedException)
+        {
+            // Shutdown raced the probe: the singleton factory is already disposing, so
+            // EnterInferenceScope/GetOrCreateSession throw ObjectDisposedException. That says
+            // nothing about the model — the same reasoning IsCandidateModelFailure applies to the
+            // real-tile path — so it must not fall into the structural catch below, which would
+            // report the candidate unusable and then surface the generic permanent "no model can
+            // upscale" InvalidOperationException, dropping the chapter's spool for a teardown
+            // artefact. Rethrown as-is so the infrastructure classification upstream
+            // (MangaJaNaiWorkerClient.IsInfrastructureFailure walks the chain for it) treats the
+            // page as retryable rather than terminal.
+            throw;
+        }
         catch (NonFiniteModelOutputException ex)
         {
             // Transient, not structural: the provider ran the model but produced NaN/Inf, the
@@ -1561,7 +1606,17 @@ public class OnnxUpscaleEngine(
             // provider that refused the graph once is probed again rather than taken out for the
             // process, and a non-model fault (this code's own config error) records no verdict at
             // all. Skipping this attempt is unaffected either way.
-            sessionFactory.InvalidateSession(modelPath);
+            //
+            // The session is invalidated only when the failure is the model's own, exactly as the
+            // real-tile path does (see UpscaleWithModelAsync): a tiler config fault — a TileSize the
+            // tiler rejects, an invalid blend region — is not something a rebuild changes, and
+            // invalidating for it tore down a healthy cached session (~300 ms) once per candidate
+            // per page until the config was fixed.
+            if (IsModelFault(ex))
+            {
+                sessionFactory.InvalidateSession(modelPath);
+            }
+
             logger.LogDebug(
                 ex,
                 "Model {Model} could not be probed on this device; skipping it.",

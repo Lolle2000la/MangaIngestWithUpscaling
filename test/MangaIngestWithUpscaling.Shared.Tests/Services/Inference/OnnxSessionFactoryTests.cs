@@ -232,6 +232,118 @@ public class OnnxSessionFactoryTests : IDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
+    public void CreateSession_ConsultsTheSameResolutionGetEffectiveBackendReports()
+    {
+        // CreateSession used to run its own Auto discovery, so it could attach a provider that
+        // GetEffectiveBackend had rejected or not yet accepted, while the engine identity and the
+        // calibration fingerprint described the other one — pages from one backend attributed to
+        // another and blended into a chapter. It now goes through GetEffectiveBackend, the single
+        // resolution the identity records. The assertion is on that resolution having been consulted
+        // and cached, which holds whatever this host resolves to; only a real accelerator can make
+        // the provider a session actually attaches observable.
+        string modelPath = ModelPath();
+        var config = Options.Create(
+            new UpscalerConfig { PreferredGpuBackend = GpuBackend.Auto, SelectedDeviceIndex = 1 }
+        );
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+        Assert.Null(GetPrivateField<GpuBackend?>(factory, "_resolvedBackend"));
+
+        using InferenceSession session = factory.CreateSession(modelPath);
+
+        Assert.NotNull(session);
+        // Without the fix CreateSession never consults GetEffectiveBackend, so the field stays null and
+        // the backend a session runs on can differ from the one the identity advertises.
+        Assert.NotNull(GetPrivateField<GpuBackend?>(factory, "_resolvedBackend"));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void GetEffectiveBackend_RetriesAResolutionThatSkippedAHigherPriorityProvider()
+    {
+        // A transient probe failure on a higher-priority provider (CUDA on Linux, WebGPU on Windows)
+        // lets a lower one resolve. That resolution must stay provisional: the skipped provider can
+        // recover, and CreateSession now attaches whatever this resolution returns, so latching the
+        // lower one would pin the session, the engine identity and the calibration fingerprint to it
+        // for the process lifetime.
+        var config = Options.Create(
+            new UpscalerConfig { PreferredGpuBackend = GpuBackend.Auto, SelectedDeviceIndex = 1 }
+        );
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+        using var reference = new OnnxSessionFactory(
+            config,
+            NullLogger<OnnxSessionFactory>.Instance
+        );
+
+        // Auto never resolves to OpenVINO on any platform, so a cached OpenVINO value can only come
+        // from the cache and never from a re-probe — which makes the test independent of whether this
+        // host has an accelerator.
+        SeedResolution(
+            factory,
+            GpuBackend.OpenVINO,
+            transient: true,
+            resolvedAt: DateTime.UtcNow - TimeSpan.FromHours(1)
+        );
+
+        GpuBackend resolved = factory.GetEffectiveBackend();
+
+        // Without the fix the non-CPU cache hit returns the latched OpenVINO; with it the probe is
+        // retried and the host's real resolution (never OpenVINO) comes back.
+        Assert.NotEqual(GpuBackend.OpenVINO, resolved);
+        Assert.Equal(reference.GetEffectiveBackend(), resolved);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void GetEffectiveBackend_KeepsATransientResolutionUntilTheRetryIntervalElapses()
+    {
+        // Within the retry interval the cached value is served, so a persistently failing provider is
+        // not re-probed on every call (the resolution is real work and once ran once per page).
+        var config = Options.Create(
+            new UpscalerConfig { PreferredGpuBackend = GpuBackend.Auto, SelectedDeviceIndex = 1 }
+        );
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+        SeedResolution(factory, GpuBackend.OpenVINO, transient: true, resolvedAt: DateTime.UtcNow);
+
+        Assert.Equal(GpuBackend.OpenVINO, factory.GetEffectiveBackend());
+    }
+
+    private static void SeedResolution(
+        OnnxSessionFactory factory,
+        GpuBackend backend,
+        bool transient,
+        DateTime resolvedAt
+    )
+    {
+        SetPrivateField(factory, "_resolvedBackend", backend);
+        SetPrivateField(factory, "_backendResolutionWasTransient", transient);
+        SetPrivateField(factory, "_lastBackendResolutionUtc", resolvedAt);
+    }
+
+    private static void SetPrivateField<T>(OnnxSessionFactory factory, string name, T value) =>
+        (
+            typeof(OnnxSessionFactory).GetField(
+                name,
+                BindingFlags.Instance | BindingFlags.NonPublic
+            )
+            ?? throw new InvalidOperationException(
+                $"OnnxSessionFactory.{name} was not found; the test probe needs updating."
+            )
+        ).SetValue(factory, value);
+
+    private static T GetPrivateField<T>(OnnxSessionFactory factory, string name) =>
+        (T)
+            (
+                typeof(OnnxSessionFactory).GetField(
+                    name,
+                    BindingFlags.Instance | BindingFlags.NonPublic
+                )
+                ?? throw new InvalidOperationException(
+                    $"OnnxSessionFactory.{name} was not found; the test probe needs updating."
+                )
+            ).GetValue(factory)!;
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task GetOrCreateSession_EvictsTheLeastRecentlyUsedSessionAtCapacity()
     {
         // MaxCachedSessions is 1, so the second model displaces the first instead of joining it.

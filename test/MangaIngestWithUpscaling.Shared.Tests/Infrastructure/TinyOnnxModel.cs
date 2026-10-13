@@ -424,7 +424,7 @@ internal static class TinyOnnxModel
     /// values need. A positive value inserts a vertical convolution of that radius between the row
     /// reduction and the peak threshold, so a row's score depends on the rows within
     /// <paramref name="contextRadius"/> of it — that is roughly the real detector's receptive field
-    /// (1423 rows), and it is what makes a test able to notice a window context margin that is too
+    /// (1431 rows), and it is what makes a test able to notice a window context margin that is too
     /// small. A window whose margin is at least the radius reproduces the whole-page result exactly,
     /// because the convolution's context is fully inside the window; a smaller one reads the
     /// window's zero padding where the whole-page pass reads real rows.

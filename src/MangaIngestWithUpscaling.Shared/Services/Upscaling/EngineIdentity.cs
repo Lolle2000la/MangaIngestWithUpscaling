@@ -141,12 +141,41 @@ public static class EngineIdentity
     }
 
     /// <summary>
-    /// Identity of the page-break detector: its version plus a content hash of the ONNX model file.
+    /// Identity of the page-break detector: its version, the accelerator backend and runtime it runs
+    /// on, and a content hash of the ONNX model file.
+    /// <para>
+    /// The backend and the runtime are folded in for the same reason <see cref="ForUpscaler"/> hashes
+    /// them: the findings are peak positions in the detector's output, and the same graph on a
+    /// different execution provider or runtime can shift those peaks. Two workers that share the
+    /// detector file but run it differently would otherwise report under one identity and have their
+    /// findings blended into a single chapter.
+    /// </para>
     /// </summary>
-    public static string ForDetector(string? modelsDirectory = null)
+    /// <param name="modelsDirectory">
+    /// Directory the detector file is resolved under; the configured models directory in production.
+    /// </param>
+    /// <param name="resolvedBackend">
+    /// The accelerator backend the detector actually runs on (the worker's
+    /// <c>IOnnxSessionFactory.GetEffectiveBackend()</c>). "unresolved" is hashed when it is omitted,
+    /// the honest value for a caller that has not probed yet, which must not be mistaken for a
+    /// concrete backend.
+    /// </param>
+    /// <param name="runtimeVersion">
+    /// Overrides <see cref="RuntimeVersion"/>; intended for tests. Production callers omit it.
+    /// </param>
+    public static string ForDetector(
+        string? modelsDirectory = null,
+        GpuBackend? resolvedBackend = null,
+        string? runtimeVersion = null
+    )
     {
         var material = new StringBuilder("detector|");
         material.Append(SplitDetectionService.CURRENT_DETECTOR_VERSION).Append('|');
+        // The execution provider the detector runs on, exactly as ForUpscaler hashes the upscaler's:
+        // a CUDA/WebGPU/CPU hand-off must re-detect rather than blend peaks from two providers.
+        material.Append(resolvedBackend?.ToString() ?? "unresolved").Append('|');
+        material.Append(BuildVersion()).Append('|');
+        material.Append(runtimeVersion ?? RuntimeVersion()).Append('|');
         string modelPath = SplitDetectionLayout.ResolveModelPath(modelsDirectory);
         AppendFileContentHash(material, modelPath);
         return Hash(material.ToString());
@@ -225,8 +254,11 @@ public static class EngineIdentity
         // Sample the head, middle and tail, so a same-size fine-tune that diverges past the first
         // window is still distinguished. The tail is sampled for any file longer than one window
         // (not only longer than two): a 64-128 KiB file otherwise sampled head+middle only, so a
-        // fine-tune differing solely in its tail hashed identically. The middle is skipped when it
-        // would duplicate the head (a file only just over one window long).
+        // fine-tune differing solely in its tail hashed identically. The middle offset is
+        // (length - window) / 2 and is added whenever that offset is positive, so it is skipped only
+        // for a file exactly one window plus one byte, where the offset is 0 and the middle window
+        // would repeat the head; for a 64-128 KiB file it is added and its window overlaps the head
+        // and tail, a redundant sample that distinguishes nothing they do not already.
         var offsets = new List<long> { 0 };
         if (length > FingerprintSampleBytes)
         {

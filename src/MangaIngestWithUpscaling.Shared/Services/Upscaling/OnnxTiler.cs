@@ -2371,30 +2371,13 @@ public static class OnnxTiler
             int outGOff = outPlane;
             int outBOff = outPlane * 2;
 
-            // The offsets used to index the tensor are derived from the REQUESTED scale, while the
-            // tensor is whatever the model actually produced. A model whose real scale differs is only
-            // reachable from the last-resort candidate selection in a mis-provisioned models
-            // directory, where any model at all can be picked for a page of another scale. Such a
-            // model indexes with the wrong stride: a lower real scale runs off the end of the buffer,
-            // and a higher one stays in bounds, decodes finite values and passes every other check —
-            // so the page is silently assembled from the wrong-scale tensors at the requested size.
-            // Element count catches both, because what follows assumes exactly three planes of
-            // outPaddedW x outPaddedH. It runs after the non-finite scan, which already walks the
+            // The offsets used to index the tensor are derived from the REQUESTED scale and assume
+            // the output is NCHW with one image and three channels, while the tensor is whatever the
+            // model actually produced. The check is in EnsureOutputLayout, next to the NCHW
+            // assumptions it enforces; it runs after the non-finite scan, which already walks the
             // buffer safely and is the cheaper failure to report.
-            void EnsureOutputGeometry(long actualElements)
-            {
-                if (actualElements == 3L * outPaddedW * outPaddedH)
-                {
-                    return;
-                }
-
-                throw new ModelContractMismatchException(
-                    $"Model output is {actualElements} elements but {3L * outPaddedW * outPaddedH} "
-                        + $"were expected for a {paddedW}x{paddedH} tile at {scale}x. The loaded model "
-                        + "is at a different scale than the requested one; the models directory is "
-                        + "incomplete or inconsistent for this scale."
-                );
-            }
+            void EnsureOutputGeometry(ReadOnlySpan<int> dimensions) =>
+                EnsureOutputLayout(dimensions, outPaddedW, outPaddedH, paddedW, paddedH, scale);
 
             if (outNamedValue.Value is DenseTensor<Float16> halfOutTensor)
             {
@@ -2403,7 +2386,7 @@ public static class OnnxTiler
                     throw new NonFiniteModelOutputException();
                 }
 
-                EnsureOutputGeometry(halfOutTensor.Length);
+                EnsureOutputGeometry(halfOutTensor.Dimensions);
 
                 Memory<Float16> halfMem = halfOutTensor.Buffer;
                 Parallel.For(
@@ -2436,7 +2419,7 @@ public static class OnnxTiler
                     throw new NonFiniteModelOutputException();
                 }
 
-                EnsureOutputGeometry(floatOutTensor.Length);
+                EnsureOutputGeometry(floatOutTensor.Dimensions);
 
                 Memory<float> floatMem = floatOutTensor.Buffer;
                 Parallel.For(
@@ -2462,6 +2445,49 @@ public static class OnnxTiler
 
             return outCrop;
         }
+    }
+
+    /// <summary>
+    /// Rejects a model output whose tensor layout is not the NCHW one <see cref="DecodeOutputTensor"/>
+    /// indexes. Element count alone cannot tell a correctly shaped output from one that merely has as
+    /// many elements: an NHWC tensor of the same size passes a count check, and the decode's plane
+    /// offsets then read it as three interleaved planes — a silently wrong image rather than a
+    /// failure. That matters because candidate selection deliberately appends every <c>.onnx</c> in
+    /// the models directory as a last resort, so a foreign model is a real input here, not a
+    /// hypothetical. A model whose real scale differs is the other direction: a lower one runs off the
+    /// end of the buffer, a higher one stays in bounds and decodes the wrong-scale tensors at the
+    /// requested size. Pinning the dimensions catches both, and every shipped and pinned upscaler
+    /// produces <c>[1, 3, outPaddedH, outPaddedW]</c>: a rank-3 or NHWC output is not a layout this
+    /// decoder handles.
+    /// </summary>
+    internal static void EnsureOutputLayout(
+        ReadOnlySpan<int> dimensions,
+        int outPaddedW,
+        int outPaddedH,
+        int paddedW,
+        int paddedH,
+        int scale
+    )
+    {
+        if (
+            dimensions.Length == 4
+            && dimensions[0] == 1
+            && dimensions[1] == 3
+            && dimensions[2] == outPaddedH
+            && dimensions[3] == outPaddedW
+        )
+        {
+            return;
+        }
+
+        throw new ModelContractMismatchException(
+            $"Model output has shape [{string.Join(", ", dimensions.ToArray())}] but a "
+                + $"[1, 3, {outPaddedH}, {outPaddedW}] (NCHW) tensor was expected for a "
+                + $"{paddedW}x{paddedH} tile at {scale}x. The loaded model does not satisfy the "
+                + "upscaler contract — a different scale, or a different layout than the NCHW planes "
+                + "this engine decodes. The models directory holds a model that does not match this "
+                + "scale and layout."
+        );
     }
 
     /// <summary>
