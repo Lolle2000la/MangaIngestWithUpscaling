@@ -1215,6 +1215,22 @@ public class OnnxTilerTests : IDisposable
     [InlineData("raw_hash_map allocation failed")]
     [InlineData("DXGI_ERROR_DEVICE_REMOVED")]
     [InlineData("CL_MEM_OBJECT_ALLOCATION_FAILURE")]
+    // Device/driver faults, not allocations. They are the same class of failure — a fresh session or
+    // a retry after the driver recovers runs the same model — and every retryable classifier in the
+    // codebase keys on this one predicate, so a plain OnnxRuntimeException carrying one of these must
+    // not be condemned as a permanent model fault (which is what used to disable a working model for
+    // the process on a one-off "illegal memory access"). Sharing the predicate is deliberate: adding
+    // a token here is what makes the worker, the detector and the engine agree.
+    [InlineData("CUDA error: an illegal memory access was encountered")]
+    [InlineData("cudaErrorIllegalAddress")]
+    [InlineData("WebGPU device lost")]
+    [InlineData("device_disconnected")]
+    [InlineData("The GPU device instance has been suspended")]
+    [InlineData("D3D12 context is lost")]
+    [InlineData("driver reset detected")]
+    [InlineData("device reset")]
+    [InlineData("gpu reset")]
+    [InlineData("The GPU will not respond to more commands")]
     public void IsMemoryException_AcceptsRecognisedOnnxRuntimeMessages(string message)
     {
         Assert.True(OnnxTiler.IsMemoryException(OnnxRuntimeExceptionWithMessage(message)));

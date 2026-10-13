@@ -2105,6 +2105,7 @@ public static class OnnxTiler
                 || msg.Contains("context lost", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("context is lost", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("device suspended", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("has been suspended", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("driver reset", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("device reset", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("gpu reset", StringComparison.OrdinalIgnoreCase)
