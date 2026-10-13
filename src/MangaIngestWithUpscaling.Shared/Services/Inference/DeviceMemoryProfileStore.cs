@@ -62,11 +62,15 @@ public sealed class DeviceMemoryProfileStore
         }
     }
 
-    /// <summary>Adds or replaces the profile for its own fingerprint.</summary>
+    /// <summary>
+    /// Adds or replaces this device's own fingerprint entry, merging it with what is on disk rather
+    /// than replacing the entry wholesale (see <see cref="Merge"/>).
+    /// </summary>
     public void Save(string modelsDirectory, DeviceMemoryProfile profile)
     {
         lock (gate)
         {
+            string path = PathFor(modelsDirectory);
             try
             {
                 // Read the file back before merging rather than using the in-memory snapshot: the
@@ -74,12 +78,32 @@ public sealed class DeviceMemoryProfileStore
                 // writing it would silently drop that worker's profile. Two processes can still
                 // interleave their read and write — the atomic move prevents a torn file, not a lost
                 // update — but a stale in-memory snapshot is the failure that was actually hit.
-                Dictionary<string, DeviceMemoryProfile> profiles = Read(
-                    modelsDirectory,
-                    forceReload: true
+                if (!TryReadFile(path, out Dictionary<string, DeviceMemoryProfile> profiles))
+                {
+                    // The file exists but could not be read, so its content is unknown rather than
+                    // empty. Writing now would build a dictionary from nothing and destroy every
+                    // profile in it — exactly the loss the read-back exists to prevent. The caller
+                    // already holds the measurement it took, and the next save retries the read once
+                    // the file is readable again.
+                    logger.LogWarning(
+                        "Not persisting the device memory profile to {Path}: the existing file is unreadable",
+                        path
+                    );
+                    return;
+                }
+
+                profiles[profile.Fingerprint] = Merge(
+                    profiles.GetValueOrDefault(profile.Fingerprint),
+                    profile
                 );
-                profiles[profile.Fingerprint] = profile;
-                string path = PathFor(modelsDirectory);
+
+                // Publish the merged snapshot to the in-memory cache before writing: a save that
+                // cannot reach the file must still hand the caller's measurement to the next Load in
+                // this process, and the cache is exactly the file's intended content.
+                cache = profiles;
+                cachePath = path;
+                cacheFileSignature = FileSignature(path);
+
                 string? directory = System.IO.Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(directory))
                 {
@@ -95,6 +119,7 @@ public sealed class DeviceMemoryProfileStore
                 {
                     File.WriteAllText(temp, JsonSerializer.Serialize(profiles, Options));
                     File.Move(temp, path, overwrite: true);
+                    cacheFileSignature = FileSignature(path);
                 }
                 finally
                 {
@@ -111,16 +136,13 @@ public sealed class DeviceMemoryProfileStore
                         }
                     }
                 }
-                cache = profiles;
-                cachePath = path;
-                cacheFileSignature = FileSignature(path);
             }
             catch (Exception ex)
             {
                 logger.LogWarning(
                     ex,
                     "Could not persist the device memory profile to {Path}",
-                    PathFor(modelsDirectory)
+                    path
                 );
             }
         }
@@ -148,42 +170,116 @@ public sealed class DeviceMemoryProfileStore
             return cache;
         }
 
-        Dictionary<string, DeviceMemoryProfile> profiles = [];
-        try
+        if (!TryReadFile(path, out Dictionary<string, DeviceMemoryProfile> profiles))
         {
-            if (File.Exists(path))
-            {
-                using FileStream stream = File.OpenRead(path);
-                Dictionary<string, DeviceMemoryProfile>? loaded = JsonSerializer.Deserialize<
-                    Dictionary<string, DeviceMemoryProfile>
-                >(stream, Options);
-                if (loaded is not null)
-                {
-                    profiles = loaded;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Device memory profile file {Path} is unreadable and will be re-created",
-                path
-            );
-
-            // Fall back to the last good snapshot instead of treating an unreadable file as empty:
-            // otherwise a transient read error would let the next Save overwrite every other
-            // profile with only its own entry.
-            if (cache is not null && cachePath == path)
-            {
-                return cache;
-            }
+            // The file exists but could not be read. Fall back to the last good snapshot for this
+            // path if there is one; otherwise hand back an empty dictionary *without* caching it, so
+            // "unreadable" is not published as "no profiles" and the next read retries the file.
+            return cache is not null && cachePath == path ? cache : profiles;
         }
 
         cache = profiles;
         cachePath = path;
         cacheFileSignature = FileSignature(path);
         return profiles;
+    }
+
+    /// <summary>
+    /// Reads the store file at <paramref name="path"/>.
+    /// <para>
+    /// Returns false only when the file exists but its content could not be read at all (an I/O or
+    /// access failure), leaving <paramref name="profiles"/> empty because the real content is
+    /// unknown. A missing file and an unparseable one both return true with an empty dictionary:
+    /// neither has profiles that could be preserved, so both are safe to re-create.
+    /// </para>
+    /// </summary>
+    private bool TryReadFile(string path, out Dictionary<string, DeviceMemoryProfile> profiles)
+    {
+        profiles = [];
+        if (!File.Exists(path))
+        {
+            return true;
+        }
+
+        try
+        {
+            using FileStream stream = File.OpenRead(path);
+            Dictionary<string, DeviceMemoryProfile>? loaded = JsonSerializer.Deserialize<
+                Dictionary<string, DeviceMemoryProfile>
+            >(stream, Options);
+            if (loaded is not null)
+            {
+                profiles = loaded;
+            }
+
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Device memory profile file {Path} is corrupt and will be re-created",
+                path
+            );
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Device memory profile file {Path} is unreadable", path);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Combines the entry read back from disk with the one being saved, for the same fingerprint.
+    /// <para>
+    /// A caller measures one key at a time on a profile it loaded earlier, so its object can predate
+    /// entries another process added under the same fingerprint since that load. The freshly-read
+    /// entry is therefore the base and the caller's per-model entries are layered on top: the model
+    /// the caller just measured wins its key, and every other model's measurement survives.
+    /// </para>
+    /// <para>
+    /// The device-wide fields belong to whichever entry actually measured them: a caller that just
+    /// ran the device-wide benchmark has <see cref="DeviceMemoryProfile.DeviceWideMeasured"/> set and
+    /// wins, while a caller that only measured a model keeps a device-wide measurement another
+    /// process wrote after its load rather than replacing it with its own untouched skeleton.
+    /// </para>
+    /// </summary>
+    private static DeviceMemoryProfile Merge(
+        DeviceMemoryProfile? existing,
+        DeviceMemoryProfile incoming
+    )
+    {
+        if (existing is null)
+        {
+            return incoming;
+        }
+
+        if (existing.Models.Count > 0)
+        {
+            Dictionary<string, ModelMemoryProfile> models = new(
+                existing.Models,
+                StringComparer.Ordinal
+            );
+            foreach (KeyValuePair<string, ModelMemoryProfile> entry in incoming.Models)
+            {
+                models[entry.Key] = entry.Value;
+            }
+            incoming.Models = models;
+        }
+
+        if (!incoming.DeviceWideMeasured && existing.DeviceWideMeasured)
+        {
+            incoming.ActivationScale = existing.ActivationScale;
+            incoming.SessionReservationBytes = existing.SessionReservationBytes;
+            incoming.DeviceWideMeasured = true;
+            incoming.CalibratedAtUtc = existing.CalibratedAtUtc;
+            incoming.CalibratedWithModel = existing.CalibratedWithModel;
+            incoming.MeasuredTiles = existing.MeasuredTiles;
+            incoming.MeasuredPeakBytes = existing.MeasuredPeakBytes;
+        }
+
+        return incoming;
     }
 
     /// <summary>

@@ -38,8 +38,11 @@ public sealed class DeviceMemoryProfile
 
     /// <summary>
     /// Multiplier on the analytically derived activation working set, as measured on this device.
-    /// 1.0 means the execution provider costs exactly the theoretical working set; the ORT WebGPU EP
-    /// measures ~5.0 because of fp32 casts, layout re-packing and a non-shrinking arena.
+    /// 1.0 means the execution provider costs exactly the analytic working set — which already
+    /// includes the ORT WebGPU EP's own overhead (fp32 casts, layout re-packing and a non-shrinking
+    /// arena). The measured factor is therefore a small per-model correction around 1.0: on an
+    /// RX 9070 XT / WebGPU EP the fp16 ESRGAN comes out at 0.90, the fp32 ESRGAN at 0.69 and the
+    /// fp32 FDAT_M at 1.28 (see <see cref="Models"/>).
     /// </summary>
     [JsonPropertyName("activationScale")]
     public double ActivationScale { get; set; } = 1.0;

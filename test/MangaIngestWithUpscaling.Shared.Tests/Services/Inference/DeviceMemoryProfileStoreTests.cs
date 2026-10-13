@@ -208,6 +208,92 @@ public class DeviceMemoryProfileStoreTests : IDisposable
         Assert.Equal(5.0, loaded!.ActivationScale);
     }
 
+    [Fact]
+    public void Save_MergesTheFreshlyReadEntrysPerModelMeasurements()
+    {
+        // The calibrator measures one model at a time on a profile it loaded earlier and saves that
+        // whole object back. A per-model entry another process added under the same fingerprint in
+        // the meantime has to survive the save: replacing the device entry wholesale silently drops
+        // it, and the other process's measurement is lost for every later run too.
+        string keyA = DeviceMemoryProfile.ModelKey("4x_ESRGAN_fp16.onnx", 100);
+        string keyB = DeviceMemoryProfile.ModelKey("4x_FDAT_M_fp32.onnx", 200);
+        string keyC = DeviceMemoryProfile.ModelKey("4x_ESRGAN_fp32.onnx", 300);
+
+        var workerA = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        var snapshotA = NewProfile("shared-fp", "gpu");
+        snapshotA.Models[keyA] = new ModelMemoryProfile { ActivationScale = 0.90 };
+        workerA.Save(tempDir, snapshotA);
+
+        // Worker B loads the file A wrote and adds its own model under the same fingerprint.
+        var workerB = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        DeviceMemoryProfile fromB = workerB.Load(tempDir, "shared-fp")!;
+        fromB.Models[keyB] = new ModelMemoryProfile { ActivationScale = 1.28 };
+        workerB.Save(tempDir, fromB);
+
+        // Worker A now saves the snapshot it loaded before B's write, with the model it just
+        // measured layered on. A replace would drop B's entry.
+        snapshotA.Models[keyC] = new ModelMemoryProfile { ActivationScale = 0.69 };
+        workerA.Save(tempDir, snapshotA);
+
+        var fresh = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        DeviceMemoryProfile? merged = fresh.Load(tempDir, "shared-fp");
+
+        Assert.NotNull(merged);
+        Assert.True(merged!.Models.ContainsKey(keyA));
+        Assert.True(merged.Models.ContainsKey(keyB)); // dropped without the merge
+        Assert.True(merged.Models.ContainsKey(keyC));
+        Assert.Equal(1.28, merged.Models[keyB].ActivationScale);
+    }
+
+    [Fact]
+    public void Save_AfterAReadError_DoesNotClobberTheFileWithAnEmptySnapshot()
+    {
+        // A read that fails while the file exists (a transient sharing violation, a network volume,
+        // a scanner) reports "unknown", not "no profiles". Publishing that as an empty snapshot let
+        // the next Save write it over the file and destroy every profile in it. The file is held
+        // open exclusively here to force exactly that read failure; its original content has to
+        // survive the save.
+        var writer = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        writer.Save(tempDir, NewProfile("shared", "gpu"));
+        var other = NewProfile("other", "gpu");
+        other.ActivationScale = 2.5;
+        writer.Save(tempDir, other);
+
+        string path = DeviceMemoryProfileStore.PathFor(tempDir);
+
+        var store = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            // FileShare.None is emulated with an advisory lock on Unix and can be disabled (the
+            // System.IO.DisableFileLocking switch); the test only means something while enforced.
+            bool lockingEnforced = false;
+            try
+            {
+                using FileStream probe = File.OpenRead(path);
+            }
+            catch (IOException)
+            {
+                lockingEnforced = true;
+            }
+            Assert.SkipWhen(!lockingEnforced, "FileShare.None is not enforced on this host");
+
+            // The read error is not published as an empty "no profiles" snapshot...
+            Assert.Null(store.Load(tempDir, "shared"));
+
+            // ...so the save must refuse to overwrite the unreadable file with an empty dictionary
+            // instead of destroying the profiles it could not read.
+            var measured = NewProfile("shared", "gpu");
+            measured.ActivationScale = 7.0;
+            store.Save(tempDir, measured);
+        }
+
+        var fresh = new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance);
+        DeviceMemoryProfile? shared = fresh.Load(tempDir, "shared");
+        Assert.NotNull(shared);
+        Assert.Equal(5.0, shared!.ActivationScale);
+        Assert.NotNull(fresh.Load(tempDir, "other"));
+    }
+
     private static DeviceMemoryProfile NewProfile(string fingerprint, string deviceName) =>
         new()
         {
