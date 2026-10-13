@@ -437,6 +437,87 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task PrepareRepairTaskForRemote_WhenSourceStaysUnreadable_FailsAfterTheBudget()
+    {
+        // Regression guard: a permanently unreadable source was deferred for ever without consuming
+        // a retry budget, so the task could neither complete nor fail. It must fail once the
+        // consecutive transient-preparation budget is exhausted.
+        await using ApplicationDbContext ctx = _database.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+        var profile = new UpscalerProfile
+        {
+            Name = "Default",
+            CompressionFormat = CompressionFormat.Webp,
+            Quality = 80,
+            ScalingFactor = ScaleFactor.TwoX,
+        };
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        string rel = "Series/Ch1.cbz";
+        string sourcePath = Path.Combine(lib.NotUpscaledLibraryPath, rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        File.WriteAllText(sourcePath, "source");
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = profile,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var task = new PersistedTask
+        {
+            Data = new RepairUpscaleTask
+            {
+                ChapterId = chapter.Id,
+                UpscalerProfileId = profile.Id,
+                RetryFor = 3,
+            },
+            Status = PersistedTaskStatus.Processing,
+            Order = 1,
+        };
+        ctx.PersistedTasks.Add(task);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+        int taskId = task.Id;
+
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult([], []) { ReadFailed = true });
+
+        // The attempts within the budget defer without failing or consuming the retry count.
+        for (int attempt = 1; attempt < 3; attempt++)
+        {
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Requeued,
+                await InvokePrepareRepairTaskForRemoteReadFailedAsync(taskId)
+            );
+            Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+            Assert.Equal(0, await GetRetryCountAsync(taskId));
+        }
+
+        // The budget-th consecutive failure terminalises the task instead of cycling for ever.
+        Assert.Equal(
+            DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Terminal,
+            await InvokePrepareRepairTaskForRemoteReadFailedAsync(taskId)
+        );
+        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RequeueClaimedTask_WhenServiceIsStopping_DoesNotConsumeRetryBudgetOrFail()
     {
         // Service shutdown is not a task failure: it must not consume the retry budget and must not
@@ -615,6 +696,36 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
                 persistedTask,
                 methodScope.ServiceProvider,
                 cancelled.Token,
+            }
+        );
+
+        return await (Task<DistributedUpscaleTaskProcessor.RepairPreparationOutcome>)invocation!;
+    }
+
+    /// <summary>
+    /// Invokes repair preparation with a live token (unlike
+    /// <see cref="InvokePrepareRepairTaskForRemoteAsync" />, which cancels to drive the disconnect
+    /// path) so the method reaches its <c>ReadFailed</c> branch.
+    /// </summary>
+    private async Task<DistributedUpscaleTaskProcessor.RepairPreparationOutcome> InvokePrepareRepairTaskForRemoteReadFailedAsync(
+        int taskId
+    )
+    {
+        PersistedTask persistedTask = await GetDetachedTaskAsync(taskId);
+
+        using IServiceScope methodScope = _provider.CreateScope();
+        MethodInfo method = typeof(DistributedUpscaleTaskProcessor).GetMethod(
+            "PrepareRepairTaskForRemote",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        )!;
+        var invocation = method.Invoke(
+            _processor,
+            new object[]
+            {
+                (RepairUpscaleTask)persistedTask.Data,
+                persistedTask,
+                methodScope.ServiceProvider,
+                TestContext.Current.CancellationToken,
             }
         );
 

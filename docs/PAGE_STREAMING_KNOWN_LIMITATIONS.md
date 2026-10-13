@@ -7,6 +7,26 @@ its cause quickly.
 
 The page-streaming design itself is described in [REMOTE_WORKER.md](REMOTE_WORKER.md).
 
+## Resume is per server process, not across a server restart
+
+- **Where:** `PageStreamSpool` (`SpoolRoot`, the in-memory `_sessions`/completed set) and the
+  page-streaming contract in `protos/upscaling-dist.proto` ("a re-dispatched task resumes where it
+  left off").
+- **Current behaviour:** within **one server process lifetime** a dropped worker or connection
+  resumes where it left off: the manifest reports the already-spooled pages and the worker only
+  re-produces the missing ones. Across a **server restart** there is no resume: the completed set
+  is in memory and each process owns a unique spool root (`{SpoolParent}/{ProcessId}-{Guid}`), so
+  the restarted process starts with an empty session and re-streams (and re-upscales) the whole
+  chapter. The old page bytes may survive on disk — a graceful shutdown deletes the process's own
+  root; a crash leaves it until the startup/periodic sweep ages it out (24 h retention) — but the
+  new session directory cannot see them, so they are orphaned.
+- **Symptom to watch for:** after a server restart, in-flight chapters upscale from scratch again
+  and temp disk usage briefly holds two copies of the chapter until the old spool root is swept.
+- **Direction (follow-up, deliberately not implemented here):** persist the per-task session
+  (identity + completed-page set) so a restarted process can adopt an existing spool root and
+  resume rather than re-stream. That requires discovering and identity-validating the on-disk page
+  files before reuse, which is a separate, riskier change.
+
 ## Spool location and budget (Finding 3)
 
 - **Where:** `PageStreamSpool` (`SpoolRoot`, `_maxTaskBytes`).

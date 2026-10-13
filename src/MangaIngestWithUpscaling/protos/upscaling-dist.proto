@@ -75,6 +75,11 @@ message ReportTaskFailedRequest {
 // pages one at a time and uploads each upscaled page as it finishes. The server
 // spools the results and assembles the final CBZ, so a dropped connection only
 // loses the in-flight pages and a re-dispatched task resumes where it left off.
+// Resume is per server process: the completed-page set is in memory and the
+// spool directory is minted per process, so a server restart re-streams the
+// chapter (the page bytes on disk are swept instead of reused). Persisting the
+// completed set so a restart can reuse those bytes is a deliberate follow-up —
+// see docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md.
 // ---------------------------------------------------------------------------
 
 message PageDescriptor {

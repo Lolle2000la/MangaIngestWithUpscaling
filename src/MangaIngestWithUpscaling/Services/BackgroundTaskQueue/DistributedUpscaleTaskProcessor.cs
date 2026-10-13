@@ -50,6 +50,17 @@ public class DistributedUpscaleTaskProcessor(
     // Store remote repair state separately from the task itself
     private readonly Dictionary<int, RemoteRepairState> remoteRepairStates = new();
 
+    /// <summary>
+    ///     Consecutive transient preparation failures per repair task. A permanently unreadable source
+    ///     (<c>PageDifferenceResult.ReadFailed</c>) otherwise defers the claimed task without ever
+    ///     consuming a retry budget, so the task can neither complete nor fail. The counter is
+    ///     incremented on each deferral and the task is failed once it reaches the task's
+    ///     <see cref="BaseTask.RetryFor" /> budget; a successful read clears the streak. It is
+    ///     process-local, matching the repair state beside it and the supported single-replica
+    ///     deployment.
+    /// </summary>
+    private readonly Dictionary<int, int> transientPreparationFailures = new();
+
     private readonly Dictionary<int, PersistedTask> runningTasks = new();
 
     /// <summary>
@@ -1462,14 +1473,36 @@ public class DistributedUpscaleTaskProcessor(
                 // Transient: requeue without consuming the retry budget, matching the worker-cancel
                 // path. Defer the in-memory re-offer: an immediate re-add writes a signal the selection
                 // loop reads straight back, re-dequeues the same still-unreadable task and starves
-                // every other request until the host restarts.
+                // every other request until the host restarts. Bound the retries: a permanently
+                // unreadable source must eventually fail instead of deferring for ever.
+                int consecutiveFailures = IncrementTransientPreparationFailures(persistedTask.Id);
+                int budget = Math.Max(1, repairTask.RetryFor);
+                if (consecutiveFailures >= budget)
+                {
+                    logger.LogError(
+                        "Source archive for repair task {TaskId} stayed unreadable across {Failures} preparations (budget {Budget}); failing it.",
+                        persistedTask.Id,
+                        consecutiveFailures,
+                        budget
+                    );
+                    ClearTransientPreparationFailures(persistedTask.Id);
+                    CleanupRepairFiles(persistedTask.Id, logger);
+                    await PersistFailedAsync(persistedTask, serviceStoppingToken);
+                    return RepairPreparationOutcome.Terminal;
+                }
+
                 logger.LogWarning(
-                    "Could not read a source archive for repair task {TaskId}; requeuing.",
-                    persistedTask.Id
+                    "Could not read a source archive for repair task {TaskId}; requeuing ({Failures}/{Budget}).",
+                    persistedTask.Id,
+                    consecutiveFailures,
+                    budget
                 );
                 await DeferClaimedTaskAsync(persistedTask, logger);
                 return RepairPreparationOutcome.Requeued;
             }
+
+            // The source was readable this time, so any transient-failure streak is broken.
+            ClearTransientPreparationFailures(persistedTask.Id);
 
             if (differences.AreEqual)
             {
@@ -1563,6 +1596,30 @@ public class DistributedUpscaleTaskProcessor(
             CleanupRepairFiles(persistedTask.Id, logger);
             await PersistFailedAsync(persistedTask, serviceStoppingToken);
             return RepairPreparationOutcome.Terminal;
+        }
+    }
+
+    /// <summary>
+    /// Counts one more consecutive transient preparation failure for a repair task and returns the
+    /// new streak. See <see cref="transientPreparationFailures" /> for why the streak is bounded.
+    /// </summary>
+    private int IncrementTransientPreparationFailures(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            transientPreparationFailures.TryGetValue(taskId, out int count);
+            count++;
+            transientPreparationFailures[taskId] = count;
+            return count;
+        }
+    }
+
+    /// <summary>Clears a repair task's consecutive transient preparation-failure streak.</summary>
+    private void ClearTransientPreparationFailures(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            transientPreparationFailures.Remove(taskId);
         }
     }
 

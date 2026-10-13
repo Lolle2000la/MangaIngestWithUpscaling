@@ -343,6 +343,148 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAnOutOfSequenceChunkWithoutCommittingThePage()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        // Skip chunk 1: the page would be assembled from a non-contiguous stream, so it must be
+        // rejected rather than committed as a silently wrong page.
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 2,
+                Chunk = ByteString.CopyFrom(new byte[] { 4, 5 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 3,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+        Assert.Contains("out of sequence", response.Message);
+        AssertPageNotCommitted(0);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAChunkAfterTheFinalChunkWithoutCommittingThePage()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        // Trailing data after the terminator would have been appended verbatim and committed as a
+        // whole page; it must be rejected instead.
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 2,
+                Chunk = ByteString.CopyFrom(new byte[] { 4, 5, 6 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+        Assert.Contains("after the final chunk", response.Message);
+        AssertPageNotCommitted(0);
+    }
+
+    /// <summary>Asserts that a page was not recorded as committed in the task's spool session.</summary>
+    private void AssertPageNotCommitted(int pageIndex)
+    {
+        // The manifest created the task's session; a rejected upload must not have committed the page
+        // to it.
+        PageStreamSpool spool = _app.Services.GetRequiredService<PageStreamSpool>();
+        PageStreamSession? session = spool.TryGetSession(_taskId);
+        bool committed =
+            session is not null && spool.GetCompletedPages(session).Contains(pageIndex);
+        Assert.False(committed);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task UploadPage_RejectsAStaleIdentityOverTheRpcBoundary()
     {
         var client = new RemoteUpscalingServiceClient(_channel);
