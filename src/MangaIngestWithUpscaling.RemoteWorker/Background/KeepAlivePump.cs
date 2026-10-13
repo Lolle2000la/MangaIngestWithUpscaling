@@ -18,10 +18,15 @@ public sealed class KeepAlivePump(IServiceScopeFactory serviceScopeFactory)
     /// streaming loop has cleared the in-flight task).
     /// </param>
     /// <param name="requestFactory">Builds the keep-alive request for a task id.</param>
+    /// <param name="onTaskGone">
+    /// Invoked when the server reports the task is gone, before the pump cancels
+    /// <paramref name="cts" />. Lets the owner distinguish a server-forced stop from a real failure.
+    /// </param>
     public Task RunAsync(
         CancellationTokenSource cts,
         Func<int?> taskIdProvider,
-        Func<int, KeepAliveRequest> requestFactory
+        Func<int, KeepAliveRequest> requestFactory,
+        Action? onTaskGone = null
     )
     {
         return Task.Run(
@@ -49,14 +54,23 @@ public sealed class KeepAlivePump(IServiceScopeFactory serviceScopeFactory)
                             deadline: DateTime.UtcNow.AddSeconds(10),
                             cancellationToken: cts.Token
                         );
+                        // A success response carrying IsAlive = false is a defensive fallback: the
+                        // current server signals a task it no longer tracks by setting the RPC status
+                        // to NotFound (handled below), which replaces this response, so this branch is
+                        // not reached against it. Either shape means the task is gone.
                         if (!ka.IsAlive)
                         {
+                            onTaskGone?.Invoke();
                             await cts.CancelAsync();
                             break;
                         }
                     }
                     catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
                     {
+                        // The server no longer tracks the task (requeued or cancelled); stop and tell
+                        // the owner so its stream can end cleanly instead of being counted as a
+                        // failure.
+                        onTaskGone?.Invoke();
                         await cts.CancelAsync();
                         break;
                     }

@@ -18,6 +18,13 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
     public bool Canceled { get; private set; }
     public int ProcessedPages { get; private set; }
 
+    /// <summary>The pages the chapter consumed, in order, so a test can pin the yielded name and path.</summary>
+    public List<ChapterPage> SeenPages { get; } = new();
+
+    /// <summary>The bytes read for each consumed page (by index), captured at read time — before the
+    /// work directory is torn down — so a test can pin the file the path actually pointed at.</summary>
+    public Dictionary<int, byte[]> SeenPageBytes { get; } = new();
+
     /// <summary>The inactivity timeout the chapter was driven with, for tests that pin the scaling.</summary>
     public TimeSpan? LastTimeout { get; private set; }
 
@@ -37,6 +44,8 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
             await foreach (ChapterPage page in pages.WithCancellation(cancellationToken))
             {
                 byte[] source = await File.ReadAllBytesAsync(page.Path, cancellationToken);
+                SeenPages.Add(page);
+                SeenPageBytes[page.Index] = source;
                 string outputPath = Path.Combine(
                     request.OutputFolder,
                     $"{Path.GetFileNameWithoutExtension(page.Name)}.webp"

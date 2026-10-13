@@ -502,13 +502,15 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     continue;
                 }
 
+                var keepAliveState = new KeepAliveState();
                 var persistentKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
                 Task persistentKeepAliveTask = _keepAlivePump.RunAsync(
                     persistentKeepAliveCts,
                     () => taskId,
-                    id => new KeepAliveRequest { TaskId = id, Prefetch = true }
+                    id => new KeepAliveRequest { TaskId = id, Prefetch = true },
+                    keepAliveState.MarkTaskGone
                 );
 
                 // Hand the reserved task to the streaming loop; it owns the keep-alive from here.
@@ -517,7 +519,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     resp.TaskType,
                     profile,
                     persistentKeepAliveCts,
-                    persistentKeepAliveTask
+                    persistentKeepAliveTask,
+                    keepAliveState
                 );
                 try
                 {
@@ -645,6 +648,19 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             {
                 // Normal user interruption or task cancellation.
             }
+            catch (Exception) when (item.KeepAliveState.TaskGone)
+            {
+                // The server no longer tracks the task: its keep-alive answered NotFound, which
+                // cancelled this stream. grpc-dotnet reports that cancellation as
+                // RpcException(StatusCode.Cancelled), not as an OperationCanceledException, so it
+                // otherwise fell into the general catch and consumed a soft-failure slot for a task
+                // the server already retired — repeated infrastructure requeues could then push it to
+                // the terminal cap. A task the server has forgotten needs no report: stop cleanly.
+                logger.LogInformation(
+                    "Task {TaskId} stopped streaming because the server no longer tracks it.",
+                    item.TaskId
+                );
+            }
             catch (Exception ex)
             {
                 int softFailures = _softFailures.Increment(item.TaskId);
@@ -728,6 +744,21 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         TaskType TaskType,
         UpscalerProfile Profile,
         CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask
+        Task PersistentKeepAliveTask,
+        KeepAliveState KeepAliveState
     );
+
+    /// <summary>
+    /// Set by the keep-alive pump when the server reports the in-flight task is gone (a NotFound
+    /// keep-alive). The streaming loop reads it to treat the resulting stream cancellation as a clean
+    /// stop rather than a soft failure.
+    /// </summary>
+    private sealed class KeepAliveState
+    {
+        private int _taskGone;
+
+        public bool TaskGone => Volatile.Read(ref _taskGone) != 0;
+
+        public void MarkTaskGone() => Interlocked.Exchange(ref _taskGone, 1);
+    }
 }

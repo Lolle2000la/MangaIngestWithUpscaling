@@ -582,6 +582,119 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunAsync_WithAnOpenFetchStream_SurfacesTheRestartOverTheCancelledFetch()
+    {
+        // Regression: an upload failure cancels the in-flight page fetch, and grpc-dotnet reports
+        // that client-side cancellation as RpcException(StatusCode.Cancelled), not as an
+        // OperationCanceledException. A type-only check treated the consequential cancellation as a
+        // real chapter verdict and masked the non-terminal restart the server actually reported.
+        // The stream is deliberately held open before the second page so the cancellation is
+        // guaranteed to hit an in-flight read (the deterministic shape of the real race), rather
+        // than the fetch finishing first by luck.
+        string directory = Directory.CreateTempSubdirectory("page_stream_open_fetch").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination) { HoldFetchAfterFirstPage = true };
+            server.RestartUploadForPage.Add(0);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            var error = await Assert.ThrowsAsync<PageStreamRestartException>(() =>
+                sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken)
+                    .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+            );
+
+            Assert.Contains("simulated restart", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_CapturesTheEngineIdentityForTheWholeStream()
+    {
+        // A backend change mid-stream (GetEffectiveBackend re-probes a resolution that came from a
+        // transient probe failure) must not make the uploads carry a new engine identity. The server
+        // records the identity the manifest established and rejects a page whose engine differs,
+        // which restarts the chapter and discards every already-upscaled page. The stream must use
+        // the captured identity throughout, while the next chapter must see the new one.
+        string directory = Directory.CreateTempSubdirectory("page_stream_engine_capture").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var engineIdentity = new StubEngineIdentityProvider { Upscaler = "engine-A" };
+            // Flip the reported backend the moment the first page's upload is processed: a second
+            // read during the stream (the bug) would then carry "engine-B".
+            server.OnUploadPage = _ => engineIdentity.Upscaler = "engine-B";
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient(), engineIdentity: engineIdentity);
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            Assert.Equal("engine-A", server.ManifestEngineIdentity);
+            Assert.NotEmpty(server.UploadEngineIdentities);
+            Assert.All(server.UploadEngineIdentities, value => Assert.Equal("engine-A", value));
+
+            // The next stream re-reads the provider, so a genuine backend change is not lost.
+            var secondServer = new FakePageServer(source, Path.Combine(directory, "out2.cbz"));
+            var secondSut = CreateClient(new FakeWorkerClient(), engineIdentity: engineIdentity);
+            await secondSut.RunAsync(
+                secondServer.CreateClient(),
+                1,
+                Profile,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal("engine-B", secondServer.ManifestEngineIdentity);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_WithAnUnexpectedFetchIndex_ThrowsARestartException()
+    {
+        // The server streams only the requested manifest indexes; an index it never described is a
+        // protocol slip. The manifest lookup used to throw KeyNotFoundException, which fell through
+        // the classifier to Permanent and made the server drop the spool of already-upscaled pages.
+        // It must be a restart so those pages survive.
+        string directory = Directory.CreateTempSubdirectory("page_stream_unknown_index").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination) { UnknownFetchIndex = 99 };
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            var error = await Assert.ThrowsAsync<PageStreamRestartException>(() =>
+                sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken)
+            );
+
+            Assert.Contains("not in the manifest", error.Message);
+            Assert.Equal(
+                PageStreamDisposition.Retry,
+                RemoteTaskProcessor.ClassifyStreamingDisposition(error)
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunAsync_ThrowsWhenASourcePageIsEmpty()
     {
         string directory = Directory.CreateTempSubdirectory("page_stream_empty").FullName;
@@ -801,7 +914,7 @@ public class PageStreamClientTests
 
     private sealed class StubEngineIdentityProvider : IEngineIdentityProvider
     {
-        public string Upscaler => EngineIdentityValue;
+        public string Upscaler { get; set; } = EngineIdentityValue;
         public string Detector => EngineIdentityValue;
     }
 
@@ -834,6 +947,90 @@ public class PageStreamClientTests
                     Arg.Any<ImagePreprocessingOptions>(),
                     Arg.Any<CancellationToken>()
                 );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_WhenPreprocessingConvertsTheFormat_UsesTheConvertedPathForThePage()
+    {
+        // Regression: PreprocessImageInPlaceAsync returns the path of the preprocessed page, and when
+        // a format conversion changes the extension it moves the converted file next to the original
+        // under the CONVERTED name and deletes the original. FetchPagesAsync used to discard that
+        // return value and yield the original path, so with a conversion in effect (the default
+        // PNG -> JPG rules) the engine was handed a path to a file preprocessing had already deleted.
+        // Every converted page failed with FileNotFoundException and the chapter could never stream.
+        string directory = Directory.CreateTempSubdirectory("page_stream_conversion").FullName;
+        try
+        {
+            // A .png source page: the default nets a PNG -> JPG conversion whenever the extension
+            // changes, which is exactly the case that used to break.
+            string source = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(source, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.png", new byte[] { 1, 2, 3 });
+            }
+
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+            var worker = new FakeWorkerClient();
+
+            // Mirror the real service's contract: honour the conversion rule carried in the options,
+            // write the converted file under its new name, delete the original, and report the new
+            // path. Driving this off the received options also pins that the default PNG -> JPG rule
+            // is what reached the service.
+            byte[] jpegBytes = [0xFF, 0xD8, 0xFF, 0xE0, 0x10, 0x20, 0x30];
+            var resize = Substitute.For<IImageResizeService>();
+            resize
+                .PreprocessImageInPlaceAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<ImagePreprocessingOptions>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(ci =>
+                {
+                    string input = ci.ArgAt<string>(0);
+                    ImagePreprocessingOptions options = ci.ArgAt<ImagePreprocessingOptions>(1);
+                    string extension = Path.GetExtension(input).ToLowerInvariant();
+                    ImageFormatConversionRule? rule = options.FormatConversionRules.FirstOrDefault(
+                        r => r.FromFormat.Equals(extension, StringComparison.OrdinalIgnoreCase)
+                    );
+                    if (rule is null)
+                    {
+                        return Task.FromResult(input);
+                    }
+
+                    string converted = Path.Combine(
+                        Path.GetDirectoryName(input)!,
+                        Path.GetFileNameWithoutExtension(input)
+                            + (rule.ToFormat.StartsWith('.') ? rule.ToFormat : "." + rule.ToFormat)
+                    );
+                    File.WriteAllBytes(converted, jpegBytes);
+                    File.Delete(input);
+                    return Task.FromResult(converted);
+                });
+
+            var sut = CreateClient(worker, CreateScopeFactory(resize), new UpscalerConfig());
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            ChapterPage page = Assert.Single(worker.SeenPages);
+            // The index key is the worker page name the engine echoes back via OnPageDone, so it must
+            // stay the pre-conversion name even though the on-disk file was renamed to .jpg.
+            Assert.Equal("00000.png", page.Name);
+            Assert.EndsWith(".jpg", page.Path);
+            Assert.NotEqual(Path.ChangeExtension(page.Path, ".png"), page.Path);
+
+            // The bytes read at that path are the converted JPEG, not the deleted original.
+            byte[] bytes = worker.SeenPageBytes[0];
+            Assert.Equal(jpegBytes, bytes);
+            Assert.Equal(0xFF, bytes[0]);
+            Assert.Equal(0xD8, bytes[1]);
         }
         finally
         {
@@ -917,13 +1114,14 @@ public class PageStreamClientTests
     private static PageStreamClient CreateClient(
         IMangaJaNaiWorkerClient worker,
         IServiceScopeFactory? scopeFactory = null,
-        UpscalerConfig? config = null
+        UpscalerConfig? config = null,
+        IEngineIdentityProvider? engineIdentity = null
     ) =>
         new(
             worker,
             scopeFactory ?? CreateScopeFactory(),
             Options.Create(config ?? new UpscalerConfig { ImageFormatConversionRules = [] }),
-            new StubEngineIdentityProvider(),
+            engineIdentity ?? new StubEngineIdentityProvider(),
             Substitute.For<ILogger<PageStreamClient>>()
         );
 
@@ -1072,6 +1270,21 @@ public class PageStreamClientTests
         /// </summary>
         public HashSet<int> ExtraFetchIndexes { get; } = new();
 
+        /// <summary>
+        /// A page index the manifest never described, streamed before the requested pages — a protocol
+        /// slip the real server cannot produce. Reproduces the client-side manifest lookup.
+        /// </summary>
+        public int? UnknownFetchIndex { get; set; }
+
+        /// <summary>The engine identity the client sent on the manifest request.</summary>
+        public string? ManifestEngineIdentity { get; private set; }
+
+        /// <summary>The engine identity carried by each upload the client sent, in order.</summary>
+        public List<string> UploadEngineIdentities { get; } = new();
+
+        /// <summary>Invoked with the page index of each upload, before the response is produced.</summary>
+        public Action<int>? OnUploadPage { get; set; }
+
         /// <summary>Largest page (pixels) the manifest reports, for the worker's timeout scaling.</summary>
         public long MaxPagePixels { get; set; }
 
@@ -1104,6 +1317,22 @@ public class PageStreamClientTests
         public TaskCompletionSource ReleaseUploads { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        /// <summary>
+        /// When set, the page stream holds open after the first page's terminating chunk until
+        /// <see cref="ReleaseFetch" />, so a test can deterministically race an upload failure against
+        /// an in-flight fetch (the stream is still open when the upload fails, and the cancellation
+        /// therefore surfaces from the stream reader rather than at a page boundary).
+        /// </summary>
+        public bool HoldFetchAfterFirstPage { get; set; }
+
+        /// <summary>Set once the stream is parked in the hold, so a test can order work against it.</summary>
+        public TaskCompletionSource FetchHeld { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Releases a stream held by <see cref="HoldFetchAfterFirstPage" />.</summary>
+        public TaskCompletionSource ReleaseFetch { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public UpscalingService.UpscalingServiceClient CreateClient()
         {
             var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
@@ -1114,7 +1343,11 @@ public class PageStreamClientTests
                     Arg.Any<DateTime?>(),
                     Arg.Any<CancellationToken>()
                 )
-                .Returns(_ => Unary(BuildManifest()));
+                .Returns(ci =>
+                {
+                    ManifestEngineIdentity = ci.Arg<PageManifestRequest>().EngineIdentity;
+                    return Unary(BuildManifest());
+                });
             client
                 .GetPages(
                     Arg.Any<GetPagesRequest>(),
@@ -1174,6 +1407,32 @@ public class PageStreamClientTests
         {
             using ZipArchive zip = ZipFile.OpenRead(_sourcePath);
             Dictionary<string, ZipArchiveEntry> entries = zip.Entries.ToDictionary(e => e.FullName);
+
+            // An index the manifest never described, sent first so the client hits it before any page
+            // completes. A real server cannot produce this (GetPages iterates the requested indexes).
+            if (UnknownFetchIndex is int unknown)
+            {
+                PageDescriptor page = Pages[0];
+                using Stream stream = entries[page.SourceName].Open();
+                using var buffer = new MemoryStream();
+                stream.CopyTo(buffer);
+                byte[] bytes = buffer.ToArray();
+                yield return new PageChunk
+                {
+                    TaskId = 1,
+                    PageIndex = unknown,
+                    ChunkNumber = 0,
+                    Chunk = ByteString.CopyFrom(bytes),
+                };
+                yield return new PageChunk
+                {
+                    TaskId = 1,
+                    PageIndex = unknown,
+                    ChunkNumber = 1,
+                    IsLast = true,
+                };
+            }
+
             foreach (int index in request.PageIndexes)
             {
                 RequestedPages.Add(index);
@@ -1276,6 +1535,8 @@ public class PageStreamClientTests
                 }
 
                 int pageIndex = chunks[0].PageIndex;
+                UploadEngineIdentities.Add(chunks[0].EngineIdentity);
+                OnUploadPage?.Invoke(pageIndex);
                 if (FailUploadForPage.Contains(pageIndex))
                 {
                     response.TrySetResult(
@@ -1291,6 +1552,14 @@ public class PageStreamClientTests
 
                 if (RestartUploadForPage.Contains(pageIndex))
                 {
+                    // With the stream held open, wait until the fetch is parked inside the read before
+                    // reporting the rejection, so the cancellation it triggers is guaranteed to hit an
+                    // in-flight read instead of racing a page boundary.
+                    if (HoldFetchAfterFirstPage)
+                    {
+                        await FetchHeld.Task;
+                    }
+
                     response.TrySetResult(
                         new UploadPageResponse
                         {
@@ -1362,38 +1631,77 @@ public class PageStreamClientTests
                 () => { }
             );
 
-        private static AsyncServerStreamingCall<PageChunk> ServerStream(
-            IEnumerable<PageChunk> chunks
-        ) =>
+        private AsyncServerStreamingCall<PageChunk> ServerStream(IEnumerable<PageChunk> chunks) =>
             new(
-                new FakeAsyncStreamReader<PageChunk>(chunks),
+                new FakeAsyncStreamReader<PageChunk>(
+                    chunks,
+                    holdAfter: chunk => HoldFetchAfterFirstPage && chunk.IsLast,
+                    hold: HoldFetchUntilReleased
+                ),
                 Task.FromResult(new Metadata()),
                 () => Status.DefaultSuccess,
                 () => new Metadata(),
                 () => { }
             );
+
+        private async Task HoldFetchUntilReleased(CancellationToken cancellationToken)
+        {
+            FetchHeld.TrySetResult();
+            await ReleaseFetch.Task.WaitAsync(cancellationToken);
+        }
     }
 
     private sealed class FakeAsyncStreamReader<T> : IAsyncStreamReader<T>
     {
         private readonly IEnumerator<T> _items;
+        private readonly Func<T, bool>? _holdAfter;
+        private readonly Func<CancellationToken, Task>? _hold;
+        private bool _holdBeforeNext;
 
-        public FakeAsyncStreamReader(IEnumerable<T> items)
+        public FakeAsyncStreamReader(
+            IEnumerable<T> items,
+            Func<T, bool>? holdAfter = null,
+            Func<CancellationToken, Task>? hold = null
+        )
         {
             _items = items.GetEnumerator();
+            _holdAfter = holdAfter;
+            _hold = hold;
         }
 
         public T Current { get; private set; } = default!;
 
-        public Task<bool> MoveNext(CancellationToken cancellationToken)
+        public async Task<bool> MoveNext(CancellationToken cancellationToken)
         {
-            if (_items.MoveNext())
+            // The hold runs before pulling the next item, i.e. after the previous item (the page's
+            // terminating chunk) has already been delivered, which is where a real stream sits while
+            // an upload failure cancels the in-flight read.
+            if (_holdBeforeNext)
             {
-                Current = _items.Current;
-                return Task.FromResult(true);
+                _holdBeforeNext = false;
+                try
+                {
+                    await _hold!(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // grpc-dotnet surfaces a client-side call cancellation from the stream as
+                    // RpcException(StatusCode.Cancelled) ("Call canceled by the client"), not as an
+                    // OperationCanceledException, so the fake reports the same shape.
+                    throw new RpcException(
+                        new Status(StatusCode.Cancelled, "Call canceled by the client.")
+                    );
+                }
             }
 
-            return Task.FromResult(false);
+            if (!_items.MoveNext())
+            {
+                return false;
+            }
+
+            Current = _items.Current;
+            _holdBeforeNext = _holdAfter?.Invoke(Current) ?? false;
+            return true;
         }
     }
 
