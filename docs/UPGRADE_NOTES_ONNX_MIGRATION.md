@@ -32,8 +32,10 @@ configuration surface. Nothing here requires a data migration; the database sche
   semantic, not a device index) will behave differently on the next start.
 * `UseFp16` now defaults to **`null` (auto-detect)** instead of `true`. Unset means the precision is
   derived from the resolved execution provider and the accelerator's own feature set; set it
-  explicitly to pin one. The fp16 and fp32 copies of a model are both downloaded, and the engine
-  falls back to the fp32 one when the fp16 one mis-executes.
+  explicitly to pin one. When fp16 is selected **on WebGPU**, the fp32 copies of the transformer
+  models are downloaded alongside the fp16 ones (that EP has no fp16 kernels for them) and the engine
+  falls back to the fp32 copy when the fp16 one mis-executes; every other provider downloads only the
+  selected precision.
 * `EnableSmartDownscale` now defaults to **`true`** instead of `false`. Images that look like a cheap
   bicubic/bilinear upscale are detected and reduced toward their likely native resolution before AI
   upscaling, so **existing deployments will produce different output** from the first run after the

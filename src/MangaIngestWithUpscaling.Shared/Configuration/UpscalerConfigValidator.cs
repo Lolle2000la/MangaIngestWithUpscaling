@@ -40,9 +40,19 @@ public static class UpscalerConfigSizeValidation
         // A non-finite number is not a plausible one and does not survive CalculateVramBudget's clamp:
         // NaN compares false against everything, so it would poison the budget instead of being clamped
         // into range.
-        if (config.VramUtilizationFraction is double utilization && !double.IsFinite(utilization))
+        if (config.VramUtilizationFraction is double utilization)
         {
-            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a finite fraction such as 0.97, or unset for automatic";
+            if (!double.IsFinite(utilization))
+            {
+                yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a finite fraction such as 0.97, or unset for automatic";
+            }
+            // Out-of-range values are only silently clamped by CalculateVramBudget (to [0.1, 1.0]), so
+            // the fraction actually applied would not be the one configured. The documented 0.0-1.0
+            // range fails the boot instead, the same reason the preprocessing ranges are checked here.
+            else if (utilization < 0.0 || utilization > 1.0)
+            {
+                yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a fraction between 0.0 and 1.0, or unset for automatic";
+            }
         }
 
         // TileSize > 0 is a manual maximum that bypasses PlanTileSplit, so it is the one tile size the
@@ -156,7 +166,7 @@ public static class UpscalerConfigPreprocessingValidation
         // Checked before the smart-downscale gate: the rules apply regardless of it. libvips
         // clamps or ignores an out-of-range q rather than erroring, so without this a typo'd
         // quality is silently applied as something other than what was configured.
-        foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules)
+        foreach (ImageFormatConversionRule rule in config.EffectiveImageFormatConversionRules)
         {
             if (rule.Quality is not null and (< 1 or > 100))
             {

@@ -276,12 +276,15 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         Assert.True(File.Exists(_upscaledPath));
 
         using ZipArchive zip = ZipFile.OpenRead(_upscaledPath);
-        List<string> entries = zip.Entries.Select(e => e.FullName).ToList();
-        Assert.Equal(4, entries.Count);
-        Assert.Contains("001.webp", entries);
-        Assert.Contains("002.webp", entries);
-        Assert.Contains("ComicInfo.xml", entries);
-        Assert.Contains("upscaler.json", entries);
+        // The exact entry sequence, not a set: a reader uses the archive's physical order, so a
+        // reordering regression — pages emitted in source-archive order instead of page order, or the
+        // page entries split around the pass-through entries differently — has to fail here. The
+        // assembler writes non-page entries first (ComicInfo.xml) and the pages next in page-index
+        // order, then the finalizer appends upscaler.json.
+        Assert.Equal(
+            new[] { "ComicInfo.xml", "001.webp", "002.webp", "upscaler.json" },
+            zip.Entries.Select(e => e.FullName)
+        );
         Assert.Equal(new byte[] { 3, 2, 1 }, ReadEntry(zip, "001.webp"));
         Assert.Equal(new byte[] { 6, 5, 4 }, ReadEntry(zip, "002.webp"));
         Assert.Equal("<ComicInfo/>"u8.ToArray(), ReadEntry(zip, "ComicInfo.xml"));

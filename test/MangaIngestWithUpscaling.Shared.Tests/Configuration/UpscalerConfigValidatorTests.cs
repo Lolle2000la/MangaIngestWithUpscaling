@@ -111,12 +111,12 @@ public class UpscalerConfigValidatorTests
     [Fact]
     public void Validator_IgnoresTheOtherSettings()
     {
-        // Only the size settings are validated here; unrelated misconfiguration is not this
-        // validator's business and must not fail startup.
+        // This method reports size parsing plus the VRAM utilization fraction's range; it is not a
+        // catch-all for unrelated misconfiguration, and a valid value must not fail startup.
         List<string> invalid = new UpscalerConfig
         {
             MemoryBudgetBytes = "4GiB",
-            VramUtilizationFraction = 1.5, // clamped elsewhere, out of scope for the size check
+            VramUtilizationFraction = 0.97, // in range, so it contributes nothing to the size errors
             SmartDownscaleFactor = 0.75,
         }
             .FindInvalidSizeSettings()
@@ -340,6 +340,38 @@ public class UpscalerConfigValidatorTests
             new UpscalerConfig { VramUtilizationFraction = 0.97 }.FindInvalidSizeSettings()
         );
     }
+
+    [Theory]
+    [InlineData(1.5)]
+    [InlineData(-1.0)]
+    [InlineData(1.0000001)]
+    public void RejectsAnOutOfRangeVramUtilizationFraction(double value)
+    {
+        // CalculateVramBudget silently clamps the fraction into [0.1, 1.0], so an out-of-range value
+        // would be applied as something other than what was configured. The documented 0.0-1.0 range
+        // fails the boot instead.
+        List<string> invalid = new UpscalerConfig { VramUtilizationFraction = value }
+            .FindInvalidSizeSettings()
+            .ToList();
+
+        Assert.Single(invalid);
+        Assert.Contains(
+            $"Upscaler:VramUtilizationFraction = {value}",
+            invalid[0],
+            StringComparison.Ordinal
+        );
+        Assert.Contains("between 0.0 and 1.0", invalid[0], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(0.05)]
+    [InlineData(0.97)]
+    [InlineData(1.0)]
+    public void AcceptsVramUtilizationFractionsInRange(double value) =>
+        Assert.Empty(
+            new UpscalerConfig { VramUtilizationFraction = value }.FindInvalidSizeSettings()
+        );
 
     [Fact]
     public void AcceptsValidPreprocessingSettings()

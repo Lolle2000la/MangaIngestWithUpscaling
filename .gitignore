@@ -373,6 +373,3 @@ src/MangaIngestWithUpscaling/.net10-upgrade-complete
 # test data
 test_data/
 
-# Local environment files (copy .env.example to .env)
-.env
-

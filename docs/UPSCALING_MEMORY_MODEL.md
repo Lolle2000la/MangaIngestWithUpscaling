@@ -171,11 +171,12 @@ Notes:
   loses context on screentones, and above it a larger tile has nothing left to look at. The planner
   therefore gives the smaller side all the context the budget allows, capped at 512, and among the
   grids that tie on that context takes the one with the fewest total padded pixels. That is what
-  makes the search pick 2x2 (563x800 tiles) over 4x3 (282x534 tiles) on a 1125x1600 4x page at
-  ~13 GB: only the 2x2 grid reaches the 512 px context target.
+  makes the search pick 2x2 (563x800 tiles) at 12 GB and 1x3 (1125x534 tiles) at 13.4 GB and above on
+  a 1125x1600 4x page: both reach the 512 px context target, and 1x3 only becomes affordable at the
+  larger budget. The §5 sweep below works it out row by row.
 * **No upper cap.** On this card (16 GB, ~2 GB used by the desktop, so a ~13.4 GB Vulkan budget) a 4x
-  model plans 563x800 tiles and a 2x model runs the whole 1125x1600 page in a single pass. The old
-  `maxCap = { ≥4 => 512, 3 => 640, _ => 1024 }` is gone.
+  model plans 1125x534 tiles in a 1x3 grid and a 2x model runs the whole 1125x1600 page in a single
+  pass. The old `maxCap = { ≥4 => 512, 3 => 640, _ => 1024 }` is gone.
 * **`MinimumTileSize = 256`** remains the quality floor (receptive field on screentones), and the grid
   never gets finer than it. When even that grid does not fit the budget, the engine's existing
   `OnnxTiler.IsMemoryException` path halves it further — down to **`EmergencyTileFloor = 128`**, and no
@@ -286,8 +287,9 @@ Methodology for each model:
    `peakVRAM − sessionVRAM` as the measured footprint.
 
 Only the peak values that matter are shown; the *architecture* is what drives the formula, and
-all 32 shipped models fall into 6 architectures plus the page-break detector (which runs on the
-CPU/short-lived session and is not tiled).
+all 32 shipped models fall into 6 architectures plus the page-break detector (a short-lived session
+that runs on the resolved backend — the CPU by default when no accelerator is present — and is
+inferred in budget-sized windows rather than tiles).
 
 | model | arch | weights | `4x` Δ VRAM @256 | `2x` Δ VRAM @256 | live set at peak |
 |---|---|---|---|---|---|
@@ -300,7 +302,7 @@ CPU/short-lived session and is not tiled).
 | `2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16` | FDAT_M | 9.2 MB | – | 0.24 GB | `upsampler.1` fp32 cast |
 | `2x_MangaJaNai_*_V1_ESRGAN_*` | ESRGAN | 33.9 MB | – | 0.34 GB | `model.5/Resize` fp16+fp32 |
 | `2x_IllustrationJaNai_V3{detail,denoise}_SPAN_S_*` | SPAN | 0.8 MB | – | 0.16 GB | 96-ch concat at 1× (6.3 MB @256) |
-| `page_break_detector` | – | 2.3 MB | – | – | page-split detector, small, never tiled |
+| `page_break_detector` | – | 2.3 MB | – | – | page-split detector, small; inferred in budget-sized windows, not tiles |
 
 The per-model codebook (`W`, `C_arch`, `scale`) is what `OnnxUpscaleEngine` feeds into
 `OnnxTiler.PlanTileSplit`. Because all models of an architecture share a graph, the per-model

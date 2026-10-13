@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Globalization;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 
 namespace MangaIngestWithUpscaling.Shared.Configuration;
@@ -24,6 +26,41 @@ public enum GpuBackend
 
     [Obsolete("Use WebGPU instead: this alias is remapped to it")]
     XPU = 103,
+}
+
+/// <summary>
+/// The list of <see cref="ImageFormatConversionRule"/>s a <see cref="UpscalerConfig"/> carries, with
+/// a type converter that maps the empty scalar the configuration binder emits for a JSON empty array
+/// to an empty list.
+/// <para>
+/// The binder leaves a collection property untouched when its section has no children, so without
+/// this <c>"ImageFormatConversionRules": []</c> would be indistinguishable from an absent key and
+/// would keep the built-in defaults. An empty JSON array is surfaced as an empty string, which the
+/// converter turns into an empty list, so "explicitly no rules" and "unset" stay distinct.
+/// </para>
+/// </summary>
+[TypeConverter(typeof(ImageFormatConversionRuleListConverter))]
+public class ImageFormatConversionRuleList : List<ImageFormatConversionRule> { }
+
+/// <summary>
+/// Converts the empty-string value the binder produces for an empty array into an empty
+/// <see cref="ImageFormatConversionRuleList"/>. Only that scalar case reaches here: a non-empty array
+/// has children and binds through the normal collection path. Any other scalar is rejected rather
+/// than silently swallowed.
+/// </summary>
+public sealed class ImageFormatConversionRuleListConverter : TypeConverter
+{
+    public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType) =>
+        sourceType == typeof(string) || base.CanConvertFrom(context, sourceType);
+
+    public override object? ConvertFrom(
+        ITypeDescriptorContext? context,
+        CultureInfo? culture,
+        object value
+    ) =>
+        value is string { Length: 0 }
+            ? new ImageFormatConversionRuleList()
+            : base.ConvertFrom(context, culture, value);
 }
 
 public record UpscalerConfig
@@ -261,12 +298,11 @@ public record UpscalerConfig
     public int? MaxDimensionBeforeUpscaling { get; set; } = null;
 
     /// <summary>
-    ///     Optional image format conversion rules to apply during preprocessing.
-    ///     Images matching the FromFormat will be converted to ToFormat before upscaling.
-    ///     This only affects the temporary working copy, not the original files.
-    ///     By default, PNG images are converted to JPG with quality 98 to ensure compatibility with the upscaler.
+    ///     The built-in image format conversion rules, used when
+    ///     <see cref="ImageFormatConversionRules"/> is unset: PNG and AVIF images are converted to
+    ///     JPG with quality 98 to ensure compatibility with the upscaler.
     /// </summary>
-    public List<ImageFormatConversionRule> ImageFormatConversionRules { get; set; } =
+    public static IReadOnlyList<ImageFormatConversionRule> DefaultImageFormatConversionRules { get; } =
     [
         new ImageFormatConversionRule
         {
@@ -281,6 +317,28 @@ public record UpscalerConfig
             Quality = 98,
         },
     ];
+
+    /// <summary>
+    ///     Optional image format conversion rules to apply during preprocessing.
+    ///     Images matching the FromFormat will be converted to ToFormat before upscaling.
+    ///     This only affects the temporary working copy, not the original files.
+    ///     <para>
+    ///     Unset (<see langword="null"/>) means the built-in
+    ///     <see cref="DefaultImageFormatConversionRules"/>; an explicit empty list disables conversion.
+    ///     The default is <see langword="null"/> rather than the built-in list because the
+    ///     configuration binder appends to a non-null collection, which would make
+    ///     <c>"ImageFormatConversionRules": []</c> silently keep the built-in rules. Read
+    ///     <see cref="EffectiveImageFormatConversionRules"/> instead of this property.
+    ///     </para>
+    /// </summary>
+    public ImageFormatConversionRuleList? ImageFormatConversionRules { get; set; }
+
+    /// <summary>
+    ///     <see cref="ImageFormatConversionRules"/> with the built-in defaults substituted when it is
+    ///     unset. An explicit empty list stays empty.
+    /// </summary>
+    public IReadOnlyList<ImageFormatConversionRule> EffectiveImageFormatConversionRules =>
+        ImageFormatConversionRules ?? DefaultImageFormatConversionRules;
 
     /// <summary>
     ///     When enabled, images that appear to have been cheaply upscaled (e.g. bicubic/bilinear) are

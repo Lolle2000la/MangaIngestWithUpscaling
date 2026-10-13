@@ -378,6 +378,7 @@ run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches 
 - **SQLite / PostgreSQL (Npgsql)** - Supported database engines (SQLite is the default)
 - **Testcontainers** - Spins up PostgreSQL for the dual-provider test passes (Docker required)
 - **gRPC** - Communication protocol
+- **System.CommandLine** - Command-line parsing for the database migrator tool
 - **Serilog** - Logging framework
 - **Microsoft.ML.OnnxRuntime** - Pure C# ML inference engine (WebGPU — the `:latest` image default, while the app default is `Auto` — CUDA, DirectML, OpenVINO, MIGraphX, CPU)
 

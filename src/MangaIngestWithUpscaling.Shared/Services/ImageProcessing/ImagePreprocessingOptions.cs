@@ -56,7 +56,7 @@ public class ImagePreprocessingOptions
         new()
         {
             MaxDimension = config.MaxDimensionBeforeUpscaling,
-            FormatConversionRules = config.ImageFormatConversionRules ?? [],
+            FormatConversionRules = config.EffectiveImageFormatConversionRules.ToList(),
             EnableSmartDownscale = config.EnableSmartDownscale,
             SmartDownscaleThreshold = config.SmartDownscaleThreshold,
             SmartDownscaleFactor = config.SmartDownscaleFactor,

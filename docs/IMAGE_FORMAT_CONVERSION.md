@@ -291,7 +291,7 @@ If you're using the programmatic API, you can configure format conversion like t
 var upscalerConfig = new UpscalerConfig
 {
     MaxDimensionBeforeUpscaling = 2048,
-    ImageFormatConversionRules = new List<ImageFormatConversionRule>
+    ImageFormatConversionRules = new()
     {
         new()
         {
