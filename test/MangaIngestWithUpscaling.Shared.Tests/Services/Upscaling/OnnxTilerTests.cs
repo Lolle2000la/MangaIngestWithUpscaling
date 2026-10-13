@@ -1766,6 +1766,45 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void BudgetFromVulkanMetrics_ExplicitSafetyMargin_BeatsTheDriverBudget()
+    {
+        // A safety margin is an explicit override just like a fraction or a threshold: it has to do
+        // the arithmetic rather than trust the driver's verbatim total-minus-used, otherwise the
+        // configured margin would be silently ignored whenever VK_EXT_memory_budget answered.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 200L * 1024 * 1024;
+        long driverBudget = total - used;
+        long margin = 2L * 1024 * 1024 * 1024;
+        var metrics = new VulkanGpuMemory(0, "gpu", 0x1002, total, driverBudget, used);
+
+        long budget = OnnxTiler.BudgetFromVulkanMetrics(metrics, safetyMarginBytes: margin);
+
+        Assert.Equal(
+            OnnxTiler.CalculateVramBudget(total, used, customSafetyMarginBytes: margin),
+            budget
+        );
+        Assert.Equal(driverBudget - margin, budget);
+        Assert.True(budget < driverBudget, $"the margin should cap the driver budget: {budget}");
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_WhenDriverReportsNoBudget_FallsBackToCalculated()
+    {
+        // A driver that does not implement VK_EXT_memory_budget leaves heapBudget at zero, so the
+        // metrics carry a real usage figure but BudgetBytes = 0. The driver's number cannot be used
+        // (there is none), and falling back to total-minus-used would be the quasi-exclusive spend
+        // the calculated path exists to avoid, so the arithmetic result must be used instead.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 3L * 1024 * 1024 * 1024;
+        var metrics = new VulkanGpuMemory(0, "gpu", 0x1002, total, 0, used);
+
+        long budget = OnnxTiler.BudgetFromVulkanMetrics(metrics);
+
+        Assert.Equal(OnnxTiler.CalculateVramBudget(total, used), budget);
+        Assert.True(budget > 0, "the calculated fallback must still be a usable budget");
+    }
+
+    [Fact]
     public void PlanTileSplit_TinyPageThatSinglePassRejects_DoesNotReturnTheWholePage()
     {
         // Both sides are at or below MinimumTileSize, so the enumeration bounds are 1 and 1 and the

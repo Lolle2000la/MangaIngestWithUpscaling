@@ -86,7 +86,7 @@ services:
       - /dev/dri # GPU access for Vulkan (Mesa RADV / ANV)
 ```
 
-The repository's `docker-compose.yml` passes the same `/dev/dri` node, and Compose aborts `docker compose up` when the host has no render node; on a CPU-only host, comment that `devices:` block out or run `docker compose --profile remote-only up` (see [Remote-Only Mode](#remote-only-mode)).
+The repository's `docker-compose.yml` passes the same `/dev/dri` node, and Compose aborts `docker compose up` when the host has no render node. On a CPU-only host, merge the tracked [`docker-compose.cpu-only.yml`](./docker-compose.cpu-only.yml) override, which drops that mapping, or run the remote-only profile with `COMPOSE_PROFILES=remote-only docker compose up` (equivalent: `docker compose --profile remote-only up`; see [Remote-Only Mode](#remote-only-mode)).
 
 ### NVIDIA GPU (CUDA)
 
@@ -162,6 +162,13 @@ With this set, the server loads no model at all and needs no GPU access; the `/m
 be dropped. All upscaling is then handled by one or more
 [remote workers](./docs/REMOTE_WORKER.md) on separate machines with GPU capabilities. See
 [Remote-Only Configuration](./docs/REMOTE_ONLY_VARIANT.md) for the full option list.
+
+The repository's `docker-compose.yml` ships this as the `remote-only` profile. Start it with
+`COMPOSE_PROFILES=remote-only docker compose up`, which sets the profile in the environment and so
+cannot be overridden by the tracked `.env` (`docker compose --profile remote-only up` is equivalent
+on current Compose). To keep the standard image running locally on a host without a GPU render node,
+merge [`docker-compose.cpu-only.yml`](./docker-compose.cpu-only.yml) to drop the base file's
+`/dev/dri` mapping: `docker compose -f docker-compose.yml -f docker-compose.cpu-only.yml up`.
 
 ### OIDC Configuration (v0.12.0+)
 

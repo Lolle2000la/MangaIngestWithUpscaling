@@ -5,8 +5,15 @@
 
 > **Note:** The separate `-remote-only` image variant has been removed. Remote-only mode is now just
 > the **standard image** with `Ingest_Upscaler__RemoteOnly=true`; the `docker-compose.yml`
-> `remote-only` profile (`docker compose --profile remote-only up`) does exactly that. There is no
-> longer a variant image to pull.
+> `remote-only` profile does exactly that. Select it with
+> `COMPOSE_PROFILES=remote-only docker compose up`, which sets the profile in the environment and so
+> cannot be overridden by the tracked `.env` (`docker compose --profile remote-only up` is equivalent
+> on current Compose). There is no longer a variant image to pull.
+>
+> On a host without a GPU render node, the base `docker-compose.yml` fails before the container
+> starts because it maps `/dev/dri` unconditionally. Merge
+> [`docker-compose.cpu-only.yml`](../docker-compose.cpu-only.yml) to drop that mapping, or use the
+> `remote-only` profile above, which has no device mapping.
 
 This document describes the remote-only configuration of MangaIngestWithUpscaling, designed for deployment scenarios where upscaling is handled exclusively by remote workers.
 

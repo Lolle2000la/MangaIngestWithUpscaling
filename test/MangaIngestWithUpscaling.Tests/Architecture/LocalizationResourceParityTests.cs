@@ -4,10 +4,10 @@ using System.Xml.Linq;
 namespace MangaIngestWithUpscaling.Tests.Architecture;
 
 /// <summary>
-/// Guards the localization resource files of the web app against key drift. Every culture of the same
-/// component (the same file name without its culture suffix, in the same directory) must expose
-/// exactly the same set of keys. A key present in only one culture makes that culture render the raw
-/// key name once it is looked up through <c>IStringLocalizer</c>.
+/// Guards the localization resource files of the web app and the shared library against key drift.
+/// Every culture of the same component (the same file name without its culture suffix, in the same
+/// directory) must expose exactly the same set of keys. A key present in only one culture makes that
+/// culture render the raw key name once it is looked up through <c>IStringLocalizer</c>.
 /// </summary>
 public class LocalizationResourceParityTests
 {
@@ -19,46 +19,53 @@ public class LocalizationResourceParityTests
         RegexOptions.Compiled
     );
 
+    // Both projects ship user-facing .resx files. The shared library's strings are resolved through
+    // localizers injected into the web app, so drift there renders raw key names just like drift
+    // inside the app itself.
+    private static readonly string[] LocalizedProjects =
+    {
+        Path.Combine("src", "MangaIngestWithUpscaling"),
+        Path.Combine("src", "MangaIngestWithUpscaling.Shared"),
+    };
+
     [Fact]
     public void EveryCultureOfAComponentExposesTheSameKeys()
     {
         string repositoryRoot = FindRepositoryRoot();
-        string resourcesRoot = Path.Combine(
-            repositoryRoot,
-            "src",
-            "MangaIngestWithUpscaling",
-            "Resources"
-        );
-
-        Assert.True(
-            Directory.Exists(resourcesRoot),
-            $"Could not find the app's Resources directory at {resourcesRoot}"
-        );
 
         var groups =
             new Dictionary<(string Directory, string BaseName), Dictionary<string, List<string>>>();
-        foreach (
-            string file in Directory.EnumerateFiles(
-                resourcesRoot,
-                "*.resx",
-                SearchOption.AllDirectories
-            )
-        )
+        foreach (string projectDirectory in LocalizedProjects)
         {
-            string stem = Path.GetFileNameWithoutExtension(file);
-            Match match = CultureSuffix.Match(stem);
-            string baseName = match.Success ? match.Groups["base"].Value : stem;
-            string culture = match.Success ? match.Groups["culture"].Value : "(neutral)";
-            string directory = Path.GetDirectoryName(file)!;
+            string resourcesRoot = Path.Combine(repositoryRoot, projectDirectory, "Resources");
+            Assert.True(
+                Directory.Exists(resourcesRoot),
+                $"Could not find the Resources directory at {resourcesRoot}"
+            );
 
-            var group = groups.GetValueOrDefault((directory, baseName));
-            if (group is null)
+            foreach (
+                string file in Directory.EnumerateFiles(
+                    resourcesRoot,
+                    "*.resx",
+                    SearchOption.AllDirectories
+                )
+            )
             {
-                group = new Dictionary<string, List<string>>();
-                groups[(directory, baseName)] = group;
-            }
+                string stem = Path.GetFileNameWithoutExtension(file);
+                Match match = CultureSuffix.Match(stem);
+                string baseName = match.Success ? match.Groups["base"].Value : stem;
+                string culture = match.Success ? match.Groups["culture"].Value : "(neutral)";
+                string directory = Path.GetDirectoryName(file)!;
 
-            group[culture] = ReadKeys(file);
+                var group = groups.GetValueOrDefault((directory, baseName));
+                if (group is null)
+                {
+                    group = new Dictionary<string, List<string>>();
+                    groups[(directory, baseName)] = group;
+                }
+
+                group[culture] = ReadKeys(file);
+            }
         }
 
         var offenders = new List<string>();

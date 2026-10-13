@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 using Xunit;
 using VulkanHeapInfo = MangaIngestWithUpscaling.Shared.Services.GPU.VulkanMemoryProvider.VulkanHeapInfo;
@@ -129,40 +130,36 @@ public class VulkanMemoryProviderTests
     }
 
     [Fact]
-    public void SupportsFp16_WhenAvailable_ReturnsExpectedSupport()
+    public void SupportsFp16_WhenAvailable_AnswersEveryAcceleratorThroughTheWebGpuPath()
     {
         Assert.SkipWhen(!VulkanMemoryProvider.IsAvailable, NoVulkan);
 
-        // IsCpuDevice takes an accelerator index and ResolveGpuIndex skips software rasterizers by
-        // construction, so IsCpuDevice is false for every accelerator and the "if (IsCpuDevice(0))"
-        // branch can never run. What the host that enumerated rasterizers and no accelerator at all
-        // must still pin is that SupportsFp16 is false there rather than falling back to the vendor
-        // heuristic.
+        // SupportsFp16 decides from the device's own feature query whenever the loader exports
+        // vkGetPhysicalDeviceFeatures2 — the conjunction of shaderFloat16, storageBuffer16BitAccess
+        // and uniformAndStorageBuffer16BitAccess — and falls back to the vendor heuristic only when
+        // that query could not run. Which branch ran, and the three flags, are not observable from a
+        // test, so the value is a property of the host's GPU rather than of this code: pinning it to
+        // the vendor heuristic (as an earlier version did) fails on a valid GPU whose vendor is in
+        // the heuristic while the driver reports one of the three features as missing — an Adreno
+        // without uniformAndStorageBuffer16BitAccess, for instance, which the production comment
+        // names. The decision itself is pinned exhaustively against ResolveFp16Support below; what
+        // hardware can still show is that a rasterizer-only host has no fp16 accelerator and that
+        // every real accelerator is answered for the WebGPU decision the detector actually asks
+        // about.
         if (VulkanMemoryProvider.DeviceCount == 0)
         {
             Assert.False(VulkanMemoryProvider.SupportsFp16(0));
             return;
         }
 
-        // On a host with a real accelerator the decision must be the one derived from that device's
-        // own data, not a constant: QueryDevice(i).VendorId is the vendor the provider reads for the
-        // accelerator, and the four modern vendors are fp16-capable. A SupportsFp16 hardcoded to
-        // false (or one indexing the wrong device) fails this, whereas the old body asserted nothing
-        // whenever DeviceCount > 0.
         for (int accelerator = 0; accelerator < VulkanMemoryProvider.DeviceCount; accelerator++)
         {
-            VulkanGpuMemory? device = VulkanMemoryProvider.QueryDevice(accelerator);
-            Assert.SkipWhen(device is null, NoBudgetInformation);
-
+            // WebGPU is the only resolved backend whose answer is the device's own, so the detector
+            // must forward SupportsFp16 rather than assume a value: one hardcoded here would select
+            // the fp16 model set on a device that cannot run it.
             Assert.Equal(
-                VulkanMemoryProvider.ResolveFp16Support(
-                    featureQueryRan: false,
-                    shaderFloat16: false,
-                    storageBuffer16BitAccess: false,
-                    uniformAndStorageBuffer16BitAccess: false,
-                    vendorId: device!.VendorId
-                ),
-                VulkanMemoryProvider.SupportsFp16(accelerator)
+                VulkanMemoryProvider.SupportsFp16(accelerator),
+                Fp16CapabilityDetector.IsFp16Supported(GpuBackend.WebGPU, accelerator)
             );
         }
     }
@@ -234,7 +231,9 @@ public class VulkanMemoryProviderTests
     [InlineData(true, false, true, false)] // no 16-bit access in storage buffers
     [InlineData(false, true, true, false)] // no fp16 arithmetic
     [InlineData(true, false, false, false)] // arithmetic only
-    [InlineData(false, false, true, false)] // storage only
+    [InlineData(false, true, false, false)] // storage buffers only
+    [InlineData(false, false, true, false)] // uniform storage only
+    [InlineData(false, false, false, false)] // none of the three
     public void ResolveFp16Support_QueryRan_RequiresAllThreeFeatures(
         bool shaderFloat16,
         bool storageBuffer16BitAccess,

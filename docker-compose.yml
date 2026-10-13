@@ -6,10 +6,13 @@ services:
       dockerfile: src/MangaIngestWithUpscaling/Dockerfile
     # In the `default` profile so plain `docker compose up` starts it. Compose never auto-enables
     # profiles, so the tracked `.env` (which sets COMPOSE_PROFILES=default) is what turns this
-    # profile on — keep that file committed or a fresh clone skips the app service. Passing
-    # `--profile remote-only` starts the remote-only service instead of this one (the unprofiled
-    # `kavita` service starts either way). Also in `postgres` so the documented
-    # `docker compose --profile postgres up` brings the app up together with the server.
+    # profile on — keep that file committed or a fresh clone skips the app service. Selecting the
+    # `remote-only` profile starts the remote-only service instead of this one (the unprofiled
+    # `kavita` service starts either way): `COMPOSE_PROFILES=remote-only docker compose up` sets the
+    # profile in the environment and so cannot be overridden by the tracked `.env`, while
+    # `docker compose --profile remote-only up` is equivalent on current Compose. Also in `postgres`
+    # so the documented `docker compose --profile postgres up` brings the app up together with the
+    # server.
     profiles:
       - default
       - postgres
@@ -42,8 +45,9 @@ services:
     #
     # This mapping is required, not optional: Compose has no "map it if it exists", and a missing
     # /dev/dri aborts `docker compose up` before the container starts — the CPU fallback in the app
-    # cannot help. On a CPU-only host (a NAS without a render node) comment these two lines out, or
-    # run the remote-only variant below, which has no device mapping.
+    # cannot help. On a CPU-only host (a NAS without a render node) merge
+    # `docker-compose.cpu-only.yml`, which drops this mapping via the `!override` tag, or run the
+    # remote-only variant below, which has no device mapping. See the README.
     devices:
       - /dev/dri
 
@@ -67,7 +71,7 @@ services:
     volumes:
       - ./test_data:/data
     profiles:
-      - remote-only # Use docker-compose --profile remote-only to run this variant
+      - remote-only # Select with: COMPOSE_PROFILES=remote-only docker compose up (equivalent to --profile remote-only)
 
   # Optional PostgreSQL server. Start it together with the app using:
   #   docker compose --profile postgres up

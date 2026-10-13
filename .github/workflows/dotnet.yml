@@ -59,6 +59,43 @@ jobs:
           context: .
           file: Dockerfile
           push: false
+          # The default Buildx driver is docker-container, whose build cache is isolated from the
+          # local daemon: without `load`, this step only proves the Dockerfile builds and no image
+          # ever reaches `docker run`. The tag is what `--load` needs, and what the smoke step below
+          # runs.
+          load: true
+          tags: mangaingestwithupscaling:ci
+      # The release workflows only build and push, so nothing has ever run the image: a Dockerfile
+      # that builds but whose entrypoint exits at startup passed CI. RemoteOnly skips the startup
+      # model download, so the boot needs no GPU and no network, the image's anonymous `/data` and
+      # `/models` volumes supply writable storage, and `/health` is the anonymous endpoint.
+      - name: Smoke-test the application image
+        run: |
+          set -euo pipefail
+          docker run -d --name miawu-smoke \
+            -p 127.0.0.1:18080:8080 \
+            -e Ingest_Upscaler__RemoteOnly=true \
+            mangaingestwithupscaling:ci >/dev/null
+
+          # Always tear the container down, and surface its logs only when it did not come up.
+          trap 'if [ "${healthy:-0}" -ne 1 ]; then echo "::group::container logs"; docker logs miawu-smoke 2>&1 || true; echo "::endgroup::"; fi; docker rm -f miawu-smoke >/dev/null 2>&1 || true' EXIT
+
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:18080/health >/dev/null 2>&1; then
+              healthy=1
+              echo "Application image answered /health."
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' miawu-smoke 2>/dev/null || echo false)" != "true" ]; then
+              echo "::error::The application container exited before /health answered."
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "::error::/health did not answer within 60 s."
+          exit 1
       - name: Build the remote worker image
         uses: docker/build-push-action@v6
         with:

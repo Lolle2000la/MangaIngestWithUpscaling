@@ -1,0 +1,45 @@
+# Runs the `Category=Download` tests on a schedule. They are the only tests that fetch a real
+# release archive, extract it and assert that the expected model files land on disk — the exact path
+# the ONNX migration rewrote — but they are slow and network-bound, so every other workflow filters
+# them out with `--filter-not-trait Category=Download` (see AGENTS.md). Keeping them on the PR path
+# would make pull requests depend on GitHub releases and a multi-gigabyte download. This workflow is
+# their only home: it never runs on a PR, so it cannot block a merge.
+name: Model Download Tests
+
+on:
+  schedule:
+    # Weekly, Monday 06:17 UTC. Off the hour to avoid the top-of-hour scheduling rush.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  download-tests:
+    runs-on: ubuntu-latest
+    # A cold run downloads several gigabytes; the build and the three tests comfortably fit here,
+    # but the cap stops a hung download from holding a runner indefinitely.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj
+      - name: Build
+        run: dotnet build --no-restore test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj
+      # `--filter-trait` is xUnit v3's Microsoft.Testing.Platform trait selector — the inverse of the
+      # `--filter-not-trait Category=Download` the PR workflows already use. `--minimum-expected-tests`
+      # is the zero-guard: if the filter matched nothing the runner exits 9 ("minimum expected tests
+      # policy violation") instead of passing a run that silently selected no tests. The filter
+      # cannot be run against the whole solution: a test module whose filter matches nothing exits 8,
+      # so only the project that actually carries the trait is invoked. Today that is
+      # MangaIngestWithUpscaling.Shared.Tests (verified: it is the only project with the trait); add
+      # a step — or switch to the solution with `--ignore-exit-code 8` — if a Download test is ever
+      # added elsewhere.
+      - name: Run the model-download tests
+        run: |
+          dotnet test --no-build --verbosity normal \
+            --project test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj \
+            --filter-trait Category=Download \
+            --minimum-expected-tests 1

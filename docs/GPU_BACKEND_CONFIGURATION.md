@@ -117,9 +117,10 @@ services:
 
 `devices: - /dev/dri` is **required, not optional**: Compose has no "map it if it exists", so on a
 host without a render node (a CPU-only NAS) a missing `/dev/dri` aborts `docker compose up` before
-the container starts — the CPU fallback in the app cannot help. Comment the mapping out on such a
-host, or run the remote-only service in the tracked `docker-compose.yml`, which has no device
-mapping.
+the container starts — the CPU fallback in the app cannot help. Merge the tracked
+[`docker-compose.cpu-only.yml`](../docker-compose.cpu-only.yml) override to drop the mapping
+(`docker compose -f docker-compose.yml -f docker-compose.cpu-only.yml up`), comment the mapping out,
+or run the remote-only service in the tracked `docker-compose.yml`, which has no device mapping.
 
 ### NVIDIA GPU (CUDA)
 
