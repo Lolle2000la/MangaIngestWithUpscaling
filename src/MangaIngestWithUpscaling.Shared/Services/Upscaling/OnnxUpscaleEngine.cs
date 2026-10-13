@@ -43,6 +43,17 @@ public class OnnxUpscaleEngine(
     private const int ModelUsableCacheCapacity = 256;
 
     /// <summary>
+    /// Failures at one (model, scale) that must be observed before the process-lifetime "unusable"
+    /// verdict is recorded. A single provider failure is not evidence about the model: a driver
+    /// reset, a lost device or a stalled WebGPU/Dawn queue produces exactly the same
+    /// <see cref="OnnxRuntimeException"/> once ("Non-zero status code returned…"), and condemning a
+    /// working model on it is what took a whole chapter's models out of service for a transient
+    /// event. A deterministic fault (a contract mismatch, a file ONNX Runtime cannot load) latches
+    /// on its first observation and does not use this.
+    /// </summary>
+    private const int ModelFailureRecurrenceThreshold = 2;
+
+    /// <summary>
     /// GTT growth during one page above which the cached session is dropped after the page. The
     /// per-shape buffer cache is handled proactively (see <see cref="_sessionShape"/>), so this is a
     /// safety net for anything that still grows; a page on a clean session measures under 100 MB of
@@ -57,8 +68,23 @@ public class OnnxUpscaleEngine(
     /// probe runs through the decode, which rejects an output whose geometry does not match the
     /// requested scale: a 4x page can probe a 2x model (candidate selection appends every
     /// <c>.onnx</c> as a last resort), and that verdict must not disable the model for a 2x page.
+    /// A <c>false</c> is a process-lifetime verdict, so it is only recorded for a deterministic
+    /// fault or after <see cref="ModelFailureRecurrenceThreshold"/> failures — see
+    /// <see cref="_modelFailureCount"/>.
     /// </summary>
     private readonly Dictionary<ModelScaleKey, bool> _modelUsable = new(
+        ModelScaleKeyComparer.Instance
+    );
+
+    /// <summary>
+    /// Consecutive failures at one (model, scale) that have not reached the permanent verdict yet,
+    /// keyed like <see cref="_modelUsable"/> and guarded by the same lock. A failure only removes a
+    /// model from service once it has been seen twice without an intervening success, so a one-off
+    /// provider/driver error skips the candidate for the page but leaves the model usable. Cleared by
+    /// a successful run (see <see cref="ClearModelFailure"/>), so two failures that straddle a healthy
+    /// page are not read as a model that cannot run.
+    /// </summary>
+    private readonly Dictionary<ModelScaleKey, int> _modelFailureCount = new(
         ModelScaleKeyComparer.Instance
     );
 
@@ -989,6 +1015,9 @@ public class OnnxUpscaleEngine(
                     budget,
                     cancellationToken
                 );
+                // A success clears the recurrence counter, so two failures separated by an
+                // otherwise healthy page are not read as a model that cannot run.
+                ClearModelFailure(new ModelScaleKey(modelPath, scale));
                 return (modelPath, upscaled);
             }
             catch (NonFiniteModelOutputException ex)
@@ -1023,11 +1052,15 @@ public class OnnxUpscaleEngine(
                 // rethrown so the caller can retry the page.
                 if (IsModelFault(ex))
                 {
-                    // Only a failure that is plausibly the model's becomes a permanent verdict. A
-                    // programming error that happens to surface here skips the candidate — the page
-                    // still falls through — but must not take a working model out of service for the
-                    // rest of the process on the strength of a bug in our own code.
-                    MarkModelUnusable(modelPath, scale);
+                    // Only a failure that is plausibly the model's is eligible for the permanent
+                    // verdict, and even then MarkModelUnusable records it only for a deterministic
+                    // fault or a repeated one: a single provider status (a driver reset, a stalled
+                    // queue phrased as "Non-zero status code returned…") says as much about the
+                    // timing as about the model. A programming error that happens to surface here
+                    // skips the candidate — the page still falls through — but must not take a
+                    // working model out of service for the rest of the process on the strength of a
+                    // bug in our own code.
+                    MarkModelUnusable(modelPath, scale, ex);
                 }
 
                 unusable.Add(Path.GetFileName(modelPath));
@@ -1230,21 +1263,15 @@ public class OnnxUpscaleEngine(
                         // resident, so the two descended through the same sizes twice.
                         try
                         {
-                            sessionFactory.ReleaseCachedSessions();
                             attempt = OnnxTiler.HalveSplit(width, height, attempt);
-                            // Record the halved shape as the one the session about to be fetched will
-                            // have run. Without it a later page that plans the original grid compares
-                            // against the pre-halving shape, sees no change, and keeps a session whose
-                            // per-shape buffer cache holds a different shape — the accumulation
-                            // ReleaseSessionForShapeChange exists to prevent.
-                            (int halvedWidth, int halvedHeight) = OnnxTiler.UniformTileTensorShape(
-                                attempt
-                            );
-                            lock (_sessionShapeGate)
-                            {
-                                _sessionShapeModel = modelPath;
-                                _sessionShape = (halvedWidth, halvedHeight);
-                            }
+                            // The flush and the registration are one critical section against other
+                            // pages, exactly as in AcquireSessionForShape: releasing outside the gate
+                            // would let another page register its own shape and fetch between them,
+                            // and this registration would then overwrite that page's shape while its
+                            // session stayed cached — the accumulation the gate exists to prevent.
+                            // The next AcquireSessionForShape sees the halved shape already
+                            // registered, so it does not flush a third time.
+                            ReleaseAndRegisterSessionShape(modelPath, attempt);
 
                             GC.Collect();
                             GC.WaitForPendingFinalizers();
@@ -1355,19 +1382,11 @@ public class OnnxUpscaleEngine(
         OnnxTiler.TileSplit split
     )
     {
-        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
-
         lock (_sessionShapeGate)
         {
-            bool changed =
-                _sessionShapeModel is null
-                || !string.Equals(_sessionShapeModel, modelPath, StringComparison.Ordinal)
-                || _sessionShape != (paddedWidth, paddedHeight);
-            _sessionShapeModel = modelPath;
-            _sessionShape = (paddedWidth, paddedHeight);
-
-            if (changed)
+            if (RegisterSessionShapeLocked(modelPath, split))
             {
+                (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
                 logger.LogDebug(
                     "Tile shape for {Model} changed to {Width}x{Height}; releasing the cached session so the execution provider's per-shape buffer cache cannot accumulate across the chapter.",
                     Path.GetFileName(modelPath),
@@ -1393,6 +1412,45 @@ public class OnnxUpscaleEngine(
                 throw;
             }
         }
+    }
+
+    /// <summary>
+    /// Frees the cached session and registers <paramref name="split"/> as the shape the next fetch
+    /// will run, as one critical section under <see cref="_sessionShapeGate"/>. Used by the
+    /// memory-pressure descent, which has just decided to halve: the release is unconditional — the
+    /// session being dropped is the one whose arena failed the allocation, and a rebuild is the
+    /// point — unlike <see cref="AcquireSessionForShape"/>, which releases only when the shape it is
+    /// about to run differs from the registered one. The registration is what keeps the descent's
+    /// next <see cref="AcquireSessionForShape"/> from flushing again for a shape it just chose, and
+    /// doing both under the gate is what keeps another page from registering its own shape and
+    /// fetching between the release and this registration.
+    /// </summary>
+    private void ReleaseAndRegisterSessionShape(string modelPath, OnnxTiler.TileSplit split)
+    {
+        lock (_sessionShapeGate)
+        {
+            RegisterSessionShapeLocked(modelPath, split);
+            sessionFactory.ReleaseCachedSessions();
+        }
+    }
+
+    /// <summary>
+    /// Registers the padded tensor shape <paramref name="split"/> will be inferred at and reports
+    /// whether that differs from the shape the cached session was last used at (or the model changed,
+    /// or no shape is known yet). The caller must hold <see cref="_sessionShapeGate"/>, which is what
+    /// makes the decision, the release that follows and the fetch that follows both atomic against
+    /// other pages.
+    /// </summary>
+    private bool RegisterSessionShapeLocked(string modelPath, OnnxTiler.TileSplit split)
+    {
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+        bool changed =
+            _sessionShapeModel is null
+            || !string.Equals(_sessionShapeModel, modelPath, StringComparison.Ordinal)
+            || _sessionShape != (paddedWidth, paddedHeight);
+        _sessionShapeModel = modelPath;
+        _sessionShape = (paddedWidth, paddedHeight);
+        return changed;
     }
 
     /// <summary>
@@ -1498,7 +1556,11 @@ public class OnnxUpscaleEngine(
             // file, an output at a different scale, or a provider that refuses it — the model
             // cannot serve this scale here. Candidate selection deliberately appends every .onnx as
             // a last resort, so a single bad file must be skipped rather than abort the page while
-            // a working candidate follows.
+            // a working candidate follows. The verdict is cached only once it is conclusive —
+            // deterministic by construction, or a repeated failure (see RecordModelFailure) — so a
+            // provider that refused the graph once is probed again rather than taken out for the
+            // process, and a non-model fault (this code's own config error) records no verdict at
+            // all. Skipping this attempt is unaffected either way.
             sessionFactory.InvalidateSession(modelPath);
             logger.LogDebug(
                 ex,
@@ -1506,6 +1568,7 @@ public class OnnxUpscaleEngine(
                 Path.GetFileName(modelPath)
             );
             usable = false;
+            cacheVerdict = IsModelFault(ex) && RecordModelFailure(key, ex);
         }
 
         if (cacheVerdict)
@@ -1539,10 +1602,16 @@ public class OnnxUpscaleEngine(
     /// <summary>
     /// True for a failure the execution provider reports for the model itself — a graph it cannot
     /// load, an operator or shape it does not implement, an output whose geometry does not match the
-    /// requested scale, an input it does not name the way the engine requires. Only these become a
-    /// permanent "unusable on this device" verdict; every other failure skips the candidate for this
-    /// page but leaves the model usable, so a tiler bug or a misconfigured <c>TileSize</c> cannot
-    /// disable a model that works.
+    /// requested scale, an input it does not name the way the engine requires. Only such a failure can
+    /// leave the session or its arena in a state a rebuild changes, so this is what invalidates the
+    /// cached session (see <see cref="UpscaleWithModelAsync"/>).
+    /// <para>
+    /// It is also the eligibility gate for the process-lifetime "unusable on this device" verdict,
+    /// not the verdict itself: <see cref="RecordModelFailure"/> records that verdict only for a
+    /// deterministic fault or after a repeated failure. A failure this returns false for skips the
+    /// candidate for this page but leaves the model usable, so a tiler bug or a misconfigured
+    /// <c>TileSize</c> cannot disable a model that works.
+    /// </para>
     /// </summary>
     internal static bool IsModelFault(Exception ex) =>
         ex
@@ -1572,8 +1641,86 @@ public class OnnxUpscaleEngine(
         return tile;
     }
 
-    private void MarkModelUnusable(string modelPath, int scale) =>
-        RecordUsable(new ModelScaleKey(modelPath, scale), false);
+    /// <summary>
+    /// Records a failure that <see cref="IsModelFault"/> attributed to the model and reports whether
+    /// it has now become a process-lifetime unusable verdict, recording that verdict in
+    /// <see cref="_modelUsable"/> when it has.
+    /// <para>
+    /// A deterministic fault — the engine's own contract mismatch, or a model file ONNX Runtime
+    /// cannot load — latches on the first observation: no retry makes a corrupt graph load or gives a
+    /// model a geometry it does not produce. Every other failure is counted and only the second
+    /// consecutive one at the same (model, scale) condemns the model, because the first is
+    /// indistinguishable from a driver reset or a stalled provider queue. The count is per key rather
+    /// than global so a model that works at 2x is not taken out by a 4x probe.
+    /// </para>
+    /// </summary>
+    private bool RecordModelFailure(ModelScaleKey key, Exception ex)
+    {
+        lock (_modelUsable)
+        {
+            if (IsDeterministicallyUnusable(ex))
+            {
+                _modelFailureCount.Remove(key);
+                _modelUsable[key] = false;
+                return true;
+            }
+
+            if (
+                _modelFailureCount.Count >= ModelUsableCacheCapacity
+                && !_modelFailureCount.ContainsKey(key)
+            )
+            {
+                _modelFailureCount.Clear();
+            }
+
+            _modelFailureCount.TryGetValue(key, out int count);
+            count++;
+            _modelFailureCount[key] = count;
+            if (count < ModelFailureRecurrenceThreshold)
+            {
+                return false;
+            }
+
+            _modelFailureCount.Remove(key);
+            _modelUsable[key] = false;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Clears a model's failure count after it has actually upscaled a page, so a failure either
+    /// side of the success does not accumulate into a process-lifetime verdict.
+    /// </summary>
+    private void ClearModelFailure(ModelScaleKey key)
+    {
+        lock (_modelUsable)
+        {
+            _modelFailureCount.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// True for a model failure that is deterministic by construction and so may condemn the model on
+    /// a single observation: the engine's own contract mismatch (a geometry or element type the model
+    /// cannot satisfy), and a file ONNX Runtime cannot load or parse. No retry makes a corrupt file
+    /// load or a graph acquire the fixed input the engine requires.
+    /// </summary>
+    internal static bool IsDeterministicallyUnusable(Exception ex) =>
+        ex is ModelContractMismatchException
+        || (ex is OnnxRuntimeException onnx && IsModelLoadFailure(onnx.Message));
+
+    /// <summary>
+    /// The status text ONNX Runtime returns when it cannot load or parse the model file (a non-ONNX
+    /// file, a truncated protobuf, a graph with no model). Deliberately narrow: a provider failure on
+    /// the same exception type must stay subject to the recurrence rule.
+    /// </summary>
+    private static bool IsModelLoadFailure(string message) =>
+        message.Contains("Load model", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("Protobuf parsing", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("does not have a graph", StringComparison.OrdinalIgnoreCase);
+
+    private void MarkModelUnusable(string modelPath, int scale, Exception ex) =>
+        RecordModelFailure(new ModelScaleKey(modelPath, scale), ex);
 
     /// <summary>
     /// Stores a probe verdict, clearing the cache first when it is full so an unbounded set of

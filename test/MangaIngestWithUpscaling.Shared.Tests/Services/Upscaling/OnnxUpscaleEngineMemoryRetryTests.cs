@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -367,6 +368,241 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
             );
             Assert.False(File.Exists(outputPath), "a failed page must not be published");
         }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task SingleProviderFailure_DoesNotDisableTheModelForTheProcess()
+    {
+        // A provider failure — an OnnxRuntimeException that is not a recognised device/memory fault,
+        // e.g. "Non-zero status code returned…" from a stalled Dawn/CUDA queue — is indistinguishable
+        // from a one-off driver event. It may skip the candidate for the page, but it must not take a
+        // working model out of service for the rest of the process: the next page has to probe it
+        // again and succeed once the provider recovers.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = new MemoryPressureSessionFactory(modelPath, scopeFailures: false);
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new TilerFaultEngine(
+            ProviderFailure(
+                "Non-zero status code returned while running WebGpuExecutionProvider node. Status Message: Dawn fail"
+            ),
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        )
+        {
+            FailuresLeft = 1,
+        };
+
+        string firstOutput = Path.Combine(_tempDir, "provider-single-first.webp");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            engine.UpscaleFileAsync(
+                inputPath,
+                firstOutput,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.False(File.Exists(firstOutput));
+
+        // The fault is spent, so this can only succeed if the single failure did not condemn the
+        // model. A recurrence rule that latched on the first observation would skip the candidate and
+        // throw "already known to be unusable" here instead.
+        string secondOutput = Path.Combine(_tempDir, "provider-single-second.webp");
+        await engine.UpscaleFileAsync(
+            inputPath,
+            secondOutput,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.True(
+            File.Exists(secondOutput),
+            "a single provider failure disabled the model for the process"
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task SecondProviderFailure_DisablesTheModelForTheProcess()
+    {
+        // The recurrence rule's other half: the same model failing the same way twice is no longer
+        // plausibly a one-off, so the second observation records the process-lifetime verdict and the
+        // next page skips the candidate outright.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = new MemoryPressureSessionFactory(modelPath, scopeFailures: false);
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new TilerFaultEngine(
+            ProviderFailure(
+                "Non-zero status code returned while running WebGpuExecutionProvider node. Status Message: Dawn fail"
+            ),
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        )
+        {
+            FailuresLeft = 2,
+        };
+
+        for (int attempt = 1; attempt <= 2; attempt++)
+        {
+            string output = Path.Combine(_tempDir, $"provider-repeat-{attempt}.webp");
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                engine.UpscaleFileAsync(
+                    inputPath,
+                    output,
+                    scale,
+                    CompressionFormat.Webp,
+                    quality: 80,
+                    TestContext.Current.CancellationToken
+                )
+            );
+            Assert.False(File.Exists(output));
+        }
+
+        // The fault is spent, so this can only fail because the second observation condemned the
+        // model: the probe is served from the cached verdict, the only candidate is skipped, and the
+        // page throws the "already known to be unusable" error instead of upscaling.
+        string thirdOutput = Path.Combine(_tempDir, "provider-repeat-third.webp");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            engine.UpscaleFileAsync(
+                inputPath,
+                thirdOutput,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.False(File.Exists(thirdOutput));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ContractMismatchFailure_DisablesTheModelOnTheFirstObservation()
+    {
+        // A ModelContractMismatchException is deterministic by construction — an output geometry the
+        // model cannot produce, an input it does not expose — so it condemns the model on a single
+        // observation. The second page here would upscale if the model were still usable (the fault
+        // engine is spent), so its failure proves the first observation latched.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = new MemoryPressureSessionFactory(modelPath, scopeFailures: false);
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new TilerFaultEngine(
+            new ModelContractMismatchException(
+                "output geometry does not match the requested scale"
+            ),
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        )
+        {
+            FailuresLeft = 1,
+        };
+
+        string firstOutput = Path.Combine(_tempDir, "contract-first.webp");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            engine.UpscaleFileAsync(
+                inputPath,
+                firstOutput,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.False(File.Exists(firstOutput));
+
+        string secondOutput = Path.Combine(_tempDir, "contract-second.webp");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            engine.UpscaleFileAsync(
+                inputPath,
+                secondOutput,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.False(File.Exists(secondOutput));
+    }
+
+    [Fact]
+    public void IsDeterministicallyUnusable_LatchesContractAndUnloadableFilesButNotProviderFailures()
+    {
+        // The permanent verdict is recorded on a single observation only for a fault that is
+        // deterministic by construction: the engine's own contract mismatch, and a file ONNX Runtime
+        // cannot load or parse. A provider failure is the same exception type as the load failure and
+        // must stay subject to the recurrence rule, so a driver reset is not read as the model.
+        Assert.True(
+            OnnxUpscaleEngine.IsDeterministicallyUnusable(
+                new ModelContractMismatchException("geometry")
+            )
+        );
+        Assert.True(
+            OnnxUpscaleEngine.IsDeterministicallyUnusable(
+                UnloadableModel(
+                    "[ErrorCode:InvalidProtobuf] Load model from /models/x.onnx failed:Protobuf parsing failed."
+                )
+            )
+        );
+        Assert.False(
+            OnnxUpscaleEngine.IsDeterministicallyUnusable(
+                ProviderFailure(
+                    "Non-zero status code returned while running WebGpuExecutionProvider node. Status Message: Dawn fail"
+                )
+            )
+        );
+    }
+
+    /// <summary>
+    /// Builds a real <see cref="OnnxRuntimeException"/> — the type the engine treats as a model fault
+    /// but not as deterministic by construction. Its constructor and the error-code enum are internal
+    /// to ONNX Runtime, so reflection is the only way to obtain one without provoking a live provider
+    /// failure; it has to be real rather than a substitute because the classification is type-based.
+    /// </summary>
+    private static OnnxRuntimeException ProviderFailure(string message) =>
+        OnnxFailure("Fail", message);
+
+    /// <summary>A model file ONNX Runtime cannot load or parse, as a corrupt candidate produces.</summary>
+    private static OnnxRuntimeException UnloadableModel(string message) =>
+        OnnxFailure("InvalidProtobuf", message);
+
+    private static OnnxRuntimeException OnnxFailure(string errorCode, string message)
+    {
+        ConstructorInfo ctor = typeof(OnnxRuntimeException)
+            .GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single();
+        object code = Enum.Parse(ctor.GetParameters()[0].ParameterType, errorCode);
+        return (OnnxRuntimeException)ctor.Invoke([code, message]);
     }
 
     /// <summary>

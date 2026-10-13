@@ -214,11 +214,16 @@ public class OnnxUpscaleEngineProbeVerdictTests : IDisposable
     }
 
     [Fact]
-    public void IsModelFault_OnlyCondemnsTheModelsOwnContract()
+    public void IsModelFault_ClassifiesOnlyTheModelsOwnFailures()
     {
-        // A permanent verdict is for the model's own contract: the non-finite output of a mis-executing
-        // kernel, output geometry that does not match the requested scale, an input the engine does not
-        // name the way it requires, an element type it cannot feed, or the provider refusing the graph.
+        // IsModelFault is the predicate for two things: whether the cached session should be
+        // invalidated (a rebuild can help), and which failures are eligible for the process-lifetime
+        // "unusable" verdict. It is not the verdict itself — that now requires a deterministic fault
+        // or a repeated failure (see OnnxUpscaleEngine.RecordModelFailure), and the non-finite output
+        // below is deliberately retried without any verdict at all. What this test pins is the
+        // classification: the model's own failures — a mis-executing kernel, output geometry that
+        // does not match the requested scale, an input the engine does not name the way it requires,
+        // or the provider refusing the graph (an OnnxRuntimeException) — are model faults.
         Assert.True(OnnxUpscaleEngine.IsModelFault(new NonFiniteModelOutputException()));
         Assert.True(OnnxUpscaleEngine.IsModelFault(new ModelContractMismatchException("geometry")));
 

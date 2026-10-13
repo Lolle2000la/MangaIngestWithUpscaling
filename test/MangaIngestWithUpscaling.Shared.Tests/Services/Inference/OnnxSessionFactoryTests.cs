@@ -106,6 +106,23 @@ public class OnnxSessionFactoryTests : IDisposable
         );
     }
 
+    [Theory]
+    [InlineData("CUDA execution provider is not enabled in this build.", true)]
+    [InlineData("[ErrorCode:Fail] CUDA execution provider is not enabled in this build.", true)]
+    [InlineData("Failed to load shared library onnxruntime_providers_cuda.so", true)]
+    [InlineData("CUDA failure: an illegal memory access was encountered", false)]
+    [InlineData("CUDA driver version is insufficient for CUDA runtime version", false)]
+    [InlineData("CUDA failure 100: no CUDA-capable device is detected", false)]
+    public void IsAbsentProviderStatus_OnlyLatchesDefinitiveAbsence(string message, bool absent)
+    {
+        // The CUDA probe is the one provider ORT reports through a return status instead of a
+        // missing export on the shipped CPU build ("CUDA execution provider is not enabled in this
+        // build."), so a plain failure treated it as transient and the provider was re-probed once a
+        // minute for the process lifetime. Only the two permanent statuses latch; a driver or device
+        // problem has to stay transient so a driver that becomes ready after boot is still picked up.
+        Assert.Equal(absent, OnnxSessionFactory.IsAbsentProviderStatus(message));
+    }
+
     [Fact]
     [Trait("Category", "Integration")]
     public void InvalidateAllSessions_ReplacesTheCachedSessionAndDisposesTheOldOne()

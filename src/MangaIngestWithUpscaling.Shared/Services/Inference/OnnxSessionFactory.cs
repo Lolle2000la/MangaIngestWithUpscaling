@@ -417,6 +417,24 @@ public sealed class OnnxSessionFactory(
         || currentConfig.SelectedDeviceIndex <= 0
         || currentConfig.PreferredGpuBackend == GpuBackend.CPU;
 
+    /// <summary>
+    /// The ONNX Runtime status text that means a provider is definitively absent rather than merely
+    /// not ready: it is not compiled into this build, or its provider shared library cannot be
+    /// loaded. Both are permanent for the process, so a probe that sees one must latch the negative
+    /// availability instead of being re-probed on <see cref="BackendTransientRetryInterval"/>.
+    /// <para>
+    /// This is needed because the CUDA probe is the one provider ORT reports through a return status
+    /// rather than a missing export: the shipped CPU build exposes the OrtApi entry point (so no
+    /// <see cref="EntryPointNotFoundException"/>) and answers
+    /// "CUDA execution provider is not enabled in this build." — which, classed as an ordinary
+    /// failure, left the provider re-probed once a minute for the process lifetime. Deliberately
+    /// narrow: every other status, including a driver that is not ready yet, stays transient.
+    /// </para>
+    /// </summary>
+    internal static bool IsAbsentProviderStatus(string message) =>
+        message.Contains("not enabled in this build", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("Failed to load shared library", StringComparison.OrdinalIgnoreCase);
+
     private bool TryConfigureGpuProvider(
         SessionOptions options,
         UpscalerConfig currentConfig,
@@ -549,6 +567,20 @@ public sealed class OnnxSessionFactory(
             return false;
         }
         catch (Exception ex)
+            when (ex is OnnxRuntimeException onnx && IsAbsentProviderStatus(onnx.Message))
+        {
+            // The CPU build answers through the OrtApi entry point rather than a missing export, so
+            // "not enabled in this build" arrives here as an OnnxRuntimeException; a build that has
+            // the EP but not its provider library reports the same way with "Failed to load shared
+            // library". Neither changes while the process runs, so it latches.
+            logger.LogDebug(
+                ex,
+                "CUDA execution provider is absent from this ONNX Runtime build or host."
+            );
+            _cudaAvailable = false;
+            return false;
+        }
+        catch (Exception ex)
         {
             logger.LogWarning(
                 ex,
@@ -597,6 +629,18 @@ public sealed class OnnxSessionFactory(
             return false;
         }
         catch (Exception ex)
+            when (ex is OnnxRuntimeException onnx && IsAbsentProviderStatus(onnx.Message))
+        {
+            // A provider compiled in but whose shared library cannot be loaded reports this way; a
+            // missing export is the EntryPointNotFoundException above. Both are permanent.
+            logger.LogDebug(
+                ex,
+                "OpenVINO execution provider is absent from this ONNX Runtime build or host."
+            );
+            _openVinoAvailable = false;
+            return false;
+        }
+        catch (Exception ex)
         {
             logger.LogWarning(
                 ex,
@@ -641,6 +685,18 @@ public sealed class OnnxSessionFactory(
             return false;
         }
         catch (Exception ex)
+            when (ex is OnnxRuntimeException onnx && IsAbsentProviderStatus(onnx.Message))
+        {
+            // A provider compiled in but whose shared library cannot be loaded reports this way; a
+            // missing export is the EntryPointNotFoundException above. Both are permanent.
+            logger.LogDebug(
+                ex,
+                "MIGraphX execution provider is absent from this ONNX Runtime build or host."
+            );
+            _migraphxAvailable = false;
+            return false;
+        }
+        catch (Exception ex)
         {
             logger.LogWarning(
                 ex,
@@ -681,6 +737,18 @@ public sealed class OnnxSessionFactory(
         catch (DllNotFoundException)
         {
             logger.LogDebug("DirectML runtime libraries not found on this system.");
+            _directMlAvailable = false;
+            return false;
+        }
+        catch (Exception ex)
+            when (ex is OnnxRuntimeException onnx && IsAbsentProviderStatus(onnx.Message))
+        {
+            // A provider compiled in but whose shared library cannot be loaded reports this way; a
+            // missing export is the EntryPointNotFoundException above. Both are permanent.
+            logger.LogDebug(
+                ex,
+                "DirectML execution provider is absent from this ONNX Runtime build or host."
+            );
             _directMlAvailable = false;
             return false;
         }
