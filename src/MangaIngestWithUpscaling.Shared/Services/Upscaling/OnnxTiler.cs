@@ -2527,16 +2527,27 @@ public static class OnnxTiler
     /// contract the engine's memory descent is built on — it owns the recovery, because halving
     /// alone does not help while the session whose arena failed the allocation is still resident —
     /// and the internal halve loop this migration removed swallowed exactly this failure, hiding
-    /// it from the engine. Mutated by tests only; production always runs the real call.
+    /// it from the engine. The override is <see cref="AsyncLocal{T}"/> so a test's injection is
+    /// visible only to its own logical call chain: a plain static field leaked it into tests
+    /// running concurrently in the same process. Production never sets it; the real call always
+    /// runs.
     /// </summary>
-    internal static Func<
+    internal static AsyncLocal<
+        Func<
+            InferenceSession,
+            NamedOnnxValue,
+            IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
+        >
+    > RunImplOverride { get; } = new();
+
+    private static readonly Func<
         InferenceSession,
         NamedOnnxValue,
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
-    > RunImpl = static (session, input) => session.Run([input]);
+    > DefaultRun = static (session, input) => session.Run([input]);
 
     private static IDisposableReadOnlyCollection<DisposableNamedOnnxValue> RunOnSession(
         InferenceSession session,
         NamedOnnxValue input
-    ) => RunImpl(session, input);
+    ) => (RunImplOverride.Value ?? DefaultRun)(session, input);
 }

@@ -293,7 +293,9 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         // injects at the engine's scope acquisition cannot see a reintroduction of it — this
         // injects at the tiler's own Run seam, on the first tile of a multi-tile page, which also
         // exercises the pipeline's unwind path (a background prefetch to observe, no decode task
-        // yet to drain).
+        // yet to drain). The override is AsyncLocal, so it reaches only this test's own call chain
+        // and never the tests running beside it — a static field version of this seam failed a
+        // concurrently running upscaler test with this injection's exception.
         const int width = 512;
         const int height = 512;
         const int scale = 2;
@@ -302,26 +304,18 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         byte[] rgb = new byte[width * height * 3];
         OnnxTiler.TileSplit split = OnnxTiler.TileSplit.For(width, height, 128);
 
-        var original = OnnxTiler.RunImpl;
-        OnnxTiler.RunImpl = (_, _) => throw new OutOfMemoryException("run seam");
-        try
-        {
-            Assert.Throws<OutOfMemoryException>(() =>
-                OnnxTiler.UpscaleRgb(
-                    rgb,
-                    width,
-                    height,
-                    scale,
-                    session,
-                    split,
-                    cancellationToken: TestContext.Current.CancellationToken
-                )
-            );
-        }
-        finally
-        {
-            OnnxTiler.RunImpl = original;
-        }
+        OnnxTiler.RunImplOverride.Value = (_, _) => throw new OutOfMemoryException("run seam");
+        Assert.Throws<OutOfMemoryException>(() =>
+            OnnxTiler.UpscaleRgb(
+                rgb,
+                width,
+                height,
+                scale,
+                session,
+                split,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
     }
 
     /// <summary>
