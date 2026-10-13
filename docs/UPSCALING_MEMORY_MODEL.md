@@ -477,17 +477,21 @@ peak(n) = reservation + scale · analytic · n²
 | the two points together | `reservation` — the fixed part, with the weights taken out |
 
 `scale` is a property of the model *and* the execution provider together, not of the device, so one
-device-wide factor cannot represent it. Measured on an RX 9070 XT / WebGPU EP:
+device-wide factor cannot represent it. The table below is the **coefficient refit**, not a device
+measurement: it compares the prediction of the previous single (fp16-fitted) column with the
+per-precision coefficient §3 now stores, on an RX 9070 XT / WebGPU EP:
 
-| model | analytic B/px | measured B/px | ratio |
+| model | old fit B/px | new fit B/px | new ÷ old |
 |---|---|---|---|
 | `4x_MangaJaNai_1600p_V1_ESRGAN_70k` (fp16) | 21 120 | 19 140 | **0.90** |
 | `4x_MangaJaNai_1600p_V1_ESRGAN_70k_fp32` | 42 240 | 29 320 | **0.69** |
 | `4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32` | 29 440 | 37 700 | **1.28** |
 
-The spread between the extremes is a factor of 1.9. The previous design fitted a single device
-factor (1.02, from the fp16 ESRGAN) and applied it everywhere, which under-estimated the fp32
-transformer by ~25% — enough to fill a 16 GB card and push the page into GTT — while
+Both columns are fits to the same card, so a per-model calibration on it divides a measurement by a
+coefficient that already *is* that measurement: these ratios are what the refit changed, not what the
+calibration returns. The spread between the extremes is a factor of 1.9. The previous design fitted a
+single device factor (1.02, from the fp16 ESRGAN) and applied it everywhere, which under-estimated the
+fp32 transformer by ~25% — enough to fill a 16 GB card and push the page into GTT — while
 over-estimating the conv nets.
 
 **Each benchmark tile runs on its own session.** The WebGPU EP caches its buffers per tensor shape
@@ -501,16 +505,18 @@ version changes.
 
 ### 6.2 The result on this machine
 
+The refit lands on this card as:
+
 ```
 device : AMD Radeon RX 9070 XT (RADV GFX1201) (WebGpu)
-model  : 4x_MangaJaNai_1600p_V1_ESRGAN_70k           scale 0.90x
-model  : 4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32 scale 1.28x
+model  : 4x_MangaJaNai_1600p_V1_ESRGAN_70k            refit 0.90x
+model  : 4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32 refit 1.28x
 ```
 
-A per-model measurement of ~0.9x on the fp16 conv net is the expected outcome here: the table in §3
-*was* measured on this card, so the benchmark confirms it. The value of the benchmark is on any
-*other* device, where the same code would report e.g. 0.3x on a CUDA card or 2x on an integrated GPU,
-and tile sizing would follow.
+The 0.90x on the fp16 conv net is the refit's effect on the estimate — how far the per-precision
+coefficient moved from the previous single (fp16-fitted) column — not the per-model calibration this
+section measures. The value of the benchmark is on any *other* device, where the same code would
+report e.g. 0.3x on a CUDA card or 2x on an integrated GPU, and tile sizing would follow.
 
 Verified end-to-end through `OnnxUpscaleEngine` (real manga page, 13 GB budget, fp32 FDAT_M): the
 model's own factor planned a 3x3 grid of 448x576-padded tiles and the page stayed out of GTT, where
@@ -530,11 +536,12 @@ profile**, and inside each profile a map of model key to measurement:
     "totalDeviceMemoryBytes": 17095983104,
     "activationScale": 0.902,
     "sessionReservationBytes": 126316544,
+    "deviceWideMeasured": true,
     "models": {
       "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx|16761523": {
         "activationScale": 1.28,
         "sessionReservationBytes": 9437184,
-        "measuredTiles": [320, 640],
+        "measuredTiles": [192, 576],
         "measuredPeakBytes": [2100000000, 13100000000],
         "calibratedAtUtc": "2026-10-12T01:20:00Z"
       }

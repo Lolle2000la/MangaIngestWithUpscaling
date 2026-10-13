@@ -43,8 +43,10 @@ jobs:
   #
   # The CUDA images are deliberately not built (a multi-gigabyte base pull on every PR, and the release
   # workflows build them anyway) but their base tag is resolved: a retired or mistyped nvidia/cuda tag
-  # is the failure that would otherwise only surface in a release. Their own build steps are the same
-  # shape as the CPU images', which are covered.
+  # is the failure that would otherwise only surface in a release. Only their build and publish stages
+  # resemble the CPU images'; their runtime stage is a different base (nvidia/cuda with the .NET
+  # runtime copied in and a CUDA-defaulting PreferredGpuBackend), so a break there is not covered by
+  # the CPU builds above.
   containers:
     runs-on: ubuntu-latest
     steps:

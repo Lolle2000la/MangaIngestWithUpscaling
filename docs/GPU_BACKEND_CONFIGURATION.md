@@ -40,10 +40,11 @@ Controls which execution provider is attempted:
 | `MIGraphX` | AMD — MIGraphX execution provider (needs a build that ships the EP) |
 | `CPU` | CPU-only fallback |
 
-`MIGraphX` and `CUDA` are only selectable when the ONNX Runtime build ships them; the default
-`:latest` image does not, and selecting one there falls back to CPU. `ROCm` and `ROCm_GFX120X`
-are accepted as legacy aliases and are treated as `WebGPU` — on AMD cards the ROCm EP could not
-compile the transformer models at all, so WebGPU is the path that works.
+`CUDA`, `OpenVINO`, `MIGraphX` and `DirectML` are only selectable when the ONNX Runtime build ships
+them; the default `:latest` image (the CPU/WebGPU build) ships none of them, so selecting one there
+falls back to CPU (`:latest-cuda` is the build that ships CUDA). `ROCm`, `ROCm_GFX120X` and `XPU` are
+accepted as legacy aliases and are treated as `WebGPU`, and `CUDA_12_8` as `CUDA` — on AMD cards the
+ROCm EP could not compile the transformer models at all, so WebGPU is the path that works.
 
 Environment variable:
 ```bash
@@ -114,6 +115,12 @@ services:
       - /dev/dri # GPU access for Vulkan (Mesa RADV / ANV)
 ```
 
+`devices: - /dev/dri` is **required, not optional**: Compose has no "map it if it exists", so on a
+host without a render node (a CPU-only NAS) a missing `/dev/dri` aborts `docker compose up` before
+the container starts — the CPU fallback in the app cannot help. Comment the mapping out on such a
+host, or run the remote-only service in the tracked `docker-compose.yml`, which has no device
+mapping.
+
 ### NVIDIA GPU (CUDA)
 
 Use the `:latest-cuda` (or `:latest-dev-cuda`) image for native NVIDIA CUDA acceleration. `PreferredGpuBackend` defaults to `CUDA` inside this container:
@@ -161,7 +168,7 @@ A page reaches one of those models when `IsGrayscale` classifies it as colour. A
 
 The grayscale classifier is deliberately lenient. It reports grayscale when the largest per-pixel difference between the first three bands is at most `2`, or at most `25` while the mean difference is at most `0.5`; that second rule exists to absorb JPEG chroma noise and paper tint in scanned manga, which a genuinely grey page can still show. The consequence is that a page classified as grayscale is written as monochrome out of the first band only, so a faintly tinted colour page — a flat sepia or blue wash whose divergence stays under those thresholds — loses its tint in the output.
 
-**What the app does:** before a page is upscaled, each candidate model in the preference order is given a 256×256 tile through the real tiling path. A model whose output is not finite is recorded as unusable for the device and the next candidate is tried, so a colour page is upscaled by an older ESRGAN model on a device that cannot run the transformer models at all. Each tile of the page is still checked, because a few models only fail above a certain tile size. If no candidate works, the page fails loudly instead of being written black.
+**What the app does:** before a page is upscaled, each candidate model in the preference order is given a 256×256 tile through the real tiling path. A model whose output is not finite records **no** permanent verdict: the candidate loop moves to the next model for that page, and the 256 px probe is paid again on every later page for as long as the model keeps returning non-finite output. A provider failure that is not a device or memory fault is likewise not condemned on a single sighting — it latches into a process-lifetime "unusable on this device" verdict only once it recurs for the same model and scale — while a geometry or contract mismatch (an output at the wrong scale, a file the runtime cannot load) is deterministic and latches immediately; a device or memory fault never latches. Each tile of the page is still checked, because a few models only fail above a certain tile size. If no candidate works, the page fails loudly instead of being written black.
 
 **The fix for this platform:** the same mechanism falls back to the *fp32 copy* of the same model. The 4x IllustrationJaNai transformer models ship twice, as an fp16 and an fp32 archive, and on WebGPU both are installed — the fp16 files keep their names, the fp32 ones gain a `_fp32` suffix (`4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx` → `…_40k_fp32.onnx`). The smaller fp16 file is preferred wherever it runs; on a device where it does not, the fp32 copy takes over at the same architecture, so a colour page is upscaled by `4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx` instead of falling back to an older ESRGAN. Everything the fp32 model costs is in the tile planner, which reads the precision off the session and halves the grid accordingly.
 

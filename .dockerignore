@@ -44,6 +44,12 @@ test_data/
 # Excluding them keeps local image builds representative of CI and stops a checkout's caches from
 # being baked into images.
 **/.cache
+# A checkout inherited from the PyTorch era can hold a multi-GB Python virtualenv or a byte-code
+# cache next to the source, none of which a clean CI checkout has. `COPY . .` would otherwise send
+# them into the build context and bake them into the image.
+**/.venv
+**/venv
+**/__pycache__
 
 # Model weights and their PyTorch-era leftovers. A checkout that has run the app can hold gigabytes
 # of these next to the source, and the Dockerfile never needs them (the container downloads its own

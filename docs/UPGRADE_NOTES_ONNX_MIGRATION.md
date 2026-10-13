@@ -83,15 +83,17 @@ configuration surface. Nothing here requires a data migration; the database sche
   the reference's 512. Throughout this section *the reference* is the upstream project
   [Lolle2000la/manga-vert-split-nn](https://github.com/Lolle2000la/manga-vert-split-nn) — the model's
   training/calibration code, so `calibrate.py` and `STRIP_LENGTH_MAX` are its files, not this
-  repository's. The model's vertical receptive field is 1423 rows: the dilated residual stack
+  repository's. The model's vertical receptive field is 1431 rows: the dilated residual stack
   reaches ±1023 (ten 3x3 blocks with dilations 1, 2, 4, … 512), the smoothing convolution after the
   sigmoid ±8, and the peak test's MaxPool ±400 (kernel 801, i.e. the calibrated `peak_distance` of
-  800). A window with less context scores the rows near its edges from a truncated neighbourhood. The
-  reference can use 512 because it windows the *logits* and applies the sigmoid, the smoothing and the
-  peak search afterwards; this export bakes those three into the graph, so its windows are already
-  post-calibration and the margin has to cover the whole receptive field instead. Measured against the
-  shipped model on 9000-row pages: with 1536 the windowed result is **bit-identical** to a whole-page
-  pass, with 1024 it diverges by 3.8e-6, with 512 by 1.5e-1.
+  800) — 1023 + 8 + 400 = 1431, where the source comment writes 1423. The 1536-row margin sits above
+  both figures, so the slip never changed a window. A window with less context scores the rows near
+  its edges from a truncated neighbourhood. The reference can use 512 because it windows the *logits*
+  and applies the sigmoid, the smoothing and the peak search afterwards; this export bakes those three
+  into the graph, so its windows are already post-calibration and the margin has to cover the whole
+  receptive field instead. Measured against the shipped model on 9000-row pages: with 1536 the
+  windowed result is **bit-identical** to a whole-page pass, with 1024 it diverges by 3.8e-6, with 512
+  by 1.5e-1.
 * That also keeps the implementation on the evaluation the baked thresholds were calibrated on: the
   calibration (`calibrate.py`) runs an **uncropped single pass** over whole strips, which is what the
   windowed pass reproduces. The reference's 2048-row window is the model's training crop
@@ -138,3 +140,16 @@ configuration surface. Nothing here requires a data migration; the database sche
   to the models. It is logged at `Information` and happens once per model per device, not per page.
 * The per-session logging of which execution provider a session was built with moved to `Debug`. A
   provider that cannot be attached, or a fall back to CPU, still logs at `Warning`.
+
+## Engine identity and shared spools
+
+The server refuses to assemble a chapter from pages upscaled by different engines, keyed on the opaque
+`EngineIdentity` a worker reports. That identity hashes the tile plan's *configuration* — a manual
+`TileSize`, an explicit `MemoryBudgetBytes` — but deliberately **not** the inputs the default plan
+derives its grid from: the measured free VRAM, `VramUtilizationFraction` and the safety-margin knobs.
+With the out-of-the-box defaults (`TileSize = 0`, no explicit budget) the grid is therefore
+machine-dependent, so the "same identity ⇒ shareable spool" guarantee is qualified out of the box: two
+workers of the same backend can hash alike while planning different grids, and a chapter assembled
+from both carries visible tile seams. Pin `TileSize` (or a budget) when a spool has to be shareable
+across workers. The measured budget is left out on purpose — hashing it would make two identical
+workers discard each other's completed pages on every fresh measurement.

@@ -452,7 +452,7 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ForDetector_ChangesWhenTheCheckpointContentChanges()
+    public void ForDetector_ChangesWhenTheModelContentChanges()
     {
         WithDetectorRoot(() =>
         {

@@ -19,7 +19,8 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 public interface IMangaJaNaiWorkerClient
 {
     /// <summary>
-    /// Submits an upscale job to the persistent worker and waits for its completion.
+    /// Runs one upscale job (a whole CBZ or a single image) in the in-process ONNX engine and
+    /// returns when it has finished.
     /// </summary>
     /// <param name="request">The job to run.</param>
     /// <param name="progress">Optional sink for per-file progress events.</param>
@@ -64,7 +65,7 @@ public interface IMangaJaNaiWorkerClient
 }
 
 /// <summary>
-/// Describes a single upscale job in terms of the worker's "simple form" protocol.
+/// Describes a single upscale job: a whole CBZ or a single image to upscale into a folder.
 /// </summary>
 public sealed record UpscaleJobRequest
 {
