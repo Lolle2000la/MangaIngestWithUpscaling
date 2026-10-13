@@ -682,6 +682,7 @@ public sealed class PageStreamClient(
         string currentName = string.Empty;
         string currentPath = string.Empty;
         long currentWritten = 0;
+        int currentChunkNumber = -1;
         var yielded = new HashSet<int>();
         try
         {
@@ -712,6 +713,7 @@ public sealed class PageStreamClient(
                     currentName = WorkerPageName(currentIndex, sourceName);
                     currentPath = Path.Combine(sourceDirectory, currentName);
                     currentWritten = 0;
+                    currentChunkNumber = -1;
                     file = new FileStream(
                         currentPath,
                         FileMode.Create,
@@ -720,6 +722,27 @@ public sealed class PageStreamClient(
                         81920,
                         FileOptions.Asynchronous
                     );
+                }
+
+                if (chunk.PageIndex == currentIndex && file is not null)
+                {
+                    // Chunks are numbered per page and strictly in sequence (the server increments
+                    // ChunkNumber and terminates with the next one), so a repeated, skipped or
+                    // reordered number means the page would be assembled from bytes that are not the
+                    // prefix the server sent — a corrupt source page, which the upscaler would then
+                    // commit as a successful result. Fail loudly instead: the retry re-fetches the
+                    // pages, while a corrupt page is silently wrong output. The duplicate-after-
+                    // completion case above is different and still skipped — there the page is
+                    // already whole and yielded. The terminating chunk belongs to the sequence too,
+                    // so it is checked the same way.
+                    if (chunk.ChunkNumber != currentChunkNumber + 1)
+                    {
+                        throw new InvalidOperationException(
+                            $"Chunk {chunk.ChunkNumber} of page {chunk.PageIndex} of task {taskId} is out of sequence (last accepted {currentChunkNumber}); the page cannot be assembled from a non-contiguous stream."
+                        );
+                    }
+
+                    currentChunkNumber = chunk.ChunkNumber;
                 }
 
                 if (!chunk.Chunk.IsEmpty)
@@ -771,9 +794,13 @@ public sealed class PageStreamClient(
 
         // The server silently skips a page it cannot find; if any requested page never arrived the
         // chapter can never complete, so fail loudly instead of leaving the task in Processing.
-        if (yielded.Count < missingPages.Count)
+        // Compare the sets, not the counts: the server is only supposed to echo the requested
+        // indexes, but a protocol slip that dropped one requested page while sending a different
+        // manifest index instead would make yielded.Count equal missingPages.Count and let the
+        // chapter finalize incomplete. The absent set is what "every requested page arrived" means.
+        int[] absent = missingPages.Where(index => !yielded.Contains(index)).ToArray();
+        if (absent.Length > 0)
         {
-            IEnumerable<int> absent = missingPages.Where(index => !yielded.Contains(index));
             throw new InvalidOperationException(
                 $"The server did not send page(s) {string.Join(", ", absent)} of task {taskId}."
             );

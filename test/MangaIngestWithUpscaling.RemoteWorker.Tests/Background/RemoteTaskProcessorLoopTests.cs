@@ -1,3 +1,4 @@
+using System.Reflection;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -101,16 +102,68 @@ public class RemoteTaskProcessorLoopTests
     }
 
     private static RemoteTaskProcessor CreateProcessor(
-        UpscalingService.UpscalingServiceClient client
+        UpscalingService.UpscalingServiceClient client,
+        ITaskClaimSource? claimSource = null
     )
     {
         var provider = new ServiceCollection()
             .AddSingleton(client)
-            .AddSingleton<ITaskClaimSource>(new FakeTaskClaimSource())
+            .AddSingleton<ITaskClaimSource>(claimSource ?? new FakeTaskClaimSource())
             .AddSingleton(CreatePageStreamClient())
             .AddSingleton(Substitute.For<ILogger<RemoteTaskProcessor>>())
             .BuildServiceProvider();
         return new RemoteTaskProcessor(provider.GetRequiredService<IServiceScopeFactory>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ExecuteAsync_DoesNotSpinWhenTheServerKeepsOfferingTheInFlightTask()
+    {
+        // The claim loop retries the task it is already streaming on an inner `continue`, so it must
+        // not poll the claim RPC at a short fixed cadence. Forcing the in-flight id by hand makes
+        // that branch the very first claim, and the claim count over a short window pins the
+        // backoff: the 5 s dispatcher tick leaves a single claim, whereas the previous 200 ms retry
+        // produced several per second for as long as the server re-offered the task.
+        int claims = 0;
+        var claimSource = new CountingTaskClaimSource(() => Interlocked.Increment(ref claims));
+        UpscalingService.UpscalingServiceClient client = CreateServer(
+            manifestError: () => new RpcException(new Status(StatusCode.Internal, "unused")),
+            onReported: () => { }
+        );
+
+        RemoteTaskProcessor processor = CreateProcessor(client, claimSource);
+        ForceStreamingTaskId(processor, 1);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await processor.StartAsync(cts.Token);
+        try
+        {
+            await Task.Delay(1500, TestContext.Current.CancellationToken);
+            Assert.InRange(Volatile.Read(ref claims), 1, 2);
+        }
+        finally
+        {
+            await processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private static void ForceStreamingTaskId(RemoteTaskProcessor processor, int taskId) =>
+        typeof(RemoteTaskProcessor)
+            .GetField("_streamingTaskIdValue", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(processor, taskId);
+
+    /// <summary>Counts claim attempts; always returns the same task so the in-flight branch repeats.</summary>
+    private sealed class CountingTaskClaimSource(Action onClaim) : ITaskClaimSource
+    {
+        public Task<UpscaleTaskDelegationResponse> RequestTaskWithHintAsync(
+            CancellationToken stoppingToken
+        )
+        {
+            onClaim();
+            return Task.FromResult(
+                new UpscaleTaskDelegationResponse { TaskId = 1, TaskType = TaskType.Upscale }
+            );
+        }
     }
 
     /// <summary>

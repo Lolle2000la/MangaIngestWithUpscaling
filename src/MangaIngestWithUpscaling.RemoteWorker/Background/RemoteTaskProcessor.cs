@@ -415,16 +415,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                     if (StreamingTaskId == resp.TaskId)
                     {
+                        // The server offered the task this worker is already streaming. Back off on
+                        // the dispatcher tick, like every other retry path here: this branch retries
+                        // an inner loop, so a short fixed delay would hit the claim RPC several times
+                        // a second for as long as the server keeps offering the in-flight task. The
+                        // branch cannot outlive the stream: once it finishes, StreamingTaskId is
+                        // cleared and the server stops offering that id.
                         logger.LogDebug(
                             "FetchLoop: got in-flight task {taskId}; retrying shortly",
                             resp.TaskId
                         );
-                        try
-                        {
-                            await Task.Delay(200, stoppingToken);
-                        }
-                        catch { }
-
+                        await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                         continue;
                     }
 

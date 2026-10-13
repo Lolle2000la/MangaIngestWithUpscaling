@@ -454,6 +454,73 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunAsync_FailsWhenTheServerSubstitutesAnExtraManifestPageForARequestedOne()
+    {
+        // A server that drops one requested page but sends a different manifest page in its place
+        // makes yielded.Count equal missingPages.Count, so a count-based guard would accept the
+        // fetch and let the chapter finalize incomplete. The absent set must be computed directly.
+        string directory = Directory.CreateTempSubdirectory("page_stream_swap").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            // Page 0 is already spooled, so the client requests [1, 2]; the server drops page 2 and
+            // sends page 0 (a manifest page it was not asked for) instead.
+            server.Completed.Add(0);
+            server.OmitFromFetch.Add(2);
+            server.ExtraFetchIndexes.Add(0);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+
+            Assert.Contains("did not send page(s) 2", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_FailsWhenAChunkOfAnOpenPageArrivesTwice()
+    {
+        // A chunk repeated while its page is still open cannot be skipped safely: appending it again
+        // would assemble the page from a byte stream the server never sent, and the upscaler would
+        // commit that page as a successful result. The sequence guard must fail the fetch instead, so
+        // the retry re-fetches rather than the chapter silently producing a corrupt source page. (The
+        // duplicate of a *completed* page is a different shape — already whole and yielded — and is
+        // still skipped, which RunAsync_ATerminatingChunkSentTwice_IsSkippedRatherThanCrashed pins.)
+        string directory = Directory.CreateTempSubdirectory("page_stream_dup_chunk").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            server.RepeatFirstChunkForPage.Add(1);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+
+            Assert.Contains("out of sequence", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunAsync_StopsTheChapterWhenAnUploadIsRejected()
     {
         string directory = Directory.CreateTempSubdirectory("page_stream_reject").FullName;
@@ -774,6 +841,79 @@ public class PageStreamClientTests
         }
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(20_000_000L, 20.0)] // 20 MP × 1 min base exceeds the 15 min floor
+    [InlineData(4_000_000L, 15.0)] // 4 MP × 1 min is under the floor, so the floor applies
+    public async Task RunAsync_ScalesTheInactivityTimeoutByTheLargestPage(
+        long maxPagePixels,
+        double expectedMinutes
+    )
+    {
+        // The server owns the source's largest page and reports it in the manifest, so the worker
+        // can scale its inactivity kill the same way the whole-CBZ path does. Pinning the value the
+        // worker hands the local chapter runner keeps the two paths from drifting apart.
+        string directory = Directory.CreateTempSubdirectory("page_stream_timeout").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination) { MaxPagePixels = maxPagePixels };
+            var client = server.CreateClient();
+            var worker = new FakeWorkerClient();
+            var sut = CreateClient(
+                worker,
+                config: new UpscalerConfig
+                {
+                    ImageFormatConversionRules = [],
+                    UpscaleTimeout = TimeSpan.FromMinutes(1),
+                }
+            );
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            Assert.NotNull(worker.LastTimeout);
+            Assert.Equal(expectedMinutes, worker.LastTimeout!.Value.TotalMinutes, precision: 2);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_DisablesTheInactivityTimeoutWhenConfiguredNonPositive()
+    {
+        // A non-positive UpscaleTimeout disables the inactivity kill on both paths, so the worker
+        // must pass no timeout at all rather than a zero/negative one.
+        string directory = Directory.CreateTempSubdirectory("page_stream_notimeout").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination) { MaxPagePixels = 20_000_000 };
+            var client = server.CreateClient();
+            var worker = new FakeWorkerClient();
+            var sut = CreateClient(
+                worker,
+                config: new UpscalerConfig
+                {
+                    ImageFormatConversionRules = [],
+                    UpscaleTimeout = TimeSpan.Zero,
+                }
+            );
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            Assert.Null(worker.LastTimeout);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static PageStreamClient CreateClient(
         IMangaJaNaiWorkerClient worker,
         IServiceScopeFactory? scopeFactory = null,
@@ -925,6 +1065,16 @@ public class PageStreamClientTests
         public HashSet<int> FailUploadForPage { get; } = new();
         public HashSet<int> RestartUploadForPage { get; } = new();
 
+        /// <summary>
+        /// Manifest indexes streamed even though the client did not request them — a protocol slip
+        /// this server never makes (GetPages echoes only the requested indexes), reproduced to pin
+        /// the completeness guard against a count-based comparison.
+        /// </summary>
+        public HashSet<int> ExtraFetchIndexes { get; } = new();
+
+        /// <summary>Largest page (pixels) the manifest reports, for the worker's timeout scaling.</summary>
+        public long MaxPagePixels { get; set; }
+
         /// <summary>Pages whose fetch yields only the terminating chunk (a 0-byte source entry).</summary>
         public HashSet<int> EmptyFetchForPage { get; } = new();
 
@@ -934,6 +1084,14 @@ public class PageStreamClientTests
         /// against it.
         /// </summary>
         public HashSet<int> DuplicateLastChunkForPage { get; } = new();
+
+        /// <summary>
+        /// Pages whose first data chunk is sent twice while the page is still open — the shape that
+        /// would append the same bytes to a page that is not finished. Unlike the duplicate-after-
+        /// completion case this cannot be skipped safely: the page would be assembled from a byte
+        /// stream the server never sent, and the upscaler would commit it as a result.
+        /// </summary>
+        public HashSet<int> RepeatFirstChunkForPage { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
         public string PreprocessingJson { get; set; } = string.Empty;
@@ -1000,6 +1158,7 @@ public class PageStreamClientTests
                 TaskType = ManifestTaskType,
                 Complete = Completed.Count >= Pages.Count,
                 PreprocessingJson = PreprocessingJson,
+                MaxPagePixels = MaxPagePixels,
             };
             // The real server omits the descriptors when it reports the chapter as already
             // complete; allow tests to reproduce that shape.
@@ -1023,28 +1182,70 @@ public class PageStreamClientTests
                     continue;
                 }
 
-                PageDescriptor page = Pages.First(p => p.Index == index);
-                using Stream stream = entries[page.SourceName].Open();
-                using var buffer = new MemoryStream();
-                stream.CopyTo(buffer);
-                byte[] bytes = buffer.ToArray();
-
-                int chunkNumber = 0;
-                if (!EmptyFetchForPage.Contains(index))
+                foreach (PageChunk chunk in PageChunks(index, entries))
                 {
-                    for (int offset = 0; offset < bytes.Length; offset += 4096)
-                    {
-                        int length = Math.Min(4096, bytes.Length - offset);
-                        yield return new PageChunk
-                        {
-                            TaskId = 1,
-                            PageIndex = index,
-                            ChunkNumber = chunkNumber++,
-                            Chunk = ByteString.CopyFrom(bytes, offset, length),
-                        };
-                    }
+                    yield return chunk;
                 }
+            }
 
+            // A manifest page the client never asked for. A real server cannot produce this
+            // (GetPages iterates the requested indexes), but it is the shape that defeats a
+            // count-based completeness check, so the guard is tested against it.
+            foreach (int index in ExtraFetchIndexes)
+            {
+                foreach (PageChunk chunk in PageChunks(index, entries))
+                {
+                    yield return chunk;
+                }
+            }
+        }
+
+        private IEnumerable<PageChunk> PageChunks(
+            int index,
+            Dictionary<string, ZipArchiveEntry> entries
+        )
+        {
+            PageDescriptor page = Pages.First(p => p.Index == index);
+            using Stream stream = entries[page.SourceName].Open();
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            byte[] bytes = buffer.ToArray();
+
+            int chunkNumber = 0;
+            if (!EmptyFetchForPage.Contains(index))
+            {
+                bool first = true;
+                for (int offset = 0; offset < bytes.Length; offset += 4096)
+                {
+                    int length = Math.Min(4096, bytes.Length - offset);
+                    var chunk = new PageChunk
+                    {
+                        TaskId = 1,
+                        PageIndex = index,
+                        ChunkNumber = chunkNumber++,
+                        Chunk = ByteString.CopyFrom(bytes, offset, length),
+                    };
+                    yield return chunk;
+
+                    if (first && RepeatFirstChunkForPage.Contains(index))
+                    {
+                        yield return chunk;
+                    }
+
+                    first = false;
+                }
+            }
+
+            yield return new PageChunk
+            {
+                TaskId = 1,
+                PageIndex = index,
+                ChunkNumber = chunkNumber,
+                IsLast = true,
+            };
+
+            if (DuplicateLastChunkForPage.Contains(index))
+            {
                 yield return new PageChunk
                 {
                     TaskId = 1,
@@ -1052,17 +1253,6 @@ public class PageStreamClientTests
                     ChunkNumber = chunkNumber,
                     IsLast = true,
                 };
-
-                if (DuplicateLastChunkForPage.Contains(index))
-                {
-                    yield return new PageChunk
-                    {
-                        TaskId = 1,
-                        PageIndex = index,
-                        ChunkNumber = chunkNumber,
-                        IsLast = true,
-                    };
-                }
             }
         }
 

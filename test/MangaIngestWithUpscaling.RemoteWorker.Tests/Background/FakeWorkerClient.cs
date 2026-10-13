@@ -18,6 +18,9 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
     public bool Canceled { get; private set; }
     public int ProcessedPages { get; private set; }
 
+    /// <summary>The inactivity timeout the chapter was driven with, for tests that pin the scaling.</summary>
+    public TimeSpan? LastTimeout { get; private set; }
+
     public async Task<UpscaleJobResult> RunChapterAsync(
         ChapterJobRequest request,
         IAsyncEnumerable<ChapterPage> pages,
@@ -27,6 +30,7 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
         TimeSpan? timeout
     )
     {
+        LastTimeout = timeout;
         var files = new List<UpscaleJobFile>();
         try
         {
