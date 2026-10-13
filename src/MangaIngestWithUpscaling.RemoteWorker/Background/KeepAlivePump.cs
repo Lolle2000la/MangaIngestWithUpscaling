@@ -39,11 +39,13 @@ public sealed class KeepAlivePump(IServiceScopeFactory serviceScopeFactory)
                     ILogger<RemoteTaskProcessor>
                 >();
                 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+                bool loggedFailure = false;
                 while (!cts.IsCancellationRequested)
                 {
+                    int? id = null;
                     try
                     {
-                        int? id = taskIdProvider();
+                        id = taskIdProvider();
                         if (!id.HasValue)
                         {
                             break;
@@ -76,9 +78,19 @@ public sealed class KeepAlivePump(IServiceScopeFactory serviceScopeFactory)
                     }
                     catch (Exception ex)
                     {
-                        // A keep-alive lapse past the server's deadline requeues the task; log it so a
-                        // persistent failure is diagnosable instead of silent.
-                        logger.LogDebug(ex, "Keep-alive for the in-flight task failed.");
+                        // A keep-alive lapse past the server's deadline requeues the task, so this is
+                        // operator-visible at Warning rather than Debug. Log it once per pump: the
+                        // retry runs every 15 s, and a persistent transport fault would otherwise
+                        // repeat the same line for the life of the task.
+                        if (!loggedFailure)
+                        {
+                            loggedFailure = true;
+                            logger.LogWarning(
+                                ex,
+                                "Keep-alive for in-flight task {TaskId} failed; if it keeps failing the server will requeue the task.",
+                                id
+                            );
+                        }
                     }
 
                     try

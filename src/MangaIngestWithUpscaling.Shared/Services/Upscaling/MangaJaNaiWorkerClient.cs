@@ -1,5 +1,6 @@
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Logging;
 
@@ -265,7 +266,19 @@ public class MangaJaNaiWorkerClient(
                         {
                             await await inference;
                         }
-                        catch { }
+                        catch (Exception inferenceEx)
+                        {
+                            // The finalize error is about to be rethrown as the primary failure; the
+                            // inference fault is often the actual root cause (an OOM, a lost device),
+                            // so surface it here instead of discarding it.
+                            logger.LogWarning(
+                                inferenceEx,
+                                "Pending inference for page {PageName} of chapter {JobId} faulted while surfacing a finalize error.",
+                                page.Name,
+                                request.Id
+                            );
+                        }
+
                         throw;
                     }
 
@@ -306,7 +319,18 @@ public class MangaJaNaiWorkerClient(
                     {
                         await leftover.Write;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // Observed and discarded so the primary failure is what propagates, but the
+                        // write fault is logged (at Debug, since a cancelled write is routine on this
+                        // unwinding path) so the root cause is not lost.
+                        logger.LogDebug(
+                            ex,
+                            "Pending write for page {PageName} of chapter {JobId} faulted while unwinding.",
+                            leftover.Page.Name,
+                            request.Id
+                        );
+                    }
                 }
             }
         }
@@ -386,17 +410,14 @@ public class MangaJaNaiWorkerClient(
     /// <c>ClassifyStreamingFailure</c> would have requeued it.
     /// </para>
     /// </summary>
-    private static bool IsInfrastructureFailure(Exception ex)
-    {
+    private static bool IsInfrastructureFailure(Exception ex) =>
         // The whole chain, not just the outermost exception: a retryable cause is routinely wrapped
         // (an IOException inside an AggregateException, a memory failure inside the provider's own
-        // exception), and RemoteTaskProcessor.ClassifyStreamingFailure, PageStreamFinalizer and
-        // ImageResizeService all walk InnerException for exactly that reason. Inspecting only the
-        // wrapper classified a wrapped IO failure as a page error instead of requeueing the task with
-        // the spool intact.
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (
+        // exception). Inspecting only the wrapper classified a wrapped IO failure as a page error
+        // instead of requeueing the task with the spool intact.
+        ExceptionChain.Contains(
+            ex,
+            current =>
                 current
                     is IOException
                         or UnauthorizedAccessException
@@ -404,14 +425,7 @@ public class MangaJaNaiWorkerClient(
                         or ObjectDisposedException
                         or TimeoutException
                 || OnnxTiler.IsMemoryException(current)
-            )
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+        );
 
     public static string ToExtension(CompressionFormat format) =>
         format switch

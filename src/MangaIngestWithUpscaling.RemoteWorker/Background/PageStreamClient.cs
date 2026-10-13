@@ -9,6 +9,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
@@ -79,7 +80,7 @@ public sealed class PageStreamClient(
         }
 
         double scaling = Math.Max(1.0, maxPagePixels / 1_000_000.0);
-        TimeSpan scaled = upscalerConfig.Value.UpscaleTimeout * scaling;
+        TimeSpan scaled = ScaledTimeout.Scale(upscalerConfig.Value.UpscaleTimeout, scaling);
         TimeSpan floor = TimeSpan.FromMinutes(15);
         return scaled > floor ? scaled : floor;
     }
@@ -203,9 +204,9 @@ public sealed class PageStreamClient(
         Directory.CreateDirectory(outputDirectory);
         // Owner-only: these directories hold private chapter page bytes and upscaled output, and
         // Directory.CreateDirectory honours the process umask (typically 022, i.e. world-readable).
-        RestrictToCurrentUser(workDirectory);
-        RestrictToCurrentUser(sourceDirectory);
-        RestrictToCurrentUser(outputDirectory);
+        DirectoryPermissions.RestrictToCurrentUser(workDirectory, logger);
+        DirectoryPermissions.RestrictToCurrentUser(sourceDirectory, logger);
+        DirectoryPermissions.RestrictToCurrentUser(outputDirectory, logger);
 
         try
         {
@@ -543,8 +544,8 @@ public sealed class PageStreamClient(
         Directory.CreateDirectory(sourceDirectory);
         // Owner-only: the directory holds the fetched chapter page bytes, and Directory.CreateDirectory
         // honours the process umask (typically 022, i.e. world-readable).
-        RestrictToCurrentUser(workDirectory);
-        RestrictToCurrentUser(sourceDirectory);
+        DirectoryPermissions.RestrictToCurrentUser(workDirectory, logger);
+        DirectoryPermissions.RestrictToCurrentUser(sourceDirectory, logger);
 
         try
         {
@@ -1100,33 +1101,6 @@ public sealed class PageStreamClient(
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Failed to delete the fetched source page {Index}.", pageIndex);
-        }
-    }
-
-    /// <summary>
-    /// Restricts an app-created directory that holds private page bytes to the current user.
-    /// <c>Directory.CreateDirectory</c> honours the process umask (typically 022, i.e. world-readable),
-    /// so the work, source and output directories would otherwise be readable by other users on the
-    /// host. Best effort: the deployment is Linux containers, and a filesystem that does not support
-    /// Unix modes must not fail a chapter over a permission tightening.
-    /// </summary>
-    private static void RestrictToCurrentUser(string directory)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        try
-        {
-            File.SetUnixFileMode(
-                directory,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-            );
-        }
-        catch (Exception)
-        {
-            // Best effort only.
         }
     }
 

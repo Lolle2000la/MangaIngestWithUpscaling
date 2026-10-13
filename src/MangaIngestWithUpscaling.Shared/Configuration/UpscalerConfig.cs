@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
+using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 
 namespace MangaIngestWithUpscaling.Shared.Configuration;
@@ -101,21 +102,15 @@ public record UpscalerConfig
     public bool? UseFp16 { get; set; } = null;
 
     /// <summary>
-    ///     Gets the effective FP16 setting, auto-detecting hardware support if <see cref="UseFp16"/> is null.
-    ///     <para>
-    ///     Use <see cref="ResolveUseFp16"/> where the resolved execution provider is at hand: the
-    ///     probe below then answers for the provider that will actually run, instead of for whichever
-    ///     one the preference happens to name.
-    ///     </para>
-    /// </summary>
-    public bool ResolvedUseFp16 => ResolveUseFp16(PreferredGpuBackend);
-
-    /// <summary>
-    ///     <see cref="ResolvedUseFp16"/> for an execution provider that has already been resolved.
+    ///     The effective FP16 setting for an execution provider that has already been resolved, e.g.
+    ///     from <c>IOnnxSessionFactory.GetEffectiveBackend()</c>: an explicit <see cref="UseFp16"/>
+    ///     wins, otherwise the probe answers for that provider. Resolve against the provider that will
+    ///     actually run, not <see cref="PreferredGpuBackend"/>, which <see cref="GpuBackend.Auto"/> and
+    ///     a device fallback can leave different from the effective one.
     /// </summary>
     /// <param name="resolvedBackend">
-    ///     The provider in use, e.g. from <c>IOnnxSessionFactory.GetEffectiveBackend()</c>. Pass it
-    ///     unresolved (<see cref="GpuBackend.Auto"/>) only when it has not been probed yet.
+    ///     The provider in use. Pass it unresolved (<see cref="GpuBackend.Auto"/>) only when it has
+    ///     not been probed yet.
     /// </param>
     public bool ResolveUseFp16(GpuBackend resolvedBackend) =>
         UseFp16
@@ -264,15 +259,18 @@ public record UpscalerConfig
 
     /// <summary>
     /// Upper bound on the bytes spooled for one streamed task, so a single chapter cannot fill the
-    /// disk. Defaults to 8 GiB. There is no process-wide cap; see
+    /// disk. Defaults to <see cref="ArchiveSizeLimits.DefaultMaxArchiveBytes"/> (8 GiB), the same
+    /// value the whole-CBZ path applies as a fixed bound; unlike that bound, this one is
+    /// configurable. There is no process-wide cap; see
     /// <c>docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md</c>.
     /// </summary>
-    public string? MaxSpoolBytesPerTask { get; set; } = "8 GiB";
+    public string? MaxSpoolBytesPerTask { get; set; } =
+        ((ByteSize)ArchiveSizeLimits.DefaultMaxArchiveBytes).ToString();
 
     public long ResolvedMaxSpoolBytesPerTask =>
         ByteSize.TryParse(MaxSpoolBytesPerTask, out ByteSize parsed)
             ? parsed.Bytes
-            : 8L * 1024 * 1024 * 1024;
+            : ArchiveSizeLimits.DefaultMaxArchiveBytes;
 
     /// <summary>
     /// How long a worker waits for a page manifest. The manifest normally returns immediately, but

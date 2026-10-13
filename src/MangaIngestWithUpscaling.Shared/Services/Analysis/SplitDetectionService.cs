@@ -1,6 +1,7 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Localization;
@@ -292,28 +293,18 @@ public class SplitDetectionService(
     /// requeues the task with the spool intact, exactly as the upscaler path does.
     /// </para>
     /// </summary>
-    private static bool IsRetryableDetectionFailure(Exception ex)
-    {
-        // The whole chain, not just the outermost exception — aligned with the upscaler's classifiers
-        // (MangaJaNaiWorkerClient.IsInfrastructureFailure, ClassifyStreamingFailure), which walk it
-        // for exactly these types: a mount that is briefly unavailable during detection should not
-        // permanently fail the chapter when the same condition during upscaling is retryable, even
-        // when it surfaces wrapped in another exception.
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (
+    private static bool IsRetryableDetectionFailure(Exception ex) =>
+        // The whole chain, not just the outermost exception: a mount that is briefly unavailable
+        // during detection should not permanently fail the chapter when the same condition during
+        // upscaling is retryable, even when it surfaces wrapped in another exception.
+        ExceptionChain.Contains(
+            ex,
+            current =>
                 OnnxTiler.IsMemoryException(current)
                 || current is IOException
                 || current is UnauthorizedAccessException
                 || current is NonFiniteModelOutputException
-            )
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+        );
 
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
@@ -1009,8 +1000,7 @@ public class SplitDetectionService(
     {
         TimeSpan configured = upscalerConfig?.Value.UpscaleTimeout ?? TimeSpan.Zero;
         TimeSpan basis = configured > TimeSpan.Zero ? configured : DefaultDetectionTimeout;
-        double scaling = Math.Max(1.0, (double)width * height / 1_000_000.0);
-        return basis * scaling;
+        return ScaledTimeout.FromPixelCount(basis, (double)width * height);
     }
 
     /// <summary>

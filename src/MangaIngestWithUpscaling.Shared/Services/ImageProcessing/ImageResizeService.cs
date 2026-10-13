@@ -2,6 +2,8 @@ using System.Buffers;
 using System.IO.Compression;
 using System.Numerics;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Helpers;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MathNet.Numerics.IntegralTransforms;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -96,6 +98,9 @@ public class ImageResizeService(
         try
         {
             Directory.CreateDirectory(tempDir);
+            // The extraction directory holds a whole chapter's private page bytes; Directory.
+            // CreateDirectory uses the process umask, which is typically world-readable.
+            DirectoryPermissions.RestrictToCurrentUser(tempDir);
 
             logger.LogInformation(
                 "Preprocessing images in {InputPath} (MaxDimension={MaxDimension}, ConversionRules={RuleCount}, SmartDownscale={SmartDownscale})",
@@ -110,6 +115,8 @@ public class ImageResizeService(
             await ProcessImagesInDirectory(tempDir, options, cancellationToken);
 
             ZipFile.CreateFromDirectory(tempDir, tempCbzPath);
+            // The assembled archive also holds the chapter's private page bytes.
+            DirectoryPermissions.RestrictToCurrentUser(tempCbzPath);
 
             logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
 
@@ -146,6 +153,7 @@ public class ImageResizeService(
         try
         {
             Directory.CreateDirectory(tempDir);
+            DirectoryPermissions.RestrictToCurrentUser(tempDir);
             string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
             File.Copy(imagePath, workingPath, overwrite: true);
 
@@ -533,24 +541,16 @@ public class ImageResizeService(
     /// caught by <see cref="VerifyReady"/> at startup instead.
     /// </para>
     /// </summary>
-    private static bool IsInfrastructureFailure(Exception ex)
-    {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (
+    private static bool IsInfrastructureFailure(Exception ex) =>
+        ExceptionChain.Contains(
+            ex,
+            current =>
                 current
-                is DllNotFoundException
-                    or EntryPointNotFoundException
-                    or BadImageFormatException
-                    or TypeInitializationException
-            )
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+                    is DllNotFoundException
+                        or EntryPointNotFoundException
+                        or BadImageFormatException
+                        or TypeInitializationException
+        );
 
     private void ProcessImage(
         string imagePath,

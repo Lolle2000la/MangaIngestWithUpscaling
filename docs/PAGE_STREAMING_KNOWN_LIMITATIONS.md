@@ -110,7 +110,7 @@ a change resets the spool and the worker's engine identity no longer varies with
 - Metadata handling uses case-sensitive `.cbz` checks and treats a missing `.cbz` as "no differences"
   (both repair paths now guard `File.Exists` on the source before analysing, so a missing original
   fails terminally instead of rebuilding an empty archive).
-- `PageStreamSpool.IsSafeEntryName` rejects absolute and Windows drive-absolute (`C:\`, `C:/`) entry
+- `ArchiveEntryNameGuard.IsSafeEntryName` rejects absolute and Windows drive-absolute (`C:\`, `C:/`) entry
   names but deliberately keeps a drive-relative `C:evil.jpg` or an NTFS alternate-data-stream
   `page.jpg:evil`, because a colon is legal on Linux and rejecting it silently dropped legitimate
   pages. The server never extracts by entry name; a third-party Windows extractor reading a produced

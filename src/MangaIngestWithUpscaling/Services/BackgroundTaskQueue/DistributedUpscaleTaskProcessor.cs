@@ -61,6 +61,13 @@ public class DistributedUpscaleTaskProcessor(
     /// </summary>
     private readonly Dictionary<int, int> transientPreparationFailures = new();
 
+    /// <summary>
+    ///     Task ids whose page-spool drop failure has already been logged, so a repeated failure for
+    ///     one task does not flood the log. Entries are cleared when a later drop for the same task
+    ///     succeeds, so the set stays bounded by the tasks currently failing to drop.
+    /// </summary>
+    private readonly HashSet<int> warnedSpoolDropFailures = new();
+
     private readonly Dictionary<int, PersistedTask> runningTasks = new();
 
     /// <summary>
@@ -1234,6 +1241,7 @@ public class DistributedUpscaleTaskProcessor(
             PageStreamSession? session = spool.TryGetSession(taskId);
             if (session is null)
             {
+                ClearSpoolDropWarning(taskId);
                 return;
             }
 
@@ -1249,16 +1257,51 @@ public class DistributedUpscaleTaskProcessor(
                     {
                         spool.DeleteDirectory(directory);
                     }
+
+                    ClearSpoolDropWarning(taskId);
                 }
                 catch (Exception ex)
                 {
-                    logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+                    WarnSpoolDropOnce(taskId, ex, logger, null);
                 }
             });
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+            WarnSpoolDropOnce(taskId, ex, logger, null);
+        }
+    }
+
+    /// <summary>
+    ///     Warns once per task that a page spool could not be dropped. A multi-GB spool that fails to
+    ///     delete is actionable (it lingers until the retention sweep), and a failure path can repeat
+    ///     for the same task, so the repeat is suppressed.
+    /// </summary>
+    private void WarnSpoolDropOnce(int taskId, Exception ex, ILogger logger, string? path)
+    {
+        bool first;
+        using (_lock.EnterScope())
+        {
+            first = warnedSpoolDropFailures.Add(taskId);
+        }
+
+        if (first)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to drop the page spool for task {TaskId} at {Path}; its temp bytes may linger until the retention sweep.",
+                taskId,
+                path ?? "(unknown)"
+            );
+        }
+    }
+
+    /// <summary>Allows a later spool-drop failure for the task to be logged again.</summary>
+    private void ClearSpoolDropWarning(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            warnedSpoolDropFailures.Remove(taskId);
         }
     }
 
@@ -1410,6 +1453,7 @@ public class DistributedUpscaleTaskProcessor(
                     upscalerProfile?.Name ?? "Not found",
                     repairTask.UpscalerProfileId
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1421,6 +1465,7 @@ public class DistributedUpscaleTaskProcessor(
                     chapter.Manga?.Library?.Name ?? "Unknown",
                     chapter.Manga?.Library?.Id
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1438,6 +1483,7 @@ public class DistributedUpscaleTaskProcessor(
                     persistedTask.Id,
                     currentStoragePath
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1464,6 +1510,7 @@ public class DistributedUpscaleTaskProcessor(
                     persistedTask.Id,
                     chapter.FileName
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1583,6 +1630,7 @@ public class DistributedUpscaleTaskProcessor(
                 "Preparation of repair task {TaskId} was cancelled by the requesting worker; requeuing.",
                 persistedTask.Id
             );
+            ClearTransientPreparationFailures(persistedTask.Id);
             await RequeueClaimedTaskAsync(persistedTask, serviceStoppingToken);
             return RepairPreparationOutcome.Requeued;
         }
@@ -1593,6 +1641,7 @@ public class DistributedUpscaleTaskProcessor(
                 "Failed to prepare repair task {TaskId} for remote processing",
                 persistedTask.Id
             );
+            ClearTransientPreparationFailures(persistedTask.Id);
             CleanupRepairFiles(persistedTask.Id, logger);
             await PersistFailedAsync(persistedTask, serviceStoppingToken);
             return RepairPreparationOutcome.Terminal;

@@ -28,8 +28,11 @@ namespace MangaIngestWithUpscaling.Api.Upscaling;
 /// </summary>
 public partial class UpscalingDistributionService
 {
-    /// <summary>Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.</summary>
-    private const long MaxPageBytes = 512L * 1024 * 1024;
+    /// <summary>
+    /// Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.
+    /// Shared with the whole-CBZ path via <see cref="ArchiveSizeLimits.MaxEntryBytes"/>.
+    /// </summary>
+    private const long MaxPageBytes = ArchiveSizeLimits.MaxEntryBytes;
 
     /// <summary>Upper bound on a detection result payload, so the lifted gRPC body cap cannot be abused.</summary>
     private const int MaxDetectionResultBytes = 16 * 1024 * 1024;

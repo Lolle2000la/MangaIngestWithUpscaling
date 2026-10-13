@@ -48,13 +48,13 @@ public class OnnxUpscaleEngineArchiveLimitTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void CopyArchiveEntryWithLimits_RejectsAnEntryOverTheEntryCap()
+    public void CopyWithLimits_RejectsAnEntryOverTheEntryCap()
     {
         using var source = new MemoryStream(new byte[64]);
         using var destination = new MemoryStream();
 
         InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
-            OnnxUpscaleEngine.CopyArchiveEntryWithLimits(
+            ArchiveEntryCopier.CopyWithLimits(
                 source,
                 destination,
                 maxEntryBytes: 16,
@@ -71,13 +71,13 @@ public class OnnxUpscaleEngineArchiveLimitTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void CopyArchiveEntryWithLimits_RejectsWhenTheArchiveTotalWouldBeExceeded()
+    public void CopyWithLimits_RejectsWhenTheArchiveTotalWouldBeExceeded()
     {
         using var source = new MemoryStream(new byte[64]);
         using var destination = new MemoryStream();
 
         Assert.Throws<InvalidDataException>(() =>
-            OnnxUpscaleEngine.CopyArchiveEntryWithLimits(
+            ArchiveEntryCopier.CopyWithLimits(
                 source,
                 destination,
                 maxEntryBytes: long.MaxValue,
@@ -90,13 +90,13 @@ public class OnnxUpscaleEngineArchiveLimitTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void CopyArchiveEntryWithLimits_CopiesWhenWithinBothCaps()
+    public void CopyWithLimits_CopiesWhenWithinBothCaps()
     {
         byte[] payload = Enumerable.Range(0, 40).Select(i => (byte)i).ToArray();
         using var source = new MemoryStream(payload);
         using var destination = new MemoryStream();
 
-        long copied = OnnxUpscaleEngine.CopyArchiveEntryWithLimits(
+        long copied = ArchiveEntryCopier.CopyWithLimits(
             source,
             destination,
             maxEntryBytes: 100,

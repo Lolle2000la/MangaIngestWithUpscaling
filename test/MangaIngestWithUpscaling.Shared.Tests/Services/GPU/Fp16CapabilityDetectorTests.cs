@@ -32,14 +32,14 @@ public class Fp16CapabilityDetectorTests
     }
 
     [Fact]
-    public void UpscalerConfig_ResolvedUseFp16_WhenExplicitlyTrue_ReturnsTrue()
+    public void UpscalerConfig_ResolveUseFp16_WhenExplicitlyTrue_ReturnsTrue()
     {
         var config = new UpscalerConfig { UseFp16 = true, UseCPU = true };
-        Assert.True(config.ResolvedUseFp16);
+        Assert.True(config.ResolveUseFp16(config.PreferredGpuBackend));
     }
 
     [Fact]
-    public void UpscalerConfig_ResolvedUseFp16_WhenExplicitlyFalse_ReturnsFalse()
+    public void UpscalerConfig_ResolveUseFp16_WhenExplicitlyFalse_ReturnsFalse()
     {
         var config = new UpscalerConfig
         {
@@ -47,14 +47,14 @@ public class Fp16CapabilityDetectorTests
             UseCPU = false,
             SelectedDeviceIndex = 1,
         };
-        Assert.False(config.ResolvedUseFp16);
+        Assert.False(config.ResolveUseFp16(config.PreferredGpuBackend));
     }
 
     [Theory]
     [InlineData(true, 1, GpuBackend.Auto)]
     [InlineData(false, 0, GpuBackend.Auto)]
     [InlineData(false, 1, GpuBackend.CPU)]
-    public void UpscalerConfig_ResolvedUseFp16_WhenNullAndTargetingCpu_ReturnsFalse(
+    public void UpscalerConfig_ResolveUseFp16_WhenNullAndTargetingCpu_ReturnsFalse(
         bool useCpu,
         int deviceIndex,
         GpuBackend backend
@@ -71,7 +71,7 @@ public class Fp16CapabilityDetectorTests
     }
 
     [Fact]
-    public void UpscalerConfig_ResolvedUseFp16_WhenNull_MatchesDetectorResult()
+    public void UpscalerConfig_ResolveUseFp16_WhenNull_MatchesDetectorResult()
     {
         // A null UseFp16 defers to the detector. CUDA is the case the detector answers without
         // probing the host: it reports fp16 support for every provider except WebGPU and Auto, which

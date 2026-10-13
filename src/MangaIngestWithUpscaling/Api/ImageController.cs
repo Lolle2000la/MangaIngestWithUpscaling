@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -26,11 +27,12 @@ public class ImageController(ApplicationDbContext dbContext, ILogger<ImageContro
     /// per-entry cap: without it, an authenticated request naming a highly compressible entry could
     /// pull an unbounded amount of data into server memory.
     /// </summary>
-    private const long DefaultMaxPageBytes = OnnxUpscaleEngine.MaxArchiveEntryBytes;
+    private const long DefaultMaxPageBytes = ArchiveSizeLimits.MaxEntryBytes;
 
     /// <summary>
-    /// The page-size cap. Settable so a test can exercise the rejection path with a small value;
-    /// production always uses <see cref="DefaultMaxPageBytes"/>.
+    /// The page-size cap. An internal seam (the app's test assembly is covered by
+    /// <c>InternalsVisibleTo</c>, like the engine's internal members) so a test can exercise the
+    /// rejection path with a small value; production always uses <see cref="DefaultMaxPageBytes"/>.
     /// </summary>
     internal long MaxPageBytes { get; init; } = DefaultMaxPageBytes;
 

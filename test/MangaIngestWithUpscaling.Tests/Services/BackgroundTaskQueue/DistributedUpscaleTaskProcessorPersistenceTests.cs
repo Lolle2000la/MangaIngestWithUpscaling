@@ -518,6 +518,99 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task PrepareRepairTaskForRemote_AfterATerminalExit_DoesNotCarryTheTransientStreak()
+    {
+        // A ReadFailed streak must not survive a terminal exit for the task. If it does, the next
+        // ReadFailed reaches the budget one attempt early and the entry outlives the task for the
+        // process lifetime.
+        await using ApplicationDbContext ctx = _database.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var lib = new Library
+            {
+                Name = "Lib",
+                NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+                UpscaledLibraryPath = Path.Combine(temp, "up"),
+            };
+            Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+            Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+            var profile = new UpscalerProfile
+            {
+                Name = "Default",
+                CompressionFormat = CompressionFormat.Webp,
+                Quality = 80,
+                ScalingFactor = ScaleFactor.TwoX,
+            };
+            var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+            string rel = "Series/Ch1.cbz";
+            string sourcePath = Path.Combine(lib.NotUpscaledLibraryPath, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+            File.WriteAllText(sourcePath, "source");
+            var chapter = new Chapter
+            {
+                FileName = "ch1.cbz",
+                RelativePath = rel,
+                Manga = manga,
+                IsUpscaled = true,
+                UpscalerProfile = profile,
+            };
+            manga.Chapters.Add(chapter);
+            lib.MangaSeries.Add(manga);
+            ctx.Libraries.Add(lib);
+            await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+            var task = new PersistedTask
+            {
+                Data = new RepairUpscaleTask
+                {
+                    ChapterId = chapter.Id,
+                    UpscalerProfileId = profile.Id,
+                    RetryFor = 2,
+                },
+                Status = PersistedTaskStatus.Processing,
+                Order = 1,
+            };
+            ctx.PersistedTasks.Add(task);
+            await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+            int taskId = task.Id;
+
+            // One transient failure accumulates a streak of 1 (below the budget of 2).
+            _metadata
+                .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+                .Returns(new PageDifferenceResult([], []) { ReadFailed = true });
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Requeued,
+                await InvokePrepareRepairTaskForRemoteReadFailedAsync(taskId)
+            );
+
+            // A corrupt archive is terminal; the task leaves the preparation path here.
+            _metadata
+                .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+                .Returns(new PageDifferenceResult([], []) { Corrupt = true });
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Terminal,
+                await InvokePrepareRepairTaskForRemoteReadFailedAsync(taskId)
+            );
+
+            // The next transient failure must start a fresh streak (1), not continue at 2 and fail.
+            _metadata
+                .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+                .Returns(new PageDifferenceResult([], []) { ReadFailed = true });
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Requeued,
+                await InvokePrepareRepairTaskForRemoteReadFailedAsync(taskId)
+            );
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RequeueClaimedTask_WhenServiceIsStopping_DoesNotConsumeRetryBudgetOrFail()
     {
         // Service shutdown is not a task failure: it must not consume the retry budget and must not

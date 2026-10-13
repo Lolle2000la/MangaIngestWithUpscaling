@@ -45,10 +45,24 @@ public class PeriodicIngestWatcherTests
         var watcher = new PeriodicIngestWatcher(scopeFactory, logger);
 
         // A transient failure must not escape RunOnceAsync: under the default StopHost behavior an
-        // escaping exception would take the whole web host down. It is logged instead.
+        // escaping exception would take the whole web host down. It is logged instead, with the
+        // observed exception and the retry message — not merely "some log call happened".
         await watcher.RunOnceAsync(CancellationToken.None);
 
-        Assert.Contains(logger.ReceivedCalls(), call => call.GetMethodInfo().Name == "Log");
+        var logCall = Assert.Single(
+            logger.ReceivedCalls(),
+            call => call.GetMethodInfo().Name == "Log"
+        );
+        object?[] arguments = logCall.GetArguments();
+        Assert.Equal(LogLevel.Error, arguments[0]);
+
+        var exception = Assert.IsAssignableFrom<Exception>(arguments[3]);
+        Assert.Contains("disposed", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "retrying on the next tick",
+            arguments[2]!.ToString(),
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]

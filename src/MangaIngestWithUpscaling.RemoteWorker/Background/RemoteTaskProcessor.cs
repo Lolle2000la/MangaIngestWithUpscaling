@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -94,7 +95,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     /// </summary>
     public static StreamingFailureKind ClassifyStreamingFailure(Exception ex)
     {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
+        foreach (Exception current in ExceptionChain.Enumerate(ex))
         {
             if (current is PageStreamRestartException)
             {
@@ -182,18 +183,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     ///     True when any exception in the chain reports an RPC the server does not implement, which is how a
     ///     worker meets a server from the other side of the upgrade cutover.
     /// </summary>
-    private static bool CarriesUnimplemented(Exception ex)
-    {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (current is RpcException { StatusCode: StatusCode.Unimplemented })
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool CarriesUnimplemented(Exception ex) =>
+        ExceptionChain.Contains(
+            ex,
+            current => current is RpcException { StatusCode: StatusCode.Unimplemented }
+        );
 
     /// <summary>
     ///     Re-runs the connect-time version handshake and describes an incompatible peer, or returns null
@@ -533,7 +527,12 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     {
                         await persistentKeepAliveTask;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // A fault in the pump means the task stopped receiving keep-alives; surface it
+                        // rather than swallowing it silently.
+                        logger.LogDebug(ex, "The keep-alive task for {TaskId} faulted.", taskId);
+                    }
                     persistentKeepAliveCts.Dispose();
                     throw;
                 }
@@ -609,7 +608,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 {
                     await item.PersistentKeepAliveTask;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "The keep-alive task for {TaskId} faulted.", item.TaskId);
+                }
                 item.PersistentKeepAliveCts.Dispose();
                 StreamingTaskId = null;
                 // Re-signal the fetch loop, or it would block on _fetchSignals forever and the
@@ -695,7 +697,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 {
                     await item.PersistentKeepAliveTask;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "The keep-alive task for {TaskId} faulted.", item.TaskId);
+                }
                 item.PersistentKeepAliveCts.Dispose();
                 StreamingTaskId = null;
                 _fetchSignals?.Writer.TryWrite(true);

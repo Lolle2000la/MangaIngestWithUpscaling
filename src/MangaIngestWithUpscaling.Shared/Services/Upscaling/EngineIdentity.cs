@@ -76,9 +76,9 @@ public static class EngineIdentity
         material
             // The precision the model set is actually chosen from. With UseFp16 set, the operator's
             // explicit choice wins; with it unset, the probe answers for the *resolved* backend,
-            // exactly as MangaJaNaiUpscaler.GetModelPackages resolves it for the download. Hashing
-            // the preference's answer instead (ResolvedUseFp16 resolves against PreferredGpuBackend)
-            // would describe a model set that was never downloaded whenever Auto resolved elsewhere.
+            // exactly as MangaJaNaiUpscaler.GetModelPackages resolves it for the download. Resolving
+            // against PreferredGpuBackend would describe a model set that was never downloaded
+            // whenever Auto resolved elsewhere.
             .Append(
                 config.UseFp16
                     ?? config.ResolveUseFp16(resolvedBackend ?? config.PreferredGpuBackend)

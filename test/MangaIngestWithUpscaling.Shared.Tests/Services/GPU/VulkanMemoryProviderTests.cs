@@ -134,29 +134,26 @@ public class VulkanMemoryProviderTests
     {
         Assert.SkipWhen(!VulkanMemoryProvider.IsAvailable, NoVulkan);
 
-        // SupportsFp16 decides from the device's own feature query whenever the loader exports
-        // vkGetPhysicalDeviceFeatures2 — the conjunction of shaderFloat16, storageBuffer16BitAccess
-        // and uniformAndStorageBuffer16BitAccess — and falls back to the vendor heuristic only when
-        // that query could not run. Which branch ran, and the three flags, are not observable from a
-        // test, so the value is a property of the host's GPU rather than of this code: pinning it to
-        // the vendor heuristic (as an earlier version did) fails on a valid GPU whose vendor is in
-        // the heuristic while the driver reports one of the three features as missing — an Adreno
-        // without uniformAndStorageBuffer16BitAccess, for instance, which the production comment
-        // names. The decision itself is pinned exhaustively against ResolveFp16Support below; what
-        // hardware can still show is that a rasterizer-only host has no fp16 accelerator and that
-        // every real accelerator is answered for the WebGPU decision the detector actually asks
-        // about.
         if (VulkanMemoryProvider.DeviceCount == 0)
         {
+            // A rasterizer-only host has no fp16 accelerator.
             Assert.False(VulkanMemoryProvider.SupportsFp16(0));
             return;
         }
 
+        // These branches are properties of the provider, not probes of the device, so they are not
+        // derived from SupportsFp16 and are pinned honestly here.
+        Assert.False(Fp16CapabilityDetector.IsFp16Supported(GpuBackend.CPU));
+        Assert.True(Fp16CapabilityDetector.IsFp16Supported(GpuBackend.CUDA));
+
+        // Smoke test only. With Vulkan available, Fp16CapabilityDetector.IsFp16Supported(WebGPU, i)
+        // *is* VulkanMemoryProvider.SupportsFp16(i) by construction (the detector forwards for
+        // WebGPU), so this comparison cannot catch a hardcoded SupportsFp16 — a stub returning a
+        // fixed value would keep it green. It only pins that the detector returns the device's own
+        // per-accelerator answer on this host and does not throw; the decision is proven
+        // exhaustively by the ResolveFp16Support theory above.
         for (int accelerator = 0; accelerator < VulkanMemoryProvider.DeviceCount; accelerator++)
         {
-            // WebGPU is the only resolved backend whose answer is the device's own, so the detector
-            // must forward SupportsFp16 rather than assume a value: one hardcoded here would select
-            // the fp16 model set on a device that cannot run it.
             Assert.Equal(
                 VulkanMemoryProvider.SupportsFp16(accelerator),
                 Fp16CapabilityDetector.IsFp16Supported(GpuBackend.WebGPU, accelerator)

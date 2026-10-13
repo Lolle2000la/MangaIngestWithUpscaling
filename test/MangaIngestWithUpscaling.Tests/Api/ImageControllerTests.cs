@@ -56,8 +56,51 @@ public class ImageControllerTests : IAsyncDisposable
         IActionResult result = await CreateController(maxPageBytes: 16)
             .GetChapterImage(chapter.Id, "page.jpg");
 
+        // Rejected from the declared length before the body is read: the response is a status result,
+        // not a stream, so nothing was materialised to reject it.
         var status = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status413PayloadTooLarge, status.StatusCode);
+        Assert.IsNotType<FileStreamResult>(result);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetChapterImage_EntryWhoseDeclaredLengthLies_StreamsThenAbortsAtTheCap()
+    {
+        const string relative = "lie.cbz";
+        // The central-directory record claims 4 decompressed bytes while the entry's body is 64. A
+        // stored entry's stream is bounded by its compressed size, so the header lies about the
+        // decompressed length: the declared-length check passes and the controller streams the entry.
+        // The running byte count in PageSizeLimitedStream is what stops it, so a "materialise
+        // everything, then reject" body would have exposed the whole entry and failed this test.
+        string liePath = Path.Combine(_tempDir, relative);
+        using (ZipArchive zip = ZipFile.Open(liePath, ZipArchiveMode.Create))
+        {
+            ZipArchiveEntry entry = zip.CreateEntry("page.jpg", CompressionLevel.NoCompression);
+            using Stream stream = entry.Open();
+            stream.Write(new byte[64]);
+        }
+
+        PatchCentralDirectoryUncompressedSize(liePath, 4);
+        using (ZipArchive archive = ZipFile.OpenRead(liePath))
+        {
+            Assert.Equal(4, archive.GetEntry("page.jpg")!.Length);
+        }
+
+        Chapter chapter = await SeedChapterAsync(relative);
+
+        IActionResult result = await CreateController(maxPageBytes: 16)
+            .GetChapterImage(chapter.Id, "page.jpg");
+
+        var file = Assert.IsType<FileStreamResult>(result);
+        using var buffer = new MemoryStream();
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            file.FileStream.CopyToAsync(buffer, TestContext.Current.CancellationToken)
+        );
+        file.FileStream.Dispose();
+
+        // The cap aborted the copy before the entry's full body was exposed.
+        Assert.True(buffer.Length <= 16);
     }
 
     [Fact]
@@ -156,5 +199,32 @@ public class ImageControllerTests : IAsyncDisposable
             using Stream stream = entry.Open();
             stream.Write(data);
         }
+    }
+
+    /// <summary>
+    /// Rewrites the uncompressed-size field (offset 24) of the first central-directory record, so the
+    /// archive's declared entry size disagrees with what its deflate stream yields. The local header
+    /// and the compressed size are left intact, so the entry still reads and decompresses.
+    /// </summary>
+    private static void PatchCentralDirectoryUncompressedSize(string path, uint declaredSize)
+    {
+        byte[] bytes = File.ReadAllBytes(path);
+        for (int i = 0; i + 28 <= bytes.Length; i++)
+        {
+            // Central directory file header signature 'PK\x01\x02'.
+            if (
+                bytes[i] == 0x50
+                && bytes[i + 1] == 0x4B
+                && bytes[i + 2] == 0x01
+                && bytes[i + 3] == 0x02
+            )
+            {
+                BitConverter.GetBytes(declaredSize).CopyTo(bytes, i + 24);
+                File.WriteAllBytes(path, bytes);
+                return;
+            }
+        }
+
+        throw new InvalidOperationException("No central-directory record found to patch.");
     }
 }

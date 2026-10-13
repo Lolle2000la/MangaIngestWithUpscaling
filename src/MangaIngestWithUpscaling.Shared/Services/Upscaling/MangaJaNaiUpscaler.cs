@@ -693,17 +693,13 @@ public class MangaJaNaiUpscaler(
             return sharedConfig.Value.UpscaleTimeout;
 
         double scalingFactor = Math.Max(1.0, maxPixels / 1_000_000.0);
-        // Saturating, because maxPixels comes from a CBZ whose declared image sizes can be absurd (a
-        // decompression bomb): TimeSpan * double throws OverflowException once the product passes
-        // TimeSpan.MaxValue, and an OverflowException is neither a memory nor an IO failure, so it would
-        // be classified as a permanent per-page failure. Computing in ticks lets the product be capped
-        // before the cast, which turns "instant overflow" into "merely a very long timeout".
-        TimeSpan scaledTimeout = TimeSpan.FromTicks(
-            (long)
-                Math.Min(
-                    sharedConfig.Value.UpscaleTimeout.Ticks * scalingFactor,
-                    TimeSpan.MaxValue.Ticks
-                )
+        // Saturating: maxPixels comes from a CBZ whose declared image sizes can be absurd (a
+        // decompression bomb), and a raw TimeSpan multiplication would throw OverflowException, which
+        // is neither a memory nor an IO failure and would be misclassified as a permanent per-page
+        // failure.
+        TimeSpan scaledTimeout = ScaledTimeout.Scale(
+            sharedConfig.Value.UpscaleTimeout,
+            scalingFactor
         );
 
         logger.LogDebug(

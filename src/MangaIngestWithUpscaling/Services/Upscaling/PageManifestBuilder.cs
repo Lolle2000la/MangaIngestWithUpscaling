@@ -39,7 +39,7 @@ public static class PageManifestBuilder
             }
 
             // Reject names that could escape the output archive on extraction.
-            if (!PageStreamSpool.IsSafeEntryName(entry.FullName))
+            if (!ArchiveEntryNameGuard.IsSafeEntryName(entry.FullName))
             {
                 continue;
             }
@@ -127,7 +127,7 @@ public static class PageManifestBuilder
                     continue;
                 }
 
-                if (!PageStreamSpool.IsSafeEntryName(entry.FullName))
+                if (!ArchiveEntryNameGuard.IsSafeEntryName(entry.FullName))
                 {
                     continue;
                 }
@@ -250,7 +250,7 @@ public static class PageManifestBuilder
                 continue;
             }
 
-            if (!PageStreamSpool.IsSafeEntryName(entry.FullName))
+            if (!ArchiveEntryNameGuard.IsSafeEntryName(entry.FullName))
             {
                 continue;
             }

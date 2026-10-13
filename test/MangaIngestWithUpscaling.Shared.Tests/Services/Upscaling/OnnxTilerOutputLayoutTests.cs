@@ -98,7 +98,9 @@ public class OnnxTilerOutputLayoutTests : IDisposable
     public void DecodeOutputTensor_AcceptsTheShapeARealModelProduces(bool fp16)
     {
         // The legitimate path: a real generated model at the requested scale, decoded through the
-        // real entry point. The layout check must not reject it in either precision branch.
+        // real entry point. The input is deliberately non-uniform and different per channel, so a
+        // plane-offset or stride bug in the decode produces bytes that do not match the expected RGB
+        // and this test fails — a length-only check would pass even then.
         string modelPath = TinyOnnxModel.WriteNearestUpscaler(
             CreateDir(),
             scale: Scale,
@@ -106,12 +108,19 @@ public class OnnxTilerOutputLayoutTests : IDisposable
         );
         using var session = new InferenceSession(modelPath);
 
+        float[][] planes =
+        {
+            [0f, 0.25f, 0.5f, 0.75f], // R, row-major 2x2
+            [1f, 0.75f, 0.5f, 0.25f], // G
+            [0.25f, 0.25f, 0.75f, 0.75f], // B
+        };
+
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = fp16
             ? session.Run([
                 NamedOnnxValue.CreateFromTensor(
                     TinyOnnxModel.InputName,
                     new DenseTensor<Float16>(
-                        Enumerable.Repeat(Float16.One, 3 * PaddedW * PaddedH).ToArray(),
+                        planes.SelectMany(p => p.Select(v => (Float16)v)).ToArray(),
                         [1, 3, PaddedH, PaddedW]
                     )
                 ),
@@ -120,7 +129,7 @@ public class OnnxTilerOutputLayoutTests : IDisposable
                 NamedOnnxValue.CreateFromTensor(
                     TinyOnnxModel.InputName,
                     new DenseTensor<float>(
-                        Enumerable.Repeat(1f, 3 * PaddedW * PaddedH).ToArray(),
+                        planes.SelectMany(p => p).ToArray(),
                         [1, 3, PaddedH, PaddedW]
                     )
                 ),
@@ -136,7 +145,33 @@ public class OnnxTilerOutputLayoutTests : IDisposable
             CancellationToken.None
         );
 
-        Assert.Equal(TileW * Scale * TileH * Scale * 3, decoded.Length);
+        byte[] expected = new byte[OutPaddedH * OutPaddedW * 3];
+        int idx = 0;
+        for (int oy = 0; oy < OutPaddedH; oy++)
+        {
+            for (int ox = 0; ox < OutPaddedW; ox++)
+            {
+                // Nearest-neighbour: the output pixel at (oy, ox) is the input pixel (oy/scale,
+                // ox/scale) of each plane.
+                int source = (oy / Scale) * PaddedW + (ox / Scale);
+                for (int channel = 0; channel < 3; channel++)
+                {
+                    expected[idx++] = ToByte(planes[channel][source]);
+                }
+            }
+        }
+
+        Assert.Equal(expected, decoded);
+    }
+
+    /// <summary>The engine's float-space 0-1 to byte conversion, reproduced so the test does not
+    /// depend on an internal seam.</summary>
+    private static byte ToByte(float value)
+    {
+        float scaled = value * 255.0f;
+        return scaled <= 0f ? (byte)0
+            : scaled >= 255f ? (byte)255
+            : (byte)(scaled + 0.5f);
     }
 
     private string CreateDir()

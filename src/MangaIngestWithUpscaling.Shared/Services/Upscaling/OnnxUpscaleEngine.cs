@@ -1,10 +1,10 @@
-using System.Buffers;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -46,19 +46,19 @@ public class OnnxUpscaleEngine(
     /// <summary>
     /// Upper bound on the bytes decompressed out of a single archive entry when a CBZ is read or
     /// copied, so a crafted archive with a highly compressible entry cannot exhaust temp disk and,
-    /// when libvips decodes a giant image, process memory. It mirrors the streamed path's per-page
-    /// cap (<c>UpscalingDistributionService.Pages.MaxPageBytes</c>); that constant is private to the
-    /// web assembly, which this Shared assembly cannot reach, so the value is stated once here and
-    /// that assembly and <c>ImageController</c> reuse this one.
+    /// when libvips decodes a giant image, process memory. Re-exported from
+    /// <see cref="ArchiveSizeLimits.MaxEntryBytes"/>, which the streamed path and <c>ImageController</c>
+    /// reference directly, so the per-entry cap is stated once.
     /// </summary>
-    public const long MaxArchiveEntryBytes = 512L * 1024 * 1024;
+    public const long MaxArchiveEntryBytes = ArchiveSizeLimits.MaxEntryBytes;
 
     /// <summary>
-    /// Upper bound on the total decompressed bytes read from one source archive, so a chapter whose
-    /// entries each pass <see cref="MaxArchiveEntryBytes"/> cannot fill the disk either. It mirrors
-    /// the streamed path's per-task spool budget (<c>PageStreamSpool.MaxTaskBytes</c>, 8 GiB).
+    /// Fixed upper bound on the total decompressed bytes read from one source archive, so a chapter
+    /// whose entries each pass <see cref="MaxArchiveEntryBytes"/> cannot fill the disk either. The
+    /// page-streamed spool's <c>PageStreamSpool.MaxTaskBytes</c> shares the same default value
+    /// but is operator-configurable, so this whole-CBZ bound is not tied to that setting.
     /// </summary>
-    public const long MaxArchiveBytes = 8L * 1024 * 1024 * 1024;
+    public const long MaxArchiveBytes = ArchiveSizeLimits.DefaultMaxArchiveBytes;
 
     /// <summary>
     /// Failures at one (model, scale) that must be observed before the process-lifetime "unusable"
@@ -351,33 +351,6 @@ public class OnnxUpscaleEngine(
         return Path.Combine(directory, $"{name}.part-{Guid.NewGuid():N}{extension}");
     }
 
-    /// <summary>
-    /// Restricts a directory the app created to hold private page bytes to the current user.
-    /// <c>Directory.CreateDirectory</c> honours the process umask, which is typically 022, so the
-    /// spool and scratch directories would otherwise be world-readable. Best effort: the deployment
-    /// is Linux containers, and a filesystem that does not support Unix modes must not fail a
-    /// chapter over a permission tightening.
-    /// </summary>
-    private static void RestrictToCurrentUser(string directory)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        try
-        {
-            File.SetUnixFileMode(
-                directory,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-            );
-        }
-        catch (Exception)
-        {
-            // Best effort only.
-        }
-    }
-
     private static void WriteUpscaledPage(
         UpscaledPage page,
         string outputPath,
@@ -407,61 +380,6 @@ public class OnnxUpscaleEngine(
         else
         {
             SaveImage(srgbImg, outputPath, format, quality);
-        }
-    }
-
-    /// <summary>
-    /// Copies an archive entry's decompressed bytes from <paramref name="source"/> into
-    /// <paramref name="destination"/>, counting what is actually copied rather than trusting the
-    /// zip header: <see cref="ZipArchiveEntry.Length"/> can be unavailable (and a crafted archive's
-    /// declared size need not match what its stream yields), so the only sound bound is the bytes
-    /// that pass through here. Throws <see cref="InvalidDataException"/> once the entry exceeds
-    /// <paramref name="maxEntryBytes"/> or would push the archive past
-    /// <paramref name="maxArchiveBytes"/> given <paramref name="archiveBytesAlreadyRead"/>, so an
-    /// oversized entry fails loudly instead of filling the disk or process memory. Returns the number
-    /// of bytes copied.
-    /// </summary>
-    public static long CopyArchiveEntryWithLimits(
-        Stream source,
-        Stream destination,
-        long maxEntryBytes,
-        long maxArchiveBytes,
-        long archiveBytesAlreadyRead,
-        string entryName
-    )
-    {
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
-        long copied = 0;
-        try
-        {
-            int read;
-            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
-            {
-                copied += read;
-                if (copied > maxEntryBytes)
-                {
-                    throw new InvalidDataException(
-                        $"Archive entry '{entryName}' exceeds the maximum decompressed entry size of "
-                            + $"{maxEntryBytes} bytes."
-                    );
-                }
-
-                if (archiveBytesAlreadyRead + copied > maxArchiveBytes)
-                {
-                    throw new InvalidDataException(
-                        $"Reading archive entry '{entryName}' would exceed the maximum total "
-                            + $"decompressed size of {maxArchiveBytes} bytes for one archive."
-                    );
-                }
-
-                destination.Write(buffer, 0, read);
-            }
-
-            return copied;
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -512,7 +430,7 @@ public class OnnxUpscaleEngine(
 
         string tempDir = Path.Combine(Path.GetTempPath(), $"cbz_upscale_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
-        RestrictToCurrentUser(tempDir);
+        DirectoryPermissions.RestrictToCurrentUser(tempDir, logger);
 
         // The archive is staged next to its destination, not in tempDir: the library and /tmp are
         // different volumes in the common container/NAS layout, so publishing it out of tempDir would
@@ -548,8 +466,11 @@ public class OnnxUpscaleEngine(
                     // it verbatim, so a reader extracting the result could be made to write outside
                     // its target. Directory entries (empty Name) carry no name to escape with and
                     // are skipped by the copy loop below. The streamed path applies the same guard
-                    // in PageStreamSpool.IsSafeEntryName, which this Shared assembly cannot reach.
-                    if (string.IsNullOrEmpty(entry.Name) || IsSafeEntryName(entry.FullName))
+                    // via the shared ArchiveEntryNameGuard.
+                    if (
+                        string.IsNullOrEmpty(entry.Name)
+                        || ArchiveEntryNameGuard.IsSafeEntryName(entry.FullName)
+                    )
                     {
                         // First occurrence wins, matching the streamed path
                         // (PageStreamSpool.AssembleCore), so a malformed archive that repeats an entry
@@ -621,7 +542,7 @@ public class OnnxUpscaleEngine(
                     using var dstStream = newEntry.Open();
                     // Bounded like the page extraction: a crafted non-image entry is otherwise copied
                     // at whatever size its stream yields.
-                    archiveBytes += CopyArchiveEntryWithLimits(
+                    archiveBytes += ArchiveEntryCopier.CopyWithLimits(
                         srcStream,
                         dstStream,
                         maxEntryBytes,
@@ -713,7 +634,7 @@ public class OnnxUpscaleEngine(
                             )
                         )
                         {
-                            archiveBytes += CopyArchiveEntryWithLimits(
+                            archiveBytes += ArchiveEntryCopier.CopyWithLimits(
                                 entryStream,
                                 pageFile,
                                 maxEntryBytes,
@@ -1794,13 +1715,28 @@ public class OnnxUpscaleEngine(
                 sessionFactory.InvalidateSession(modelPath);
             }
 
-            logger.LogDebug(
-                ex,
-                "Model {Model} could not be probed on this device; skipping it.",
-                Path.GetFileName(modelPath)
-            );
+            bool permanentVerdict = IsModelFault(ex) && RecordModelFailure(key, ex);
+            if (permanentVerdict)
+            {
+                // The verdict is cached for the process, so this failure is not transient and will not
+                // be retried: an operator must see why a model dropped out of service.
+                logger.LogWarning(
+                    ex,
+                    "Model {Model} cannot run on this device; it is unusable for this process and will be skipped.",
+                    Path.GetFileName(modelPath)
+                );
+            }
+            else
+            {
+                logger.LogDebug(
+                    ex,
+                    "Model {Model} could not be probed on this device; skipping it.",
+                    Path.GetFileName(modelPath)
+                );
+            }
+
             usable = false;
-            cacheVerdict = IsModelFault(ex) && RecordModelFailure(key, ex);
+            cacheVerdict = permanentVerdict;
         }
 
         if (cacheVerdict)
@@ -1969,43 +1905,6 @@ public class OnnxUpscaleEngine(
 
             _modelUsable[key] = usable;
         }
-    }
-
-    /// <summary>
-    /// Rejects archive entry names that could escape the output archive on extraction (absolute or
-    /// parent-traversing paths). Mirrors <c>PageStreamSpool.IsSafeEntryName</c> in the main app;
-    /// that type is not reachable from this Shared assembly, so the guard is duplicated rather than
-    /// shared. Only a component made of dots and spaces is rejected ("..", ".. ", "..."), and a
-    /// colon is left alone: it is legal on Linux, and rejecting it silently dropped legitimate pages.
-    /// </summary>
-    private static bool IsSafeEntryName(string name) =>
-        !string.IsNullOrEmpty(name)
-        && !Path.IsPathRooted(name)
-        && !name.StartsWith('/')
-        && !name.StartsWith('\\')
-        && !IsWindowsDriveForm(name)
-        && !name.Split('/', '\\').Any(IsUnsafeSegment);
-
-    /// <summary>
-    /// True for a Windows absolute drive prefix ("C:\", "C:/"), which must not be interpreted as a
-    /// drive path even when the host is Linux.
-    /// </summary>
-    private static bool IsWindowsDriveForm(string name) =>
-        name.Length >= 3
-        && char.IsAsciiLetter(name[0])
-        && name[1] == ':'
-        && (name[2] == '/' || name[2] == '\\');
-
-    private static bool IsUnsafeSegment(string segment)
-    {
-        // Anything with a non-dot/space character is an ordinary name.
-        if (segment.TrimEnd(' ', '.').Length > 0)
-        {
-            return false;
-        }
-
-        // Only dots and spaces: a parent traversal when it has at least two dots ("..", ".. ", "...").
-        return segment.Count(c => c == '.') >= 2;
     }
 
     private static void SaveImage(

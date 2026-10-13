@@ -9,6 +9,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 
@@ -1326,7 +1327,7 @@ public class ChapterMergeCoordinator(
                         List<ZipArchiveEntry> imageEntries = newPartArchive
                             .Entries.Where(e => IsImageFile(e.Name) && !e.FullName.EndsWith("/"))
                             .Select(e => new { Entry = e, Name = e.Name })
-                            .OrderBy(x => x.Name, new NaturalSortComparer<string>(s => s))
+                            .OrderBy(x => x.Name, NaturalEntryNameComparer.Instance)
                             .Select(x => x.Entry)
                             .ToList();
 

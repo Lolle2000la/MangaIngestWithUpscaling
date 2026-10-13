@@ -579,6 +579,55 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void Assemble_CountsSpooledPageBytesAgainstTheSameArchiveBudget()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_budget_combined").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
+                WriteEntry(zip, "ComicInfo.xml", new byte[400]);
+            }
+
+            var spool = new PageStreamSpool(
+                Substitute.For<ILogger<PageStreamSpool>>(),
+                Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = "1 KiB" })
+            );
+
+            var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
+            PageStreamSession session = spool.GetOrCreateSession(82, "identity", "engine", 1);
+            string temp;
+            using (FileStream page = spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[800]);
+            }
+
+            spool.CommitPage(session, 0, temp);
+
+            // The 800-byte spooled page already consumes most of the 1 KiB budget. The 400-byte
+            // pass-through entry fits on its own, but the assembled archive as a whole does not:
+            // counting only the pass-through bytes would let this produce an archive well over the
+            // operator's ceiling.
+            Assert.Throws<InvalidDataException>(() =>
+                spool.Assemble(
+                    session,
+                    session.Identity,
+                    path,
+                    pages,
+                    Path.Combine(directory, "out.cbz")
+                )
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void BeginPageWrite_RestrictsTheSpoolDirectoryToTheCurrentUser()
     {
         if (OperatingSystem.IsWindows())
@@ -885,7 +934,7 @@ public class PageStreamSpoolTests
     [InlineData("\\evil.jpg", false)]
     public void IsSafeEntryName_RejectsTraversalAndWindowsForms(string name, bool expected)
     {
-        Assert.Equal(expected, PageStreamSpool.IsSafeEntryName(name));
+        Assert.Equal(expected, ArchiveEntryNameGuard.IsSafeEntryName(name));
     }
 
     [Fact]
