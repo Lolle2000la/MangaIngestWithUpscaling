@@ -1346,6 +1346,28 @@ public class SplitDetectionServiceTests : IDisposable
         await completion.Task;
         Assert.False(SplitDetectionService.RunIsStillGoing(completion.Task));
     }
+
+    [Fact]
+    public async Task DisposeRunOptionsWhenRunCompletes_ReleasesTheHandleOnlyAfterTheRunReturns()
+    {
+        // The RunOptions handed to the native Run is a SafeHandle ORT reads for the whole call, so it
+        // may not be freed while the run is in flight (a use-after-free). On the timeout and
+        // cancellation paths the run is abandoned, and leaving the handle to the finalizer defers
+        // reclamation for as long as the still-reachable native call keeps it alive. The helper
+        // releases it from a continuation on the run: gone the moment the run returns, and not before.
+        var runOptions = new RunOptions();
+        var run = new TaskCompletionSource();
+        SplitDetectionService.DisposeRunOptionsWhenRunCompletes(run.Task, runOptions);
+
+        Assert.False(runOptions.IsClosed);
+
+        run.SetResult();
+        await run.Task;
+
+        // The continuation executes synchronously on the completing thread, so the handle is already
+        // released without waiting for a collection.
+        Assert.True(runOptions.IsClosed);
+    }
 }
 
 /// <summary>

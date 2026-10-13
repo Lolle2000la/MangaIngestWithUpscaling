@@ -421,7 +421,8 @@ public class SplitDetectionService(
 
         // Handed to Run so a timeout can actually abort the native call rather than only abandoning
         // the await. Kept alive (not disposed) if the run is abandoned, because ORT is still reading
-        // it; it is then released by its finalizer once the native call returns.
+        // it; the abandoned run's completion continuation releases it the moment the native call
+        // returns (see DisposeRunOptionsWhenRunCompletes).
         var runOptions = new RunOptions();
         // The shrinkage key belongs to RunOptions, not SessionOptions (see
         // OnnxSessionFactory.CreateSession): the detector runs a different image shape on every page, so
@@ -762,7 +763,8 @@ public class SplitDetectionService(
             // still in use: freeing them here would pull the handle out from under ORT, the same
             // hazard the timeout path documents. Only a run that has already returned can release
             // them. Ask ORT to stop as well, so a cancelled page does not leave a full inference
-            // running behind the abandoned await.
+            // running behind the abandoned await, and hand the options to the abandoned run's
+            // completion so the handle is reclaimed as soon as it is safe rather than at GC.
             if (RunIsStillGoing(detection))
             {
                 try
@@ -775,6 +777,7 @@ public class SplitDetectionService(
                 }
 
                 disposeRunOptions = false;
+                DisposeRunOptionsWhenRunCompletes(detection, runOptions);
             }
 
             throw;
@@ -800,8 +803,13 @@ public class SplitDetectionService(
             }
 
             // Owned by the still-running call now; freeing it here would pull the handle out from
-            // under ORT. It is left to the finalizer when the run has not returned.
-            disposeRunOptions = !RunIsStillGoing(detection);
+            // under ORT. Hand it to that run's completion so it is reclaimed the moment the native
+            // call returns instead of being left to the finalizer.
+            if (RunIsStillGoing(detection))
+            {
+                disposeRunOptions = false;
+                DisposeRunOptionsWhenRunCompletes(detection, runOptions);
+            }
 
             logger.LogError(ex, "ONNX split detection timed out for {ImagePath}", imagePath);
             if (session is not null)
@@ -887,8 +895,9 @@ public class SplitDetectionService(
         }
         finally
         {
-            // Freed only once the run has returned. On the timeout path the native call is still
-            // using it, so it is deliberately left to the finalizer instead (see the catch).
+            // Freed only once the run has returned. On the timeout/cancellation paths the native call
+            // is still using it, so ownership was handed to a continuation on that run (see the
+            // catches) which disposes it the moment it returns; here that flag is false.
             if (disposeRunOptions)
             {
                 runOptions.Dispose();
@@ -905,6 +914,30 @@ public class SplitDetectionService(
     /// safe to free.
     /// </summary>
     internal static bool RunIsStillGoing(Task? abandoned) => abandoned is { IsCompleted: false };
+
+    /// <summary>
+    /// Releases a <see cref="RunOptions"/> that was handed to a native <c>Run</c> and then
+    /// abandoned by an await timeout or cancellation, at the earliest safe point: a continuation on
+    /// the abandoned run disposes it the moment that run returns. Disposing it while the run is in
+    /// flight would be a use-after-free (<see cref="RunIsStillGoing"/>), and leaving it to the
+    /// finalizer defers reclamation for as long as the still-reachable native call keeps it alive.
+    /// A null task means the run never started, in which case the caller disposes it directly.
+    /// </summary>
+    internal static void DisposeRunOptionsWhenRunCompletes(Task? abandoned, RunOptions runOptions)
+    {
+        if (abandoned is null)
+        {
+            return;
+        }
+
+        _ = abandoned.ContinueWith(
+            static (_, state) => ((RunOptions)state!).Dispose(),
+            runOptions,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
+    }
 
     /// <summary>
     /// The detector's <c>session.Run</c>, as a test seam that mirrors

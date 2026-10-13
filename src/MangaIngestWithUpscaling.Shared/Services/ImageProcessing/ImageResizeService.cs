@@ -38,6 +38,17 @@ public class ImageResizeService(
     private const double CropMinStdDev = 5.0;
 
     /// <summary>
+    /// Name prefix of the temporary preprocessed whole-chapter archives
+    /// <see cref="CreatePreprocessedTempCbzAsync"/> writes into the system temp directory.
+    /// </summary>
+    internal const string PreprocessedTempCbzPrefix = "preprocessed_";
+
+    /// <summary>
+    /// Name prefix of the scratch directories a preprocessing run extracts a chapter into.
+    /// </summary>
+    internal const string PreprocessScratchDirectoryPrefix = "manga_preprocess_";
+
+    /// <summary>
     /// Cached to avoid a native libvips allocation per image. Intentionally not disposed:
     /// static fields have process lifetime and are not eligible for deterministic disposal.
     /// </summary>
@@ -311,6 +322,93 @@ public class ImageResizeService(
                 "Failed to clean up temporary file: {TempFilePath}",
                 tempFilePath
             );
+        }
+    }
+
+    /// <summary>
+    ///     Reclaims preprocessing scratch an interrupted or hard-killed run left in
+    ///     <paramref name="tempRoot" />. Both halves of the family only clean up on a path a hard kill
+    ///     reaches neither: the <c>preprocessed_{guid}_{chapter}.cbz</c> archive is deleted only by
+    ///     <see cref="TempResizedCbz.Dispose" />, and the <c>manga_preprocess_*</c> extraction
+    ///     directories only by the run's own <c>finally</c>. No other sweep (page spool, page-stream
+    ///     directories, model-download scratch, replacement siblings) matches these prefixes, so a
+    ///     whole chapter's archive and extracted pages would otherwise sit in temp for good. Only
+    ///     entries older than <paramref name="retention" /> are removed, so a live preprocess keeps
+    ///     its scratch.
+    /// </summary>
+    internal static void DeleteStalePreprocessScratch(
+        string tempRoot,
+        ILogger logger,
+        TimeSpan retention
+    )
+    {
+        if (!Directory.Exists(tempRoot))
+        {
+            return;
+        }
+
+        DateTime cutoff = DateTime.UtcNow - retention;
+        try
+        {
+            foreach (
+                string archive in Directory.EnumerateFiles(
+                    tempRoot,
+                    $"{PreprocessedTempCbzPrefix}*"
+                )
+            )
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(archive) < cutoff)
+                    {
+                        File.Delete(archive);
+                        logger.LogInformation(
+                            "Removed stale preprocessed archive {Path}.",
+                            archive
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(
+                        ex,
+                        "Failed to remove stale preprocessed archive {Path}.",
+                        archive
+                    );
+                }
+            }
+
+            foreach (
+                string directory in Directory.EnumerateDirectories(
+                    tempRoot,
+                    $"{PreprocessScratchDirectoryPrefix}*"
+                )
+            )
+            {
+                try
+                {
+                    if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                    {
+                        Directory.Delete(directory, recursive: true);
+                        logger.LogInformation(
+                            "Removed stale preprocessing scratch directory {Directory}.",
+                            directory
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(
+                        ex,
+                        "Failed to remove stale preprocessing scratch directory {Directory}.",
+                        directory
+                    );
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to sweep preprocessing scratch in {TempRoot}.", tempRoot);
         }
     }
 
@@ -616,7 +714,13 @@ public class ImageResizeService(
             }
             else
             {
-                processedImage.WriteToFile(imagePath);
+                // No format conversion: re-encode through the explicit-quality save path instead of
+                // WriteToFile, which would let libvips pick the encoder defaults (jpegsave's Q≈75 for
+                // a .jpg). A page that is only resized — or smart-downscaled — would otherwise lose
+                // quality before it is even upscaled, unlike every other save in this pipeline and in
+                // the engine, which all pass an explicit quality. The extension is unchanged, so the
+                // format decisions (and the original file name) are preserved.
+                SaveImageWithFormat(processedImage, imagePath, currentExtension, quality: null);
             }
         }
         finally
@@ -892,8 +996,22 @@ public class ImageResizeService(
         {
             case ".jpg":
             case ".jpeg":
-                image.Jpegsave(outputPath, q: quality ?? 95);
+            {
+                // JPEG has no alpha band, and Jpegsave composites an RGBA image onto black. The
+                // reference keeps the colour stored under a transparent pixel and discards the band
+                // instead, so a transparent region keeps its stored colour rather than becoming a
+                // black band. Every other target below carries alpha and keeps the band as-is.
+                Image? opaque = DropAlpha(image);
+                try
+                {
+                    (opaque ?? image).Jpegsave(outputPath, q: quality ?? 95);
+                }
+                finally
+                {
+                    opaque?.Dispose();
+                }
                 break;
+            }
 
             case ".png":
                 image.Pngsave(outputPath);
@@ -915,6 +1033,17 @@ public class ImageResizeService(
                 break;
         }
     }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="image"/> carrying only its colour bands, or <c>null</c> when
+    /// there is no alpha to drop (letting the caller save <paramref name="image"/> directly). This is
+    /// the same choice the upscaler (<see cref="OnnxUpscaleEngine"/>) and the detector
+    /// (<c>SplitDetectionService</c>) make: a format that cannot store alpha keeps the colour stored
+    /// under a transparent pixel, while libvips' <c>Flatten()</c> would composite that colour onto
+    /// black and black-bake the output. A non-null result is a separate native image the caller owns.
+    /// </summary>
+    private static Image? DropAlpha(Image image) =>
+        image.HasAlpha() ? image.ExtractBand(0, image.Bands - 1) : null;
 
     private static (int width, int height) CalculateNewDimensions(
         int originalWidth,

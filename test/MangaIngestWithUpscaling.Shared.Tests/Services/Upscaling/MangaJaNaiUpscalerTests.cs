@@ -117,6 +117,76 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void SweepStaleScratch_ReclaimsAbandonedPreprocessAndProfileScratch()
+    {
+        // A hard kill between creating a temp and publishing it skips every delete-on-failure path.
+        // The preprocessed whole-chapter archive is deleted only by its in-process Dispose, the
+        // extraction directory only by the run's own finally, and the device-memory profile's write
+        // scratch only by Save's cleanup; no other sweep matched any of them, so all three sat in
+        // temp or the models directory for good. The startup scratch sweep must reclaim the old ones
+        // and leave fresh (in-progress) scratch and unrelated temp content alone.
+        string tempRoot = Path.Combine(Path.GetTempPath(), $"preprocess_sweep_{Guid.NewGuid():N}");
+        string modelsDir = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(tempRoot);
+        Directory.CreateDirectory(modelsDir);
+
+        string staleArchive = Path.Combine(
+            tempRoot,
+            $"preprocessed_{Guid.NewGuid():N}_chapter.cbz"
+        );
+        string freshArchive = Path.Combine(
+            tempRoot,
+            $"preprocessed_{Guid.NewGuid():N}_chapter.cbz"
+        );
+        string unrelated = Path.Combine(tempRoot, "not_ours.cbz");
+        string staleScratch = Path.Combine(tempRoot, $"manga_preprocess_{Guid.NewGuid():N}");
+        string freshScratch = Path.Combine(tempRoot, $"manga_preprocess_{Guid.NewGuid():N}");
+        string staleProfileTemp = Path.Combine(
+            modelsDir,
+            $"{DeviceMemoryProfileStore.FileName}.12345.{Guid.NewGuid():N}.tmp"
+        );
+        string freshProfileTemp = Path.Combine(
+            modelsDir,
+            $"{DeviceMemoryProfileStore.FileName}.12345.{Guid.NewGuid():N}.tmp"
+        );
+
+        File.WriteAllText(staleArchive, "stale");
+        File.WriteAllText(freshArchive, "fresh");
+        File.WriteAllText(unrelated, "unrelated");
+        Directory.CreateDirectory(staleScratch);
+        File.WriteAllText(Path.Combine(staleScratch, "page.png"), "page");
+        Directory.CreateDirectory(freshScratch);
+        File.WriteAllText(staleProfileTemp, "stale");
+        File.WriteAllText(freshProfileTemp, "fresh");
+
+        DateTime old = DateTime.UtcNow - TimeSpan.FromDays(2);
+        File.SetLastWriteTimeUtc(staleArchive, old);
+        File.SetLastWriteTimeUtc(staleProfileTemp, old);
+        Directory.SetLastWriteTimeUtc(staleScratch, old);
+
+        try
+        {
+            _upscaler.SweepStaleScratch(tempRoot);
+
+            Assert.False(File.Exists(staleArchive));
+            Assert.False(Directory.Exists(staleScratch));
+            Assert.False(File.Exists(staleProfileTemp));
+
+            // A fresh archive/scratch is another run's in-progress work, so it must survive, and
+            // unrelated files that happen to sit in temp are never touched.
+            Assert.True(File.Exists(freshArchive));
+            Assert.True(Directory.Exists(freshScratch));
+            Assert.True(File.Exists(freshProfileTemp));
+            Assert.True(File.Exists(unrelated));
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task Upscale_InputFileNotExists_ShouldThrowFileNotFoundException()
     {
         // Arrange

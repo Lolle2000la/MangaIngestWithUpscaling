@@ -312,7 +312,10 @@ public class UpscalerConfigValidatorTests
     public void RejectsAManualTileSizeTooSmallToBlend()
     {
         // TileSize > 0 bypasses PlanTileSplit, so it is the one tile size the planner's MinimumTileSize
-        // floor never sees. Below twice the padding the blend region does not fit in a tile at all.
+        // floor never sees. The floor is a quality floor, not the blender's: RequireBlendRegion is
+        // unreachable from TileSplit.For (the blender narrows each tile's overlap to what the previous
+        // tile actually had), so what a tile this small really costs is padding-dominated work and the
+        // loss of receptive-field context on screentones.
         Assert.NotEmpty(new UpscalerConfig { TileSize = 16 }.FindInvalidSizeSettings());
         Assert.NotEmpty(new UpscalerConfig { TileSize = 32 }.FindInvalidSizeSettings());
         Assert.Empty(new UpscalerConfig { TileSize = 64 }.FindInvalidSizeSettings());

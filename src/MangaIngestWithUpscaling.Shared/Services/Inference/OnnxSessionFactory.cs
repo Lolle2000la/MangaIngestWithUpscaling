@@ -30,10 +30,27 @@ public sealed class OnnxSessionFactory(
     /// catch), and read by <see cref="GetEffectiveBackend"/> to decide whether the resolution it
     /// produced is final or merely what a not-yet-ready driver left. A resolution that skipped a
     /// higher-priority candidate for such a reason is provisional whether it landed on CPU or on a
-    /// lower-priority accelerator. Volatile only through the <see cref="_backendGate"/> lock on the
-    /// reading side; a stale true costs one redundant probe.
+    /// lower-priority accelerator. Both sides go through <see cref="_backendGate"/>:
+    /// <see cref="GetEffectiveBackend"/> resets and reads it under the gate, and
+    /// <see cref="MarkProbeTransient"/> sets it under the same gate, so a probe on a session-creation
+    /// thread cannot land between that reset and read and make an unrelated resolution provisional.
     /// </summary>
     private bool _probeWasTransient;
+
+    /// <summary>
+    /// Records that a provider probe failed without an absence verdict, so the resolution it belongs
+    /// to is retried rather than latched. Taken under <see cref="_backendGate"/> to serialize with
+    /// <see cref="GetEffectiveBackend"/>'s reset-and-read window. The lock is reentrant, so the
+    /// probes reached from a resolution that already holds it (via
+    /// <see cref="ResolveEffectiveBackend"/>) can call this too.
+    /// </summary>
+    private void MarkProbeTransient()
+    {
+        lock (_backendGate)
+        {
+            _probeWasTransient = true;
+        }
+    }
 
     /// <summary>
     /// Whether the cached resolution was produced while some higher-priority provider was skipped for
@@ -543,7 +560,7 @@ public sealed class OnnxSessionFactory(
             // provider is absent — a driver that is not ready yet at boot produces it, and the next
             // session creation re-probes and can attach the provider once it is. Latching here is
             // what pinned a boot-time blip to CPU for the whole process.
-            _probeWasTransient = true;
+            MarkProbeTransient();
             return false;
         }
     }
@@ -600,7 +617,7 @@ public sealed class OnnxSessionFactory(
                 "Failed to append OpenVINO execution provider. Will try next provider or CPU fallback."
             );
             // Not latched — see the CUDA probe for why a plain failure is not an absence verdict.
-            _probeWasTransient = true;
+            MarkProbeTransient();
             return false;
         }
     }
@@ -656,7 +673,7 @@ public sealed class OnnxSessionFactory(
                 "Failed to append MIGraphX execution provider. Will try next provider or CPU fallback."
             );
             // Not latched — see the CUDA probe for why a plain failure is not an absence verdict.
-            _probeWasTransient = true;
+            MarkProbeTransient();
             return false;
         }
     }
@@ -712,7 +729,7 @@ public sealed class OnnxSessionFactory(
                 "Failed to append DirectML execution provider. Will try CPU fallback."
             );
             // Not latched — see the CUDA probe for why a plain failure is not an absence verdict.
-            _probeWasTransient = true;
+            MarkProbeTransient();
             return false;
         }
     }
@@ -778,7 +795,7 @@ public sealed class OnnxSessionFactory(
                 // latched — this probe has no negative availability flag, so a later session
                 // creation re-probes anyway and could attach WebGPU while GetEffectiveBackend()
                 // still said CPU.
-                _probeWasTransient = true;
+                MarkProbeTransient();
                 return false;
             }
 
@@ -808,7 +825,7 @@ public sealed class OnnxSessionFactory(
             // This was the one probe the un-latching missed, so a WebGPU failure latched CPU for
             // the process while CreateSession kept re-probing and could attach GPU sessions under
             // the CPU identity.
-            _probeWasTransient = true;
+            MarkProbeTransient();
             return false;
         }
     }

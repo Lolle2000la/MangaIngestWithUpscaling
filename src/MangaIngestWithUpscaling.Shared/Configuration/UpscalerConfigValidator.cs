@@ -59,14 +59,19 @@ public static class UpscalerConfigSizeValidation
         }
 
         // TileSize > 0 is a manual maximum that bypasses PlanTileSplit, so it is the one tile size the
-        // blender's own requirement never reaches: a tile must be at least twice the padding to carry
-        // the blend region (see TileBlender.RequireBlendRegion). The floor is twice that again because
-        // TileSplit.For distributes tiles evenly — a page only slightly wider than the bound halves its
-        // tiles — so a bound of 2 * DefaultTilePad still shrinks below the region. 0 (automatic) and
-        // -1 (single pass) are unaffected: the planner keeps its own MinimumTileSize floor.
+        // planner's own quality floor never sees. The floor above (4 * DefaultTilePad) is not the
+        // blender's: TileBlender.RequireBlendRegion is unreachable from this path — TileSplit.For is
+        // free to shrink the tiles below the bound (a page only slightly wider than it), but the
+        // blender narrows each tile's overlap to what the previous tile actually had
+        // (TileBlender.AddTile's _lastEndOverlap branch), which keeps even a 1 px remainder inside the
+        // region. What a tile this small really costs is described by MinimumTileSize and
+        // EmergencyTileFloor: below the overlap/blending overhead per pixel and the loss of
+        // receptive-field context on manga screentones outweigh the memory saving, so the model is
+        // asked to upscale padding-dominated postage stamps. 0 (automatic) and -1 (single pass) are
+        // unaffected: the planner keeps its own quality floor.
         if (config.TileSize > 0 && config.TileSize < 4 * OnnxTiler.DefaultTilePad)
         {
-            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.TileSize)} = {config.TileSize}: a manual tile size below {4 * OnnxTiler.DefaultTilePad} px cannot be blended (the blend region alone is {2 * OnnxTiler.DefaultTilePad} px and the tile grid shrinks below the bound on small pages); use 0 for automatic, -1 for a single pass, or at least {4 * OnnxTiler.DefaultTilePad}";
+            yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.TileSize)} = {config.TileSize}: a manual tile size below {4 * OnnxTiler.DefaultTilePad} px is padding-dominated — the blend region alone is {2 * OnnxTiler.DefaultTilePad} px, so most of such a tile is overlap, and the model loses the receptive-field context it needs on screentones; use 0 for automatic, -1 for a single pass, or at least {4 * OnnxTiler.DefaultTilePad}";
         }
     }
 }

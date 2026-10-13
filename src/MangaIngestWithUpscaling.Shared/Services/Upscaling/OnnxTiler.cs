@@ -1403,6 +1403,7 @@ public static class OnnxTiler
         string GttUsed
     );
 
+    private static readonly Lock DrmCardFilesGate = new();
     private static List<DrmCardFiles>? _drmCardFiles;
 
     private static List<(string CardPath, long Total, long Used, long GttUsed)> QueryDrmGpus()
@@ -1458,67 +1459,88 @@ public static class OnnxTiler
             return _drmCardFiles;
         }
 
-        var files = new List<DrmCardFiles>();
-        try
+        // The calibration sampler reads the card files from more than one thread, so the first
+        // resolution is single-flight: without the gate each racing caller repeated the directory
+        // enumeration and every existence check. The list is fully built before it is assigned, so
+        // the duplicate work was the only cost — the gate just removes it.
+        lock (DrmCardFilesGate)
         {
-            if (!Directory.Exists("/sys/class/drm"))
+            // Another caller may have won the race while this one waited for the gate.
+            if (_drmCardFiles is { Count: > 0 })
             {
-                return files;
+                return _drmCardFiles;
             }
 
-            var cardDirs = Directory
-                .GetDirectories("/sys/class/drm", "card*")
-                .Where(d => !Path.GetFileName(d).Contains('-'))
-                .OrderBy(d => d)
-                .ToList();
-
-            foreach (string card in cardDirs)
+            var files = new List<DrmCardFiles>();
+            try
             {
-                string deviceDir = Path.Combine(card, "device");
-                if (!Directory.Exists(deviceDir))
+                if (Directory.Exists("/sys/class/drm"))
                 {
-                    continue;
-                }
+                    var cardDirs = Directory
+                        .GetDirectories("/sys/class/drm", "card*")
+                        .Where(d => !Path.GetFileName(d).Contains('-'))
+                        .OrderBy(d => d)
+                        .ToList();
 
-                // AMD GPU sysfs paths
-                string amdTotal = Path.Combine(deviceDir, "mem_info_vram_total");
-                string amdUsed = Path.Combine(deviceDir, "mem_info_vram_used");
-                string amdGtt = Path.Combine(deviceDir, "mem_info_gtt_used");
+                    foreach (string card in cardDirs)
+                    {
+                        string deviceDir = Path.Combine(card, "device");
+                        if (!Directory.Exists(deviceDir))
+                        {
+                            continue;
+                        }
 
-                if (File.Exists(amdTotal))
-                {
-                    files.Add(new DrmCardFiles(card, amdTotal, amdUsed, amdGtt));
-                    continue;
-                }
+                        // AMD GPU sysfs paths
+                        string amdTotal = Path.Combine(deviceDir, "mem_info_vram_total");
+                        string amdUsed = Path.Combine(deviceDir, "mem_info_vram_used");
+                        string amdGtt = Path.Combine(deviceDir, "mem_info_gtt_used");
 
-                // Intel Xe / i915 sysfs paths. Either family can be present; the first one that
-                // reports a total is the one this card uses.
-                string intelTile0Total = Path.Combine(deviceDir, "tile0", "memory0", "total_bytes");
-                string intelTile0Alloc = Path.Combine(deviceDir, "tile0", "memory0", "alloc_bytes");
-                string intelLmemTotal = Path.Combine(deviceDir, "lmem_total_bytes");
-                string intelLmemAlloc = Path.Combine(deviceDir, "lmem_alloc_bytes");
+                        if (File.Exists(amdTotal))
+                        {
+                            files.Add(new DrmCardFiles(card, amdTotal, amdUsed, amdGtt));
+                            continue;
+                        }
 
-                if (File.Exists(intelTile0Total))
-                {
-                    files.Add(new DrmCardFiles(card, intelTile0Total, intelTile0Alloc, ""));
-                }
-                else if (File.Exists(intelLmemTotal))
-                {
-                    files.Add(new DrmCardFiles(card, intelLmemTotal, intelLmemAlloc, ""));
+                        // Intel Xe / i915 sysfs paths. Either family can be present; the first one
+                        // that reports a total is the one this card uses.
+                        string intelTile0Total = Path.Combine(
+                            deviceDir,
+                            "tile0",
+                            "memory0",
+                            "total_bytes"
+                        );
+                        string intelTile0Alloc = Path.Combine(
+                            deviceDir,
+                            "tile0",
+                            "memory0",
+                            "alloc_bytes"
+                        );
+                        string intelLmemTotal = Path.Combine(deviceDir, "lmem_total_bytes");
+                        string intelLmemAlloc = Path.Combine(deviceDir, "lmem_alloc_bytes");
+
+                        if (File.Exists(intelTile0Total))
+                        {
+                            files.Add(new DrmCardFiles(card, intelTile0Total, intelTile0Alloc, ""));
+                        }
+                        else if (File.Exists(intelLmemTotal))
+                        {
+                            files.Add(new DrmCardFiles(card, intelLmemTotal, intelLmemAlloc, ""));
+                        }
+                    }
                 }
             }
-        }
-        catch
-        {
-            // Ignore DRM sysfs read errors
-        }
+            catch
+            {
+                // Ignore DRM sysfs read errors
+            }
 
-        if (files.Count > 0)
-        {
-            _drmCardFiles = files;
-        }
+            if (files.Count > 0)
+            {
+                _drmCardFiles = files;
+            }
 
-        return files;
+            return files;
+        }
     }
 
     /// <summary>
@@ -1848,6 +1870,16 @@ public static class OnnxTiler
                     inVal
                 );
 
+                // Ownership of the native output collection is handed to whichever path gets there
+                // first, decided by a single claim. The object is created before the block that hands
+                // the collection to the decode task so the catch below can claim it too: a delegate
+                // that ran claims it up front (and DecodeOutputTensor disposes the collection), the
+                // continuation claims only when the task was cancelled before the delegate started,
+                // and an exception before the handoff leaves this frame the owner through an object
+                // nobody claimed. A claim — not ONNX Runtime's double-dispose guard — is what makes
+                // the owner unambiguous.
+                var outputOwnership = new OutputCollectionOwnership();
+
                 // Until the decode task below takes it, the pipeline is the owner of `outputs` and has
                 // to release it on every path out. Blending the previous tile can throw
                 // NonFiniteModelOutputException — the exact bad-model case this pipeline recovers from —
@@ -1907,7 +1939,6 @@ public static class OnnxTiler
                     // Dispose on an _disposed flag, so a second dispose would be a no-op today, but
                     // the "task is Canceled" test alone cannot tell "never ran" from "ran and
                     // cancelled" — the ownership must not rest on that coincidence.)
-                    var outputOwnership = new OutputCollectionOwnership();
                     prevDecodeTask = Task.Run(
                         () =>
                         {
@@ -1946,7 +1977,14 @@ public static class OnnxTiler
                 }
                 catch
                 {
-                    outputs.Dispose();
+                    // Claim before disposing for the same reason the continuation does: a decode
+                    // delegate that already ran owns the collection (it disposes it inside
+                    // DecodeOutputTensor), so an unconditional dispose here could be a second one.
+                    if (outputOwnership.TryClaim())
+                    {
+                        outputs.Dispose();
+                    }
+
                     ObserveAbandonedInputTask(nextInputTask);
                     throw;
                 }
@@ -2044,13 +2082,15 @@ public static class OnnxTiler
     }
 
     /// <summary>
-    /// Single-owner handoff for a native output collection in the pipelined tiling path. The decode
-    /// delegate and the continuation that reacts to its cancellation both have a reason to release it,
-    /// and exactly one of them may: <see cref="TryClaim"/> returns true for the first caller only. The
-    /// delegate claims before it touches the collection; the continuation claims only when the task
-    /// was cancelled before the delegate started. ONNX Runtime's output collections guard
-    /// <c>Dispose</c> on their own <c>_disposed</c> flag, so a second dispose is a no-op today, but
-    /// that is the runtime's implementation detail and is not what ownership should rest on.
+    /// Single-owner handoff for a native output collection in the pipelined tiling path. Three paths
+    /// have a reason to release it — the decode delegate, the continuation that reacts to its
+    /// cancellation, and the catch around the handoff — and exactly one of them may:
+    /// <see cref="TryClaim"/> returns true for the first caller only. The delegate claims before it
+    /// touches the collection; the continuation claims only when the task was cancelled before the
+    /// delegate started; the catch claims only when the exception was thrown before the delegate
+    /// started. ONNX Runtime's output collections guard <c>Dispose</c> on their own <c>_disposed</c>
+    /// flag, so a second dispose is a no-op today, but that is the runtime's implementation detail
+    /// and is not what ownership should rest on.
     /// </summary>
     private sealed class OutputCollectionOwnership
     {

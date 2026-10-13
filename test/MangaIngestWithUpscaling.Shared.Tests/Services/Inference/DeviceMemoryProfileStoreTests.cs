@@ -188,14 +188,42 @@ public class DeviceMemoryProfileStoreTests : IDisposable
     }
 
     [Fact]
+    public void DeleteStaleTemps_ReclaimsOnlyOldScratch()
+    {
+        // Save deletes its uniquely-named write scratch on every path it can reach, but a hard kill
+        // between creating the temp and moving it, or a move and a delete that both fail, leaves it
+        // in the models directory — and the model-download sweep matches only its own prefixes. The
+        // sweep reclaims only old scratch, never a live save's or another mechanism's temp file.
+        string stale = DeviceMemoryProfileStore.TempPath(DeviceMemoryProfileStore.PathFor(tempDir));
+        string fresh = DeviceMemoryProfileStore.TempPath(DeviceMemoryProfileStore.PathFor(tempDir));
+        string unrelated = Path.Combine(tempDir, "model_pkg_abcd.zip.tmp");
+        File.WriteAllText(stale, "stale");
+        File.WriteAllText(fresh, "fresh");
+        File.WriteAllText(unrelated, "unrelated");
+        File.SetLastWriteTimeUtc(stale, DateTime.UtcNow - TimeSpan.FromDays(2));
+        File.SetLastWriteTimeUtc(unrelated, DateTime.UtcNow - TimeSpan.FromDays(2));
+
+        DeviceMemoryProfileStore.DeleteStaleTemps(
+            tempDir,
+            NullLogger<DeviceMemoryProfileStore>.Instance,
+            TimeSpan.FromHours(24)
+        );
+
+        Assert.False(File.Exists(stale));
+        Assert.True(File.Exists(fresh));
+        Assert.True(File.Exists(unrelated));
+    }
+
+    [Fact]
     public void Save_WhenTheProfileCannotBePersisted_ServesTheMeasurementFromMemory()
     {
-        // A regression test for the property, not a fix for a bug: Save hands Read's dictionary
-        // straight back to the cache (Read assigns `cache = profiles` before returning it) and then
-        // mutates that same instance in place, so the measurement is cached whether or not the file
-        // could be written. It is pinned anyway because the failure mode is silent and expensive — a
-        // cache that missed it would make the caller re-run the multi-second benchmark for every page
-        // — and because it would break the moment Save started from a copy of Read's result.
+        // A regression test for the property, not a fix for a bug: Save reads the file into its own
+        // dictionary (TryReadFile), layers the measurement onto that same instance in place, and
+        // publishes it to the cache before it attempts the write — so the measurement is cached
+        // whether or not the file could be written. It is pinned anyway because the failure mode is
+        // silent and expensive — a cache that missed it would make the caller re-run the multi-second
+        // benchmark for every page — and because it would break the moment Save published the cache
+        // only after a successful write.
         // A directory standing in for the profile file makes the move fail without depending on
         // filesystem permissions, which a root test run would bypass.
         Directory.CreateDirectory(DeviceMemoryProfileStore.PathFor(tempDir));

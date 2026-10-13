@@ -447,7 +447,7 @@ public class MangaJaNaiUpscaler(
             fileSystem.CreateDirectory(ModelPath);
         }
 
-        SweepStaleDownloadScratch();
+        SweepStaleScratch(Path.GetTempPath());
 
         foreach (var package in GetModelPackages())
         {
@@ -960,22 +960,25 @@ public class MangaJaNaiUpscaler(
     }
 
     /// <summary>
-    /// Age at which staging and extraction scratch counts as abandoned. A live download or
-    /// extraction owns its own uniquely named scratch for minutes to hours; a day is far past that,
-    /// so this only ever reclaims corpses — a run that died between creating the scratch and its
-    /// <c>finally</c> cleanup (a crash, a kill) is reclaimed by nothing else, and a models directory
-    /// that survives many such runs collects multi-GB leftovers.
+    /// Age at which staging and extraction scratch counts as abandoned. A live download,
+    /// extraction or preprocessing owns its own uniquely named scratch for minutes to hours; a day
+    /// is far past that, so this only ever reclaims corpses — a run that died between creating the
+    /// scratch and its <c>finally</c> cleanup (a crash, a kill) is reclaimed by nothing else, and a
+    /// models or temp directory that survives many such runs collects multi-GB leftovers.
     /// </summary>
     private static readonly TimeSpan StaleDownloadScratchAge = TimeSpan.FromHours(24);
 
     /// <summary>
-    /// Removes abandoned download staging (<c>model_pkg_*.zip.tmp</c>) and extraction scratch
-    /// (<c>.extract-*</c>) from the models directory. Nothing deletes them on the normal path except
-    /// their own <c>finally</c> blocks, which a hard kill skips; the engine identity's fingerprint
-    /// only ignores them. Per-entry failures are swallowed: a locked or unreadable entry is skipped
-    /// this run, and the sweep as a whole must never stop a startup.
+    /// Removes abandoned scratch this upscaler owns. In the models directory: download staging
+    /// (<c>model_pkg_*.zip.tmp</c>), extraction scratch (<c>.extract-*</c>) and the device-memory
+    /// profile's write scratch. In the system temp directory (<paramref name="tempRoot"/>): the
+    /// preprocessing archives and extraction directories, which only their own disposal or
+    /// <c>finally</c> removes. Nothing deletes any of them on the normal path if a hard kill skips
+    /// that, and the engine identity's fingerprint only ignores the model ones. Per-entry failures
+    /// are swallowed: a locked or unreadable entry is skipped this run, and the sweep as a whole must
+    /// never stop a startup.
     /// </summary>
-    private void SweepStaleDownloadScratch()
+    internal void SweepStaleScratch(string tempRoot)
     {
         try
         {
@@ -1004,12 +1007,19 @@ public class MangaJaNaiUpscaler(
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
+
+            DeviceMemoryProfileStore.DeleteStaleTemps(ModelPath, logger, StaleDownloadScratchAge);
+            ImageResizeService.DeleteStalePreprocessScratch(
+                tempRoot,
+                logger,
+                StaleDownloadScratchAge
+            );
         }
         catch (Exception ex)
         {
             logger.LogWarning(
                 ex,
-                "Failed to sweep stale download scratch from the models directory {ModelPath}",
+                "Failed to sweep stale scratch from the models directory {ModelPath}",
                 ModelPath
             );
         }

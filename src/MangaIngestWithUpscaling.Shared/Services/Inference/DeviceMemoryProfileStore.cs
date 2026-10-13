@@ -157,6 +157,67 @@ public sealed class DeviceMemoryProfileStore
     internal static string TempPath(string path) =>
         $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
 
+    /// <summary>
+    /// Name pattern of the per-writer write scratch <see cref="TempPath"/> produces, e.g.
+    /// <c>device-memory-profile.json.1234.abcd.tmp</c>.
+    /// </summary>
+    internal const string TempFilePattern = FileName + ".*.tmp";
+
+    /// <summary>
+    ///     Reclaims write scratch an earlier process left in <paramref name="modelsDirectory" />.
+    ///     <see cref="Save" /> deletes its scratch on every path it can reach, but a hard kill between
+    ///     creating the temp and moving it, or a move and a delete that both fail, leaves it behind
+    ///     for good — and the model-download scratch sweep matches only its own prefixes. Only
+    ///     entries older than <paramref name="retention" /> are removed, so a live save's scratch is
+    ///     never touched.
+    /// </summary>
+    internal static void DeleteStaleTemps(
+        string modelsDirectory,
+        ILogger logger,
+        TimeSpan retention
+    )
+    {
+        if (!Directory.Exists(modelsDirectory))
+        {
+            return;
+        }
+
+        DateTime cutoff = DateTime.UtcNow - retention;
+        try
+        {
+            foreach (string path in Directory.EnumerateFiles(modelsDirectory, TempFilePattern))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(path) < cutoff)
+                    {
+                        File.Delete(path);
+                        logger.LogInformation(
+                            "Removed stale device memory profile temp {Path}.",
+                            path
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(
+                        ex,
+                        "Failed to remove stale device memory profile temp {Path}.",
+                        path
+                    );
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(
+                ex,
+                "Failed to sweep device memory profile temps in {Directory}.",
+                modelsDirectory
+            );
+        }
+    }
+
     private Dictionary<string, DeviceMemoryProfile> Read(string modelsDirectory, bool forceReload)
     {
         string path = PathFor(modelsDirectory);
