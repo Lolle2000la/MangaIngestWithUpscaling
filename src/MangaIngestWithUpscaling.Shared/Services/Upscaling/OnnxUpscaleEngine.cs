@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using AutoRegisterInject;
@@ -41,6 +42,23 @@ public class OnnxUpscaleEngine(
     /// which only costs the next page a re-probe — never a wrong answer.
     /// </summary>
     private const int ModelUsableCacheCapacity = 256;
+
+    /// <summary>
+    /// Upper bound on the bytes decompressed out of a single archive entry when a CBZ is read or
+    /// copied, so a crafted archive with a highly compressible entry cannot exhaust temp disk and,
+    /// when libvips decodes a giant image, process memory. It mirrors the streamed path's per-page
+    /// cap (<c>UpscalingDistributionService.Pages.MaxPageBytes</c>); that constant is private to the
+    /// web assembly, which this Shared assembly cannot reach, so the value is stated once here and
+    /// that assembly and <c>ImageController</c> reuse this one.
+    /// </summary>
+    public const long MaxArchiveEntryBytes = 512L * 1024 * 1024;
+
+    /// <summary>
+    /// Upper bound on the total decompressed bytes read from one source archive, so a chapter whose
+    /// entries each pass <see cref="MaxArchiveEntryBytes"/> cannot fill the disk either. It mirrors
+    /// the streamed path's per-task spool budget (<c>PageStreamSpool.MaxTaskBytes</c>, 8 GiB).
+    /// </summary>
+    public const long MaxArchiveBytes = 8L * 1024 * 1024 * 1024;
 
     /// <summary>
     /// Failures at one (model, scale) that must be observed before the process-lifetime "unusable"
@@ -196,12 +214,19 @@ public class OnnxUpscaleEngine(
                     config.Value.ResolveUseFp16(sessionFactory.GetEffectiveBackend())
                 );
 
-                using var flattened = vipsImage.HasAlpha() ? vipsImage.Flatten() : vipsImage.Copy();
+                // The alpha band is dropped, not composited. This is the same choice the detector
+                // makes (SplitDetectionService) for the same reason: the reference keeps the colour
+                // stored under a transparent pixel and simply discards the band, while libvips'
+                // Flatten() composites onto black. The output is re-created as a 3-band image, so
+                // alpha is gone either way — but flattening would bake that black into the RGB, and
+                // the model would then upscale a black region where the page stored a colour.
+                using var opaque = vipsImage.HasAlpha()
+                    ? vipsImage.ExtractBand(0, vipsImage.Bands - 1)
+                    : vipsImage.Copy();
                 using var rgb =
-                    flattened.Bands == 3
-                    && flattened.Interpretation == NetVips.Enums.Interpretation.Srgb
-                        ? flattened.Copy()
-                        : flattened.Colourspace(NetVips.Enums.Interpretation.Srgb);
+                    opaque.Bands == 3 && opaque.Interpretation == NetVips.Enums.Interpretation.Srgb
+                        ? opaque.Copy()
+                        : opaque.Colourspace(NetVips.Enums.Interpretation.Srgb);
                 using var ucharRgb =
                     rgb.Format == NetVips.Enums.BandFormat.Uchar
                         ? rgb.Copy()
@@ -326,6 +351,33 @@ public class OnnxUpscaleEngine(
         return Path.Combine(directory, $"{name}.part-{Guid.NewGuid():N}{extension}");
     }
 
+    /// <summary>
+    /// Restricts a directory the app created to hold private page bytes to the current user.
+    /// <c>Directory.CreateDirectory</c> honours the process umask, which is typically 022, so the
+    /// spool and scratch directories would otherwise be world-readable. Best effort: the deployment
+    /// is Linux containers, and a filesystem that does not support Unix modes must not fail a
+    /// chapter over a permission tightening.
+    /// </summary>
+    private static void RestrictToCurrentUser(string directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(
+                directory,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            );
+        }
+        catch (Exception)
+        {
+            // Best effort only.
+        }
+    }
+
     private static void WriteUpscaledPage(
         UpscaledPage page,
         string outputPath,
@@ -344,7 +396,12 @@ public class OnnxUpscaleEngine(
 
         if (page.IsGrayscale)
         {
-            using var bwImg = srgbImg[0].Copy(interpretation: NetVips.Enums.Interpretation.Bw);
+            // True luminance, not the red plane. A grayscale page can fall back to a colour model
+            // (the ladder's last rung is an IllustrationJaNai model), and that model's three
+            // channels then differ slightly: keeping band 0 turns any residual channel imbalance
+            // into a brightness/tint error. Colourspace(Bw) computes the weighted luminance the
+            // reference uses, so the imbalance is averaged away instead of surfacing as red.
+            using var bwImg = srgbImg.Colourspace(NetVips.Enums.Interpretation.Bw);
             SaveImage(bwImg, outputPath, format, quality);
         }
         else
@@ -353,13 +410,96 @@ public class OnnxUpscaleEngine(
         }
     }
 
-    public async Task UpscaleCbzAsync(
+    /// <summary>
+    /// Copies an archive entry's decompressed bytes from <paramref name="source"/> into
+    /// <paramref name="destination"/>, counting what is actually copied rather than trusting the
+    /// zip header: <see cref="ZipArchiveEntry.Length"/> can be unavailable (and a crafted archive's
+    /// declared size need not match what its stream yields), so the only sound bound is the bytes
+    /// that pass through here. Throws <see cref="InvalidDataException"/> once the entry exceeds
+    /// <paramref name="maxEntryBytes"/> or would push the archive past
+    /// <paramref name="maxArchiveBytes"/> given <paramref name="archiveBytesAlreadyRead"/>, so an
+    /// oversized entry fails loudly instead of filling the disk or process memory. Returns the number
+    /// of bytes copied.
+    /// </summary>
+    public static long CopyArchiveEntryWithLimits(
+        Stream source,
+        Stream destination,
+        long maxEntryBytes,
+        long maxArchiveBytes,
+        long archiveBytesAlreadyRead,
+        string entryName
+    )
+    {
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
+        long copied = 0;
+        try
+        {
+            int read;
+            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                copied += read;
+                if (copied > maxEntryBytes)
+                {
+                    throw new InvalidDataException(
+                        $"Archive entry '{entryName}' exceeds the maximum decompressed entry size of "
+                            + $"{maxEntryBytes} bytes."
+                    );
+                }
+
+                if (archiveBytesAlreadyRead + copied > maxArchiveBytes)
+                {
+                    throw new InvalidDataException(
+                        $"Reading archive entry '{entryName}' would exceed the maximum total "
+                            + $"decompressed size of {maxArchiveBytes} bytes for one archive."
+                    );
+                }
+
+                destination.Write(buffer, 0, read);
+            }
+
+            return copied;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    public Task UpscaleCbzAsync(
         string inputCbzPath,
         string outputCbzPath,
         int scale,
         CompressionFormat format,
         int? quality,
         IProgress<UpscaleProgress>? progress,
+        CancellationToken cancellationToken
+    ) =>
+        RewriteCbzAsync(
+            inputCbzPath,
+            outputCbzPath,
+            scale,
+            format,
+            quality,
+            progress,
+            MaxArchiveEntryBytes,
+            MaxArchiveBytes,
+            cancellationToken
+        );
+
+    /// <summary>
+    /// The whole-CBZ implementation with the decompression caps as parameters.
+    /// <see cref="UpscaleCbzAsync"/> passes the production constants; a test passes small values to
+    /// exercise the caps against a crafted archive without generating a half-gigabyte entry.
+    /// </summary>
+    internal async Task RewriteCbzAsync(
+        string inputCbzPath,
+        string outputCbzPath,
+        int scale,
+        CompressionFormat format,
+        int? quality,
+        IProgress<UpscaleProgress>? progress,
+        long maxEntryBytes,
+        long maxArchiveBytes,
         CancellationToken cancellationToken
     )
     {
@@ -372,6 +512,7 @@ public class OnnxUpscaleEngine(
 
         string tempDir = Path.Combine(Path.GetTempPath(), $"cbz_upscale_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
+        RestrictToCurrentUser(tempDir);
 
         // The archive is staged next to its destination, not in tempDir: the library and /tmp are
         // different volumes in the common container/NAS layout, so publishing it out of tempDir would
@@ -393,6 +534,10 @@ public class OnnxUpscaleEngine(
                 // The one extension mapping both upscale paths share, so a format never resolves to
                 // ".jpg" here and ".jpeg" on the streamed path.
                 string targetExt = MangaJaNaiWorkerClient.ToExtension(format);
+
+                // Total decompressed bytes read out of the source archive so far, for the per-archive
+                // cap. Counted across both the page extraction and the non-image pass-through.
+                long archiveBytes = 0;
 
                 var entries = new List<ZipArchiveEntry>(inArchive.Entries.Count);
                 var seenNames = new HashSet<string>(StringComparer.Ordinal);
@@ -474,7 +619,16 @@ public class OnnxUpscaleEngine(
                     );
                     using var srcStream = nonImg.Open();
                     using var dstStream = newEntry.Open();
-                    await srcStream.CopyToAsync(dstStream, cancellationToken);
+                    // Bounded like the page extraction: a crafted non-image entry is otherwise copied
+                    // at whatever size its stream yields.
+                    archiveBytes += CopyArchiveEntryWithLimits(
+                        srcStream,
+                        dstStream,
+                        maxEntryBytes,
+                        maxArchiveBytes,
+                        archiveBytes,
+                        nonImg.FullName
+                    );
                 }
 
                 // Pipelined: while page N runs on the GPU, page N-1 finishes encoding and is added to
@@ -544,7 +698,30 @@ public class OnnxUpscaleEngine(
                         );
                         string tempOutPage = Path.Combine(tempDir, $"out_{pageId}{targetExt}");
 
-                        entry.ExtractToFile(tempInPage, overwrite: true);
+                        // Bounded decompression: the entry's declared length is not trusted (it can
+                        // be unavailable, and a crafted archive can misdeclare it), so the bytes that
+                        // actually pass through are counted. An oversized page fails the whole
+                        // chapter — the same deterministic failure the streamed path applies to a page
+                        // over its cap — instead of filling temp disk or process memory.
+                        using (Stream entryStream = entry.Open())
+                        using (
+                            FileStream pageFile = new(
+                                tempInPage,
+                                FileMode.Create,
+                                FileAccess.Write,
+                                FileShare.None
+                            )
+                        )
+                        {
+                            archiveBytes += CopyArchiveEntryWithLimits(
+                                entryStream,
+                                pageFile,
+                                maxEntryBytes,
+                                maxArchiveBytes,
+                                archiveBytes,
+                                entry.FullName
+                            );
+                        }
 
                         Task<Task> inference = UpscaleFileStagedAsync(
                             tempInPage,

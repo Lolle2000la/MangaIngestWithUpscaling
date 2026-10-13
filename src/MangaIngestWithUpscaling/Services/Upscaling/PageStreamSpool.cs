@@ -264,6 +264,31 @@ public sealed class PageStreamSpool : IPageSpoolStore
     }
 
     /// <summary>
+    /// Restricts an app-created spool directory to the current user, so the pages (private library
+    /// content) are not world-readable under a typical umask. Best effort: the deployment is Linux
+    /// containers, and a filesystem without Unix-mode support must not fail a chapter.
+    /// </summary>
+    private static void RestrictToCurrentUser(string directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(
+                directory,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            );
+        }
+        catch (Exception)
+        {
+            // Best effort only.
+        }
+    }
+
+    /// <summary>
     /// Returns the session for a task if the manifest for this replica created one. An upload that
     /// finds no session is on the wrong replica (or skipped the manifest); that must be surfaced
     /// rather than silently spooled into a session that will never finalize.
@@ -333,6 +358,11 @@ public sealed class PageStreamSpool : IPageSpoolStore
             // delete the session directory, which would otherwise turn a clean identity rejection into
             // an unhandled DirectoryNotFoundException.
             Directory.CreateDirectory(session.Directory);
+            // Owner-only: the directory holds private page bytes and Directory.CreateDirectory
+            // honours the process umask (typically 022, i.e. world-readable). The root as well as the
+            // session directory; both are app-created for exactly this purpose.
+            RestrictToCurrentUser(SpoolRoot);
+            RestrictToCurrentUser(session.Directory);
             string path = session.PagePath(pageIndex);
             // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
             tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
@@ -737,6 +767,11 @@ public sealed class PageStreamSpool : IPageSpoolStore
         var handledSources = new HashSet<string>(StringComparer.Ordinal);
         var written = new HashSet<string>(StringComparer.Ordinal);
 
+        // Decompressed bytes copied from the source archive's non-page entries so far. The spooled
+        // pages are bounded by the upload path's per-page and per-task caps; the pass-through entries
+        // come straight from the source (which a crafted CBZ can inflate), so they are bounded here.
+        long archiveBytes = 0;
+
         // Non-page entries first (ComicInfo.xml and friends) in the source's own order, then the pages
         // in page-index order — exactly what the whole-CBZ writer does, because the two paths must
         // agree on the archive they produce. The page order is the one the manifest assigned
@@ -771,7 +806,18 @@ public sealed class PageStreamSpool : IPageSpoolStore
             ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
             using Stream input = entry.Open();
             using Stream target = outputEntry.Open();
-            input.CopyTo(target);
+            // Bounded per entry and per archive: a crafted non-image entry must not fill the disk or
+            // blow up memory while the archive is assembled. The per-archive ceiling reuses the
+            // per-task spool budget, so the existing MaxSpoolBytesPerTask setting also bounds the
+            // pass-through bytes.
+            archiveBytes += OnnxUpscaleEngine.CopyArchiveEntryWithLimits(
+                input,
+                target,
+                OnnxUpscaleEngine.MaxArchiveEntryBytes,
+                _maxTaskBytes,
+                archiveBytes,
+                entry.FullName
+            );
         }
 
         foreach (

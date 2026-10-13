@@ -531,6 +531,75 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void Assemble_RejectsANonImageEntryOverTheArchiveBudget()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_budget").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
+                // A non-image entry that a crafted archive can inflate far past its compressed size.
+                WriteEntry(zip, "ComicInfo.xml", new byte[4096]);
+            }
+
+            // MaxSpoolBytesPerTask also caps the bytes copied out of pass-through entries while the
+            // archive is assembled, so a small configured budget makes the cap testable.
+            var spool = new PageStreamSpool(
+                Substitute.For<ILogger<PageStreamSpool>>(),
+                Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = "1 KiB" })
+            );
+
+            var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
+            PageStreamSession session = spool.GetOrCreateSession(80, "identity", "engine", 1);
+            string temp;
+            using (FileStream page = spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[] { 7, 8, 9 });
+            }
+
+            spool.CommitPage(session, 0, temp);
+
+            Assert.Throws<InvalidDataException>(() =>
+                spool.Assemble(
+                    session,
+                    session.Identity,
+                    path,
+                    pages,
+                    Path.Combine(directory, "out.cbz")
+                )
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BeginPageWrite_RestrictsTheSpoolDirectoryToTheCurrentUser()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        PageStreamSession session = _spool.GetOrCreateSession(81, "identity", "engine", 1);
+        using (FileStream page = _spool.BeginPageWrite(session, 0, out _))
+        {
+            page.Write(new byte[] { 1 });
+        }
+
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+            File.GetUnixFileMode(session.Directory)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForgetMissingPages_DropsPagesWhoseFileIsGone()
     {
         PageStreamSession session = _spool.GetOrCreateSession(52, "identity", "engine", 2);
