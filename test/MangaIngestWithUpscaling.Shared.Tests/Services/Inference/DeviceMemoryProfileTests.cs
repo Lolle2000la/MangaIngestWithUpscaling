@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Shared.Services.Inference;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -41,6 +42,35 @@ public class DeviceMemoryProfileTests
         profile.Models[Key] = new ModelMemoryProfile { ActivationScale = 50 };
 
         Assert.Equal(0.90, profile.ScaleFor(Model, ModelBytes));
+    }
+
+    [Fact]
+    public void ScaleFor_AcceptsTheBoundaryTheCalibratorWrites()
+    {
+        // The calibrator rejects only above 12.0, so exactly 12.0 is written when a model
+        // measures at the cap. A reader rejecting the boundary silently substituted the
+        // device-wide default for that model's own measurement — the reader's bound now
+        // matches the writer's and the tiler consumer's.
+        var profile = new DeviceMemoryProfile { ActivationScale = 0.90 };
+        profile.Models[Key] = new ModelMemoryProfile { ActivationScale = 12.0 };
+
+        Assert.Equal(12.0, profile.ScaleFor(Model, ModelBytes));
+    }
+
+    [Fact]
+    public void ResolveProfileFactors_HonorsACalibratedZeroReservation()
+    {
+        // A calibration that measured no tile-independent footprint is a legitimate answer (the
+        // model's session lives inside the activation estimate), and the calibrator writes
+        // exactly 0 for one. The consumer used to demand > 0 and silently swapped the built-in
+        // reservation in, oversizing every tile of that model for the rest of the profile's
+        // life — the same class of silent substitution as the rejected 12.0 above.
+        var profile = new DeviceMemoryProfile();
+        profile.Models[Key] = new ModelMemoryProfile { SessionReservationBytes = 0 };
+
+        (_, long reservation) = OnnxTiler.ResolveProfileFactors(profile, Model, ModelBytes);
+
+        Assert.Equal(0, reservation);
     }
 
     [Fact]

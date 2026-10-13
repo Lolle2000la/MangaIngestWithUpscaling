@@ -771,12 +771,19 @@ public class OnnxUpscaleEngine(
             else
                 res = "2048p";
 
-            AddMatch(candidates, onnxFiles, $"{scalePrefix}MangaJaNai_{res}");
-            AddMatch(candidates, onnxFiles, $"{scalePrefix}MangaJaNai_");
+            // Within each rung of the ladder below, the precision copy matching UseFp16 leads — the
+            // same ArchRank the colour branch applies. Without it the raw ordinal order runs the
+            // fp16 copy on a grayscale page (the fp16 file name sorts first) while the colour path
+            // and EngineIdentity record fp32, exactly the inconsistency the ranking exists to
+            // prevent.
+            string[] rankedFiles = onnxFiles.OrderBy(f => ArchRank(f, preferFp32)).ToArray();
+
+            AddMatch(candidates, rankedFiles, $"{scalePrefix}MangaJaNai_{res}");
+            AddMatch(candidates, rankedFiles, $"{scalePrefix}MangaJaNai_");
 
             // A grayscale page still upscales fine with an illustration model: that is a model
             // trained on colour, not a model that only accepts colour input.
-            AddMatch(candidates, onnxFiles, $"{scalePrefix}IllustrationJaNai_");
+            AddMatch(candidates, rankedFiles, $"{scalePrefix}IllustrationJaNai_");
         }
         else
         {
@@ -800,10 +807,14 @@ public class OnnxUpscaleEngine(
 
             foreach (var pref in preferredVersions)
             {
+                // Ranked by the requested precision: the arch loop below filters within this order,
+                // and the AddAll of files no preferred architecture claims appends the rest in it,
+                // so both honor UseFp16 the way the per-arch ranking does.
                 var versionCandidates = onnxFiles
                     .Where(f =>
                         Path.GetFileName(f).StartsWith(pref, StringComparison.OrdinalIgnoreCase)
                     )
+                    .OrderBy(f => ArchRank(f, preferFp32))
                     .ToList();
 
                 foreach (ModelArchitecture arch in preferredArchs)
@@ -824,17 +835,24 @@ public class OnnxUpscaleEngine(
             AddMatch(candidates, onnxFiles, colorKey);
         }
 
-        // Last resort: anything else at this scale, then anything at all. Both are ordered by
-        // name so the choice does not depend on the order the file system happens to return.
+        // Last resort: anything else at this scale, then anything at all. Both prefer the
+        // requested precision, then the file name, so the choice neither depends on the order the
+        // file system happens to return nor quietly contradicts UseFp16.
         AddAll(
             candidates,
             onnxFiles
                 .Where(f =>
                     Path.GetFileName(f).StartsWith(scalePrefix, StringComparison.OrdinalIgnoreCase)
                 )
-                .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(f => ArchRank(f, preferFp32))
+                .ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
         );
-        AddAll(candidates, onnxFiles.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase));
+        AddAll(
+            candidates,
+            onnxFiles
+                .OrderBy(f => ArchRank(f, preferFp32))
+                .ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+        );
 
         return candidates;
     }
@@ -1163,14 +1181,14 @@ public class OnnxUpscaleEngine(
                         using (sessionFactory.EnterInferenceScope())
                         {
                             InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
-                            upscaledBytes = OnnxTiler.UpscaleRgb(
+                            upscaledBytes = UpscaleViaTiler(
                                 inputBytes,
                                 width,
                                 height,
                                 scale,
                                 session,
                                 attempt,
-                                cancellationToken: cancellationToken
+                                cancellationToken
                             );
                         }
                         break;
@@ -1259,8 +1277,18 @@ public class OnnxUpscaleEngine(
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         // A cancelled page says nothing about the model, and dropping the session
-                        // would make the next page rebuild it for nothing.
-                        sessionFactory.InvalidateSession(modelPath);
+                        // would make the next page rebuild it for nothing. The same holds for this
+                        // code's own configuration faults — a TileSize the tiler rejects, a blend
+                        // region wider than a manual tile — the same types IsModelFault refuses to
+                        // condemn a model for; invalidating here would tear down a healthy cached
+                        // session (a ~300 ms rebuild) for every page until the config is fixed.
+                        // Only a failure of the model's own execution can leave the session or its
+                        // arena in a state a rebuild can change.
+                        if (IsModelFault(ex))
+                        {
+                            sessionFactory.InvalidateSession(modelPath);
+                        }
+
                         throw;
                     }
                 }
@@ -1270,6 +1298,33 @@ public class OnnxUpscaleEngine(
             cancellationToken
         );
     }
+
+    /// <summary>
+    /// The engine-to-tiler call, isolated as the one seam the memory-descent tests inject through. The
+    /// OOM regression this descent exists for lived exactly at this boundary — the tiler used to
+    /// swallow the failure and halve internally on the same session, hiding it from the engine — so
+    /// the tests throw from here rather than only from the scope acquisition, and any wrapper that
+    /// stops this call's exception from reaching the descent has to get past a test that watches
+    /// this method fail.
+    /// </summary>
+    protected internal virtual byte[] UpscaleViaTiler(
+        byte[] rgbBytes,
+        int width,
+        int height,
+        int scale,
+        InferenceSession session,
+        OnnxTiler.TileSplit split,
+        CancellationToken cancellationToken
+    ) =>
+        OnnxTiler.UpscaleRgb(
+            rgbBytes,
+            width,
+            height,
+            scale,
+            session,
+            split,
+            cancellationToken: cancellationToken
+        );
 
     /// <summary>
     /// Releases the cached session when the next page needs a padded tensor shape this model has not
@@ -1443,13 +1498,6 @@ public class OnnxUpscaleEngine(
         && ex is not ObjectDisposedException
         && !IsTransientProbeFailure(ex);
 
-    /// <summary>
-    /// True for a failure the execution provider reports for the model itself — a graph it cannot
-    /// load, an operator or shape it does not implement, an output whose geometry does not match the
-    /// requested scale. Only these become a permanent "unusable on this device" verdict; every other
-    /// failure skips the candidate for this page but leaves the model usable, so a tiler bug cannot
-    /// disable a model that works.
-    /// </summary>
     /// <summary>
     /// True for a failure the execution provider reports for the model itself — a graph it cannot
     /// load, an operator or shape it does not implement, an output whose geometry does not match the

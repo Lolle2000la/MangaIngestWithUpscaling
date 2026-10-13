@@ -213,6 +213,36 @@ public class OnnxUpscaleEngineTests : IDisposable
         );
     }
 
+    [Theory]
+    [InlineData("4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx")]
+    [InlineData("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx")]
+    public void SelectModelCandidates_GrayscaleOrdersTheFp32CopyFirstWhenFp16IsOff(string fp16Name)
+    {
+        // The grayscale branch of the ladder used to add its matches in raw ordinal order, where
+        // the fp16 file name sorts first, so a grayscale page ran the fp16 copy while the colour
+        // path and EngineIdentity recorded fp32 — the exact bypass the colour branch's ranking
+        // exists to prevent. Every rung of the grayscale ladder orders by the requested precision,
+        // and the IllustrationJaNai row covers the grayscale fallback rung as well.
+        string fp32Name = ModelFileNames.Resolve(fp16Name, ModelFileNames.Fp32Suffix);
+        File.WriteAllText(Path.Combine(_tempDir, fp16Name), "dummy");
+        File.WriteAllText(Path.Combine(_tempDir, fp32Name), "dummy");
+
+        IReadOnlyList<string> candidates = OnnxUpscaleEngine.SelectModelCandidates(
+            _tempDir,
+            isGrayscale: true,
+            height: 1600,
+            scale: 4,
+            architecturePreference: null,
+            useFp16: false
+        );
+
+        Assert.True(
+            candidates.ToList().IndexOf(Path.Combine(_tempDir, fp32Name))
+                < candidates.ToList().IndexOf(Path.Combine(_tempDir, fp16Name)),
+            "the fp32 copy should be preferred when fp16 is switched off, on grayscale pages too"
+        );
+    }
+
     [Fact]
     public void SelectModel_ReturnsTheExpectedTopPreferenceForEachImageKind()
     {

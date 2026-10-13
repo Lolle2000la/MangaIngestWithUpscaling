@@ -265,6 +265,18 @@ public sealed class TileBlender
         );
     }
 
+    /// <summary>
+    /// Memoized blend weights. The weights are a pure function of the size, the size is the same for
+    /// every interior tile of a page (the overlap is constant), and <see cref="AddTile"/> runs once
+    /// per tile, so without this every tile of a page allocated the same array again. The cap bounds
+    /// a pathological stream of distinct page geometries; clearing costs recomputation, never
+    /// correctness. The returned arrays are shared between callers and must not be mutated.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        int,
+        float[]
+    > BlendWeightCache = new();
+
     public static float[] GetBlendWeights(int blendSize)
     {
         if (blendSize <= 0)
@@ -272,20 +284,31 @@ public sealed class TileBlender
             return Array.Empty<float>();
         }
 
-        if (blendSize == 1)
+        if (BlendWeightCache.Count >= 256)
         {
-            return [0.5f];
+            BlendWeightCache.Clear();
         }
 
-        float[] blend = new float[blendSize];
-        float denom = blendSize - 1;
-        for (int i = 0; i < blendSize; i++)
-        {
-            float t = i / denom;
-            blend[i] = HalfSinBlend(t);
-        }
+        return BlendWeightCache.GetOrAdd(
+            blendSize,
+            static size =>
+            {
+                if (size == 1)
+                {
+                    return [0.5f];
+                }
 
-        return blend;
+                float[] blend = new float[size];
+                float denom = size - 1;
+                for (int i = 0; i < size; i++)
+                {
+                    float t = i / denom;
+                    blend[i] = HalfSinBlend(t);
+                }
+
+                return blend;
+            }
+        );
     }
 
     public static float HalfSinBlend(float t)
@@ -861,7 +884,7 @@ public static class OnnxTiler
     /// the fp32 transformer enough to fill the card and spill into GTT.
     /// </para>
     /// </summary>
-    private static (double ActivationScale, long SessionReservationBytes) ResolveProfileFactors(
+    internal static (double ActivationScale, long SessionReservationBytes) ResolveProfileFactors(
         DeviceMemoryProfile? profile,
         string modelNameOrPath,
         long modelSizeBytes
@@ -885,7 +908,11 @@ public static class OnnxTiler
         }
 
         long measuredReservation = profile.ReservationFor(modelNameOrPath, modelSizeBytes);
-        if (measuredReservation is > 0 and < 8L * 1024 * 1024 * 1024)
+        // 0 included: a calibration that measured no tile-independent footprint (the model's
+        // session lives inside the activation estimate) is a legitimate answer, and the
+        // calibrator writes exactly 0 for one. Rejecting it silently swapped the 384 MiB
+        // default in, oversizing every tile of that model for the rest of the profile's life.
+        if (measuredReservation is >= 0 and < 8L * 1024 * 1024 * 1024)
         {
             sessionReservation = measuredReservation;
         }
@@ -1748,150 +1775,176 @@ public static class OnnxTiler
         Task<byte[]>? prevDecodeTask = null;
         TileJob prevJob = default;
 
-        for (int i = 0; i < tileJobs.Count; i++)
+        // The whole pipeline — the loop and the final blend below — runs under one watch. An
+        // exception anywhere in it leaves the previous tile's decode running with its hands on
+        // that Run's native output collection, and the caller reacts to the exception immediately
+        // (the engine's OOM path releases the cached session synchronously). Draining the decode
+        // before rethrowing is what keeps the session alive until the decode has finished
+        // reading it.
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var currentJob = tileJobs[i];
-
-            var (inVal, effPaddedW, effPaddedH) = nextInputTask.GetAwaiter().GetResult();
-
-            if (i + 1 < tileJobs.Count)
+            for (int i = 0; i < tileJobs.Count; i++)
             {
-                var nextJob = tileJobs[i + 1];
-                nextInputTask = Task.Run(
-                    () =>
-                    {
-                        byte[] nextCrop = ExtractCrop(
-                            rgbBytes,
-                            width,
-                            nextJob.PaddedX,
-                            nextJob.PaddedY,
-                            nextJob.PaddedW,
-                            nextJob.PaddedH
-                        );
-                        return PrepareInputTensor(
-                            nextCrop,
-                            nextJob.PaddedW,
-                            nextJob.PaddedH,
-                            uniformTargetW,
-                            uniformTargetH,
-                            elementType,
-                            cancellationToken
-                        );
-                    },
-                    cancellationToken
-                );
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                var currentJob = tileJobs[i];
 
-            IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([inVal]);
+                var (inVal, effPaddedW, effPaddedH) = nextInputTask.GetAwaiter().GetResult();
 
-            // Until the decode task below takes it, the pipeline is the owner of `outputs` and has
-            // to release it on every path out. Blending the previous tile can throw
-            // NonFiniteModelOutputException — the exact bad-model case this pipeline recovers from —
-            // and building the row blender can throw OutOfMemoryException; without this scope the
-            // native output tensor of the current tile is leaked for the rest of the candidate.
-            try
-            {
-                if (prevDecodeTask != null)
+                if (i + 1 < tileJobs.Count)
                 {
-                    byte[] prevBytes = prevDecodeTask.GetAwaiter().GetResult();
-                    var prevOverlap = new TileOverlap(
-                        prevJob.PadLeft * scale,
-                        prevJob.PadRight * scale
-                    );
-                    currentRowBlender!.AddTile(
-                        prevBytes,
-                        prevJob.PaddedW * scale,
-                        prevJob.PaddedH * scale,
-                        prevOverlap
-                    );
-
-                    if (prevJob.IsLastInRow)
-                    {
-                        imageBlender.AddTile(
-                            currentRowBlender.GetResult(),
-                            outWidth,
-                            prevJob.PaddedH * scale,
-                            currentRowOverlap
-                        );
-                        currentRowBlender = null;
-                    }
-                }
-
-                if (currentRowBlender == null)
-                {
-                    currentRowBlender = new TileBlender(
-                        outWidth,
-                        currentJob.PaddedH * scale,
-                        3,
-                        BlendDirection.Horizontal
-                    );
-                    currentRowOverlap = new TileOverlap(
-                        currentJob.PadTop * scale,
-                        currentJob.PadBottom * scale
-                    );
-                }
-
-                prevJob = currentJob;
-                prevDecodeTask = Task.Run(
-                    () =>
-                        DecodeOutputTensor(
-                            outputs,
-                            currentJob.PaddedW,
-                            currentJob.PaddedH,
-                            effPaddedW,
-                            effPaddedH,
-                            scale,
-                            cancellationToken
-                        ),
-                    cancellationToken
-                );
-
-                // Task.Run returns an already-cancelled task without running the delegate when the
-                // token is signalled first, so ownership of `outputs` never reaches
-                // DecodeOutputTensor. Release it in that case; when the delegate does run it
-                // disposes the collection itself (see DecodeOutputTensor).
-                prevDecodeTask.ContinueWith(
-                    completed =>
-                    {
-                        if (completed.IsCanceled)
+                    var nextJob = tileJobs[i + 1];
+                    nextInputTask = Task.Run(
+                        () =>
                         {
-                            outputs.Dispose();
-                        }
-                    },
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default
+                            byte[] nextCrop = ExtractCrop(
+                                rgbBytes,
+                                width,
+                                nextJob.PaddedX,
+                                nextJob.PaddedY,
+                                nextJob.PaddedW,
+                                nextJob.PaddedH
+                            );
+                            return PrepareInputTensor(
+                                nextCrop,
+                                nextJob.PaddedW,
+                                nextJob.PaddedH,
+                                uniformTargetW,
+                                uniformTargetH,
+                                elementType,
+                                cancellationToken
+                            );
+                        },
+                        cancellationToken
+                    );
+                }
+
+                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = RunOnSession(
+                    session,
+                    inVal
                 );
+
+                // Until the decode task below takes it, the pipeline is the owner of `outputs` and has
+                // to release it on every path out. Blending the previous tile can throw
+                // NonFiniteModelOutputException — the exact bad-model case this pipeline recovers from —
+                // and building the row blender can throw OutOfMemoryException; without this scope the
+                // native output tensor of the current tile is leaked for the rest of the candidate.
+                try
+                {
+                    if (prevDecodeTask != null)
+                    {
+                        byte[] prevBytes = prevDecodeTask.GetAwaiter().GetResult();
+                        var prevOverlap = new TileOverlap(
+                            prevJob.PadLeft * scale,
+                            prevJob.PadRight * scale
+                        );
+                        currentRowBlender!.AddTile(
+                            prevBytes,
+                            prevJob.PaddedW * scale,
+                            prevJob.PaddedH * scale,
+                            prevOverlap
+                        );
+
+                        if (prevJob.IsLastInRow)
+                        {
+                            imageBlender.AddTile(
+                                currentRowBlender.GetResult(),
+                                outWidth,
+                                prevJob.PaddedH * scale,
+                                currentRowOverlap
+                            );
+                            currentRowBlender = null;
+                        }
+                    }
+
+                    if (currentRowBlender == null)
+                    {
+                        currentRowBlender = new TileBlender(
+                            outWidth,
+                            currentJob.PaddedH * scale,
+                            3,
+                            BlendDirection.Horizontal
+                        );
+                        currentRowOverlap = new TileOverlap(
+                            currentJob.PadTop * scale,
+                            currentJob.PadBottom * scale
+                        );
+                    }
+
+                    prevJob = currentJob;
+                    prevDecodeTask = Task.Run(
+                        () =>
+                            DecodeOutputTensor(
+                                outputs,
+                                currentJob.PaddedW,
+                                currentJob.PaddedH,
+                                effPaddedW,
+                                effPaddedH,
+                                scale,
+                                cancellationToken
+                            ),
+                        cancellationToken
+                    );
+
+                    // Task.Run returns an already-cancelled task without running the delegate when the
+                    // token is signalled first, so ownership of `outputs` never reaches
+                    // DecodeOutputTensor. Release it in that case; when the delegate does run it
+                    // disposes the collection itself (see DecodeOutputTensor).
+                    prevDecodeTask.ContinueWith(
+                        completed =>
+                        {
+                            if (completed.IsCanceled)
+                            {
+                                outputs.Dispose();
+                            }
+                        },
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default
+                    );
+                }
+                catch
+                {
+                    outputs.Dispose();
+                    ObserveAbandonedInputTask(nextInputTask);
+                    throw;
+                }
             }
-            catch
+
+            if (prevDecodeTask != null)
             {
-                outputs.Dispose();
-                ObserveAbandonedInputTask(nextInputTask);
-                throw;
+                byte[] lastBytes = prevDecodeTask.GetAwaiter().GetResult();
+                var lastOverlap = new TileOverlap(
+                    prevJob.PadLeft * scale,
+                    prevJob.PadRight * scale
+                );
+                currentRowBlender!.AddTile(
+                    lastBytes,
+                    prevJob.PaddedW * scale,
+                    prevJob.PaddedH * scale,
+                    lastOverlap
+                );
+
+                if (prevJob.IsLastInRow)
+                {
+                    imageBlender.AddTile(
+                        currentRowBlender.GetResult(),
+                        outWidth,
+                        prevJob.PaddedH * scale,
+                        currentRowOverlap
+                    );
+                }
             }
         }
-
-        if (prevDecodeTask != null)
+        catch
         {
-            byte[] lastBytes = prevDecodeTask.GetAwaiter().GetResult();
-            var lastOverlap = new TileOverlap(prevJob.PadLeft * scale, prevJob.PadRight * scale);
-            currentRowBlender!.AddTile(
-                lastBytes,
-                prevJob.PaddedW * scale,
-                prevJob.PaddedH * scale,
-                lastOverlap
-            );
-
-            if (prevJob.IsLastInRow)
-            {
-                imageBlender.AddTile(
-                    currentRowBlender.GetResult(),
-                    outWidth,
-                    prevJob.PaddedH * scale,
-                    currentRowOverlap
-                );
-            }
+            // The primary exception is what propagates; what runs here is only what must not be
+            // left running behind it. The input prefetch holds no native state, so observing it
+            // is enough (see ObserveAbandonedInputTask). The previous tile's decode does hold
+            // native state — the previous Run's output collection, which the session owns — so
+            // it is waited out rather than only observed.
+            ObserveAbandonedInputTask(nextInputTask);
+            DrainAbandonedDecodeTask(prevDecodeTask);
+            throw;
         }
 
         return imageBlender.GetResult();
@@ -1919,6 +1972,33 @@ public static class OnnxTiler
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default
         );
+    }
+
+    /// <summary>
+    /// Waits out the still-running decode of the previous tile when the pipeline unwinds early. Its
+    /// bytes are not blended — the primary exception is what propagates — but it must be waited for
+    /// before that exception reaches the caller: the decode reads the previous Run's native output
+    /// collection, and the engine reacts to an OOM from this pipeline by releasing the cached session
+    /// synchronously, which would otherwise free that collection while the decode was still reading
+    /// it. The decode is bounded managed work (a tensor-to-byte copy), so waiting is safe here. Its
+    /// own fault is observed and dropped, because the primary exception is the one that explains the
+    /// unwind; without the drop it would surface later as a task-scheduler unobserved exception.
+    /// </summary>
+    private static void DrainAbandonedDecodeTask(Task<byte[]>? task)
+    {
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = task.GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Observed and dropped: the primary exception is what the caller needs to see.
+        }
     }
 
     private readonly record struct TileJob(
@@ -2425,7 +2505,10 @@ public static class OnnxTiler
             cancellationToken
         );
 
-        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([inVal]);
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = RunOnSession(
+            session,
+            inVal
+        );
 
         return DecodeOutputTensor(
             outputs,
@@ -2437,4 +2520,23 @@ public static class OnnxTiler
             cancellationToken
         );
     }
+
+    /// <summary>
+    /// The tiler's only <c>session.Run</c>, as a seam: tests make a run fail here to pin that the
+    /// tiler hands the failure out to the engine instead of recovering internally. That is the
+    /// contract the engine's memory descent is built on — it owns the recovery, because halving
+    /// alone does not help while the session whose arena failed the allocation is still resident —
+    /// and the internal halve loop this migration removed swallowed exactly this failure, hiding
+    /// it from the engine. Mutated by tests only; production always runs the real call.
+    /// </summary>
+    internal static Func<
+        InferenceSession,
+        NamedOnnxValue,
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
+    > RunImpl = static (session, input) => session.Run([input]);
+
+    private static IDisposableReadOnlyCollection<DisposableNamedOnnxValue> RunOnSession(
+        InferenceSession session,
+        NamedOnnxValue input
+    ) => RunImpl(session, input);
 }

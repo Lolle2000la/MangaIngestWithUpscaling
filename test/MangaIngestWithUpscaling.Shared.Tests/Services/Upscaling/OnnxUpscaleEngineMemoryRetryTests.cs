@@ -174,6 +174,156 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task MemoryPressureAtTheTilerCall_DescendsAndRecoversRatherThanLosingThePage()
+    {
+        // The other retry tests inject at the scope acquisition, which sits *before* the tiler call.
+        // This one injects at the engine-to-tiler call itself, through the seam the engine exposes
+        // for it: that is the boundary the removed tiler-internal halve loop used to hide the
+        // failure behind — an OOM from the tiler call, not from the scope, still has to reach the
+        // descent, flush the session whose arena produced it, halve the grid and recover on the
+        // refetched session. A wrapper that stops this call's exception from reaching the descent
+        // makes this fail on the missing recovery.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = new MemoryPressureSessionFactory(modelPath, scopeFailures: false);
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new TilerFaultEngine(
+            new OutOfMemoryException("simulated pressure at the tiler call"),
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        )
+        {
+            FailuresLeft = 1,
+        };
+
+        string outputPath = Path.Combine(_tempDir, "upscaled_seam.webp");
+        await engine.UpscaleFileAsync(
+            inputPath,
+            outputPath,
+            scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            TestContext.Current.CancellationToken
+        );
+
+        // It recovered rather than losing the page, and it recovered through the descent: the one
+        // thrown call is followed by the flush that frees the OOM-causing session, a refetch and a
+        // halved attempt — the same pins the scope-injected test asserts, reached from the seam.
+        Assert.True(File.Exists(outputPath));
+        using var outImg = Image.NewFromFile(outputPath);
+        Assert.Equal(width * scale, outImg.Width);
+        Assert.Equal(height * scale, outImg.Height);
+        Assert.Equal(1, engine.Thrown);
+        Assert.Equal(2, factory.ReleaseCachedSessionsCalls);
+        Assert.True(
+            factory.SessionsRequestedAfterInvalidation > 0,
+            "the retry did not fetch a new session after the flush"
+        );
+        Assert.Equal(4, factory.InferenceScopeCalls);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ConfigFaultAtTheTilerCall_KeepsTheHealthySessionCached()
+    {
+        // A fault that is this code's own configuration — the TileBlender's argument error, a
+        // manual TileSize the blend region rejects — is not a model fault, by IsModelFault's own
+        // contract, so it must not tear down a healthy cached session either: that costs a ~300 ms
+        // rebuild on every page until the config is fixed, for a session the config error never
+        // touched. The fault is injected at the tiler-call seam and has to leave the session
+        // untouched on its way out.
+        const int width = 256;
+        const int height = 288;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(width, height);
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+        factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        var engine = new TilerFaultEngine(
+            new InvalidOperationException("blend region wider than the tile"),
+            factory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        )
+        {
+            FailuresLeft = 1,
+        };
+
+        string outputPath = Path.Combine(_tempDir, "config_fault.webp");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            engine.UpscaleFileAsync(
+                inputPath,
+                outputPath,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.False(File.Exists(outputPath), "a failed page must not be published");
+        factory.Received(0).InvalidateSession(Arg.Any<string>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void UpscaleRgb_PropagatesARunFailureInsteadOfRecoveringInternally()
+    {
+        // The engine owns the recovery from a failed Run (halving plus releasing the session whose
+        // arena failed the allocation), so the tiler has to hand the failure out. The internal
+        // halve loop this migration removed swallowed exactly this failure, and a test that
+        // injects at the engine's scope acquisition cannot see a reintroduction of it — this
+        // injects at the tiler's own Run seam, on the first tile of a multi-tile page, which also
+        // exercises the pipeline's unwind path (a background prefetch to observe, no decode task
+        // yet to drain).
+        const int width = 512;
+        const int height = 512;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        using var session = new InferenceSession(modelPath);
+        byte[] rgb = new byte[width * height * 3];
+        OnnxTiler.TileSplit split = OnnxTiler.TileSplit.For(width, height, 128);
+
+        var original = OnnxTiler.RunImpl;
+        OnnxTiler.RunImpl = (_, _) => throw new OutOfMemoryException("run seam");
+        try
+        {
+            Assert.Throws<OutOfMemoryException>(() =>
+                OnnxTiler.UpscaleRgb(
+                    rgb,
+                    width,
+                    height,
+                    scale,
+                    session,
+                    split,
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+            );
+        }
+        finally
+        {
+            OnnxTiler.RunImpl = original;
+        }
+    }
+
     /// <summary>
     /// Captures the engine's warnings so a test can assert what it decided. Only the formatted message
     /// is kept; the tests read the floor value out of it.
@@ -237,8 +387,11 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
     /// probe's scoping changes, this fails loudly rather than testing nothing.
     /// </para>
     /// </summary>
-    private sealed class MemoryPressureSessionFactory(string modelPath, bool alwaysFails = false)
-        : IOnnxSessionFactory
+    private sealed class MemoryPressureSessionFactory(
+        string modelPath,
+        bool alwaysFails = false,
+        bool scopeFailures = true
+    ) : IOnnxSessionFactory
     {
         private readonly Lock _lock = new();
         private InferenceSession? _session;
@@ -340,7 +493,9 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
             // place the retry does not cover. alwaysFails keeps failing from there, which is what drives
             // the descent down to the floor.
             int call = Interlocked.Increment(ref _scopeCalls);
-            if (call == 3 || (alwaysFails && call > 3))
+            // scopeFailures: false leaves the scopes clean, for the tests that inject the failure
+            // somewhere else (at the tiler-call seam) and still need every scope to succeed.
+            if (scopeFailures && (call == 3 || (alwaysFails && call > 3)))
             {
                 throw new OutOfMemoryException("simulated device memory pressure");
             }
@@ -353,6 +508,52 @@ public class OnnxUpscaleEngineMemoryRetryTests : IDisposable
         private sealed class NoOpScope : IDisposable
         {
             public void Dispose() { }
+        }
+    }
+
+    /// <summary>
+    /// An engine whose tiler call fails the first <see cref="FailuresLeft"/> times, then runs the
+    /// real one — the injection point for everything the tests want to throw from exactly the
+    /// engine-to-tiler boundary (see <see cref="OnnxUpscaleEngine.UpscaleViaTiler"/>).
+    /// </summary>
+    private sealed class TilerFaultEngine(
+        Exception fault,
+        IOnnxSessionFactory sessionFactory,
+        IOptions<UpscalerConfig> config,
+        IDeviceMemoryCalibrator calibrator,
+        ILogger<OnnxUpscaleEngine> logger
+    ) : OnnxUpscaleEngine(sessionFactory, config, calibrator, logger)
+    {
+        public int FailuresLeft { get; set; }
+
+        public int Thrown { get; private set; }
+
+        protected internal override byte[] UpscaleViaTiler(
+            byte[] rgbBytes,
+            int width,
+            int height,
+            int scale,
+            InferenceSession session,
+            OnnxTiler.TileSplit split,
+            CancellationToken cancellationToken
+        )
+        {
+            if (FailuresLeft > 0)
+            {
+                FailuresLeft--;
+                Thrown++;
+                throw fault;
+            }
+
+            return base.UpscaleViaTiler(
+                rgbBytes,
+                width,
+                height,
+                scale,
+                session,
+                split,
+                cancellationToken
+            );
         }
     }
 }
