@@ -51,6 +51,19 @@ public sealed class DeviceMemoryProfile
     [JsonPropertyName("sessionReservationBytes")]
     public long SessionReservationBytes { get; set; }
 
+    /// <summary>
+    /// Whether the device-wide factors above were actually measured. Profiles are also saved for the
+    /// per-model measurements alone — that is the only production path — and those leave the
+    /// device-wide fields at their CLR defaults (0 and 1.0), which are indistinguishable from a
+    /// measurement that came out at exactly those values. Without this flag a saved profile supplied
+    /// 0 as "the device-wide session reservation" for every model without an entry of its own,
+    /// silently replacing the built-in and under-stating the footprint the planner budgets for.
+    /// Profiles written before the flag read as unmeasured, which is what their device-wide halves
+    /// are.
+    /// </summary>
+    [JsonPropertyName("deviceWideMeasured")]
+    public bool DeviceWideMeasured { get; set; }
+
     [JsonPropertyName("calibratedAtUtc")]
     public DateTimeOffset CalibratedAtUtc { get; set; }
 
@@ -71,15 +84,28 @@ public sealed class DeviceMemoryProfile
     /// the fp32 transformer by ~25% and over-estimates the conv nets, which is what made a chapter
     /// spill into GTT. Entries are added lazily, one per model actually used.
     /// </summary>
+    private Dictionary<string, ModelMemoryProfile> _models = new(StringComparer.Ordinal);
+
     [JsonPropertyName("models")]
-    public Dictionary<string, ModelMemoryProfile> Models { get; set; } =
-        new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, ModelMemoryProfile> Models
+    {
+        get => _models;
+        // System.Text.Json materializes a fresh dictionary with the default (ordinal) comparer and
+        // assigns it on read, so the comparer the writer chose was lost across a save/load — a key
+        // differing in case then missed its own measurement, and (on a case-sensitive filesystem)
+        // two distinct model files could share one. Re-wrap on the way in so the lookup rule is the
+        // same before and after a round trip. Ordinal rather than OrdinalIgnoreCase: the key is
+        // generated from the same path string it is looked up with, and the engine's model maps are
+        // ordinal so that distinct files stay distinct.
+        set => _models = new(value ?? [], StringComparer.Ordinal);
+    }
 
     /// <summary>
     /// The activation scale to plan <paramref name="modelNameOrPath"/> with: its own measurement if
-    /// this device has one, otherwise the device-wide default from the small calibration model.
+    /// this device has one, the device-wide default if that was measured, otherwise null — "no
+    /// measurement", so the caller keeps its built-in rather than a skeleton's 1.0.
     /// </summary>
-    public double ScaleFor(string modelNameOrPath, long modelSizeBytes)
+    public double? ScaleFor(string modelNameOrPath, long modelSizeBytes)
     {
         // The same closed bound the calibrator writes and the tiler's consumer accepts: the
         // calibrator stores exactly 12.0 when a model measures at the cap, and a reader rejecting
@@ -93,15 +119,16 @@ public sealed class DeviceMemoryProfile
             return m.ActivationScale;
         }
 
-        return ActivationScale;
+        return DeviceWideMeasured ? ActivationScale : null;
     }
 
     /// <summary>
     /// The tile-independent session footprint to plan <paramref name="modelNameOrPath"/> with: its own
-    /// measurement when this device has one, otherwise the device-wide default. The per-model value
-    /// excludes the weights (the planner adds those itself).
+    /// measurement when this device has one, the device-wide default if that was measured, otherwise
+    /// null — "no measurement", so the caller keeps its built-in. The per-model value excludes the
+    /// weights (the planner adds those itself).
     /// </summary>
-    public long ReservationFor(string modelNameOrPath, long modelSizeBytes)
+    public long? ReservationFor(string modelNameOrPath, long modelSizeBytes)
     {
         if (
             Models.TryGetValue(ModelKey(modelNameOrPath, modelSizeBytes), out ModelMemoryProfile? m)
@@ -111,7 +138,7 @@ public sealed class DeviceMemoryProfile
             return m.SessionReservationBytes;
         }
 
-        return SessionReservationBytes;
+        return DeviceWideMeasured ? SessionReservationBytes : null;
     }
 
     /// <summary>

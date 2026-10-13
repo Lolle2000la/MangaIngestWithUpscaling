@@ -19,8 +19,10 @@ public interface IDeviceMemoryCalibrator
     /// <summary>
     /// Returns the calibration for the current device, running the benchmark once with a small
     /// representative model if no valid profile exists yet. Never throws: a failed benchmark falls
-    /// back to the built-in coefficients. This is the device-wide default; prefer
-    /// <see cref="GetOrCalibrateForModelAsync"/> where the model is known.
+    /// back to the built-in coefficients (a cancelled <paramref name="cancellationToken"/> is not a
+    /// benchmark failure and surfaces as <see cref="OperationCanceledException"/> instead). This is
+    /// the device-wide default; prefer <see cref="GetOrCalibrateForModelAsync"/> where the model is
+    /// known.
     /// </summary>
     Task<DeviceMemoryProfile?> GetOrCalibrateAsync(
         int deviceId,
@@ -31,7 +33,9 @@ public interface IDeviceMemoryCalibrator
     /// <summary>
     /// Returns the calibration for the current device with a measurement for
     /// <paramref name="modelPath"/> filled in, running that model's benchmark once if it has none.
-    /// Never throws: a failed benchmark leaves the device-wide default (or the built-ins) in place.
+    /// Never throws: a failed benchmark leaves the device-wide default (or the built-ins) in place
+    /// (a cancelled <paramref name="cancellationToken"/> surfaces as
+    /// <see cref="OperationCanceledException"/> instead).
     /// <para>
     /// The per-pixel cost belongs to the model and the execution provider together, so this is the
     /// accurate entry point. Measured on an RX 9070 XT / WebGPU EP: fp16 ESRGAN 0.90x its analytic
@@ -195,8 +199,15 @@ public sealed class DeviceMemoryCalibrator(
             try
             {
                 measured = modelPath is null
-                    ? MeasureDeviceDefault(deviceId, modelsDirectory, profile)
-                    : MeasureModel(deviceId, modelsDirectory, profile, modelPath, scale);
+                    ? MeasureDeviceDefault(deviceId, modelsDirectory, profile, cancellationToken)
+                    : MeasureModel(
+                        deviceId,
+                        modelsDirectory,
+                        profile,
+                        modelPath,
+                        scale,
+                        cancellationToken
+                    );
 
                 // Once the forced benchmark has actually run, the forced calibration is spent:
                 // whether it produced a profile or not, every later call takes the normal path.
@@ -247,13 +258,20 @@ public sealed class DeviceMemoryCalibrator(
         };
 
     /// <summary>
-    /// Measures the device-wide default with a small representative model. Kept as the fallback for
-    /// a model whose own benchmark fails.
+    /// Measures the device-wide default with a small representative model. Reachable only from
+    /// <see cref="GetOrCalibrateAsync"/> (the device-wide entry point); the production path —
+    /// <see cref="GetOrCalibrateForModelAsync"/>, which the engine uses — measures the named model
+    /// alone and never calls this, so a profile written in production carries only per-model entries
+    /// and leaves the device-wide fields at their CLR defaults. That is why
+    /// <see cref="DeviceMemoryProfile.ScaleFor"/> / <see cref="DeviceMemoryProfile.ReservationFor"/>
+    /// require <see cref="DeviceMemoryProfile.DeviceWideMeasured"/> before trusting the device-wide
+    /// halves.
     /// </summary>
     private bool MeasureDeviceDefault(
         int deviceId,
         string modelsDirectory,
-        DeviceMemoryProfile profile
+        DeviceMemoryProfile profile,
+        CancellationToken cancellationToken
     )
     {
         string? modelPath = SelectCalibrationModel(modelsDirectory, ConfiguredBudget(deviceId));
@@ -268,7 +286,13 @@ public sealed class DeviceMemoryCalibrator(
         int scale = OnnxUpscaleEngine.InferScaleFromModelName(Path.GetFileName(modelPath));
         long budget = ConfiguredBudget(deviceId);
 
-        ModelMemoryProfile? measured = RunBenchmark(deviceId, modelPath, scale, budget);
+        ModelMemoryProfile? measured = RunBenchmark(
+            deviceId,
+            modelPath,
+            scale,
+            budget,
+            cancellationToken
+        );
         if (measured is null)
         {
             return false;
@@ -277,6 +301,7 @@ public sealed class DeviceMemoryCalibrator(
         profile.Provider = ToProvider(sessionFactory.GetEffectiveBackend());
         profile.ActivationScale = measured.ActivationScale;
         profile.SessionReservationBytes = measured.SessionReservationBytes;
+        profile.DeviceWideMeasured = true;
         profile.CalibratedAtUtc = measured.CalibratedAtUtc;
         profile.CalibratedWithModel = Path.GetFileName(modelPath);
         profile.MeasuredTiles = measured.MeasuredTiles;
@@ -304,11 +329,18 @@ public sealed class DeviceMemoryCalibrator(
         string modelsDirectory,
         DeviceMemoryProfile profile,
         string modelPath,
-        int scale
+        int scale,
+        CancellationToken cancellationToken
     )
     {
         long budget = ConfiguredBudget(deviceId);
-        ModelMemoryProfile? measured = RunBenchmark(deviceId, modelPath, scale, budget);
+        ModelMemoryProfile? measured = RunBenchmark(
+            deviceId,
+            modelPath,
+            scale,
+            budget,
+            cancellationToken
+        );
         if (measured is null)
         {
             return false;
@@ -389,9 +421,20 @@ public sealed class DeviceMemoryCalibrator(
     /// Fits <c>peak(n) = reservation + scale · analytic · n²</c> for one model from two tile sizes,
     /// or null when the measurement is unusable.
     /// </summary>
-    private ModelMemoryProfile? RunBenchmark(int deviceId, string modelPath, int scale, long budget)
+    private ModelMemoryProfile? RunBenchmark(
+        int deviceId,
+        string modelPath,
+        int scale,
+        long budget,
+        CancellationToken cancellationToken
+    )
     {
-        // Never run the benchmark concurrently with a real upscale: both would need the device.
+        // The gate is static, so it serialises benchmarks against each other across the whole process:
+        // a device-wide measurement and a per-model one, or two calibrators in one process, cannot
+        // interleave their tiles. It does NOT exclude a concurrent real upscale — the engine never
+        // takes this lock. What keeps such an upscale from evicting or invalidating the session
+        // mid-measurement is the inference scope MeasurePoint holds and the session factory's scope
+        // guarantees, not the gate.
         lock (BenchmarkGate)
         {
             long fileBytes = FileLength(modelPath);
@@ -422,7 +465,12 @@ public sealed class DeviceMemoryCalibrator(
                 return null;
             }
 
+            // The caller's cancellation is honoured at the measure-point boundaries: a cancelled task
+            // must not pay for two full benchmark inferences. A native Run already under way cannot be
+            // cancelled, so the token is checked before each point rather than during one.
+            cancellationToken.ThrowIfCancellationRequested();
             long growthSmall = MeasurePoint(deviceId, modelPath, small, scale);
+            cancellationToken.ThrowIfCancellationRequested();
             long growthLarge = MeasurePoint(deviceId, modelPath, large, scale);
 
             double analyticBytesPerPixel = analytic.BytesPerPixel(scale, isFp16);

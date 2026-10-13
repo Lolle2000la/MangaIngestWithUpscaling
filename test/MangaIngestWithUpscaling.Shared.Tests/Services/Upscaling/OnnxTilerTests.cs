@@ -193,6 +193,101 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void TileBlender_Horizontal_DifferentOverlapContent_BlendsWithTheHalfSinWeights()
+    {
+        // The seamless-reconstruction tests feed the same crop across the seam, so every weight curve
+        // — a constant 0.5 included — reproduces the source and none of them is pinned. Here the left
+        // tile is 40 and the right 200 in the overlap, so the blend is a direct read-out of the
+        // half-sine curve at every column: it is computed from the documented formula here rather than
+        // by calling the curve under test, so a linear ramp or a flat 0.5 fails the exact comparison.
+        const int width = 100;
+        const int height = 4;
+        const byte left = 40;
+        const byte right = 200;
+
+        // tile1 covers [0, 66) with overlap (0, 16); tile2 covers [34, 100) with overlap (16, 0), so
+        // columns [34, 66) blend tile1's already-written bytes with tile2's first 32 columns.
+        var blender = new TileBlender(width, height, 3, BlendDirection.Horizontal);
+        blender.AddTile(FillTile(66, height, left), 66, height, new TileOverlap(0, 16));
+        blender.AddTile(FillTile(66, height, right), 66, height, new TileOverlap(16, 0));
+
+        byte[] result = blender.GetResult();
+        float[] weights = IndependentHalfSinWeights(32);
+        for (int x = 0; x < weights.Length; x++)
+        {
+            byte expected = BlendByte(left, right, weights[x]);
+            for (int c = 0; c < 3; c++)
+            {
+                Assert.Equal(expected, result[(((0 * width) + 34 + x) * 3) + c]);
+            }
+        }
+
+        // Column 34 + 8 is where the curves visibly part: the half-sine is ~0 (40), while a linear
+        // ramp (~81) and a constant 0.5 (~120) are both far off. Pinned explicitly so the exact check
+        // above documents which alternatives it rejects.
+        const int probe = 8;
+        Assert.Equal(40, result[(34 + probe) * 3]);
+        Assert.NotEqual(BlendByte(left, right, probe / 31f), result[(34 + probe) * 3]);
+        Assert.NotEqual(BlendByte(left, right, 0.5f), result[(34 + probe) * 3]);
+    }
+
+    [Fact]
+    public void TileBlender_Vertical_DifferentOverlapContent_BlendsWithTheHalfSinWeights()
+    {
+        // The vertical arm of the same check: overlapping rows that differ by a constant make the
+        // blend an exact read-out of the weight curve, which identical crops cannot.
+        const int width = 4;
+        const int height = 100;
+        const byte top = 40;
+        const byte bottom = 200;
+
+        var blender = new TileBlender(width, height, 3, BlendDirection.Vertical);
+        blender.AddTile(FillTile(width, 66, top), width, 66, new TileOverlap(0, 16));
+        blender.AddTile(FillTile(width, 66, bottom), width, 66, new TileOverlap(16, 0));
+
+        byte[] result = blender.GetResult();
+        float[] weights = IndependentHalfSinWeights(32);
+        int rowBytes = width * 3;
+        for (int y = 0; y < weights.Length; y++)
+        {
+            byte expected = BlendByte(top, bottom, weights[y]);
+            for (int b = 0; b < rowBytes; b++)
+            {
+                Assert.Equal(expected, result[((34 + y) * rowBytes) + b]);
+            }
+        }
+    }
+
+    private static byte[] FillTile(int width, int height, byte value)
+    {
+        var tile = new byte[width * height * 3];
+        Array.Fill(tile, value);
+        return tile;
+    }
+
+    private static byte BlendByte(byte first, byte second, float weight) =>
+        (byte)Math.Clamp((int)((first * (1f - weight)) + (second * weight) + 0.5f), 0, 255);
+
+    /// <summary>
+    /// The documented half-sine weight curve, recomputed here so the expectation does not move with the
+    /// implementation: swapping the curve for a linear ramp or a constant 0.5 leaves this fixed, and
+    /// the exact assertions above fail.
+    /// </summary>
+    private static float[] IndependentHalfSinWeights(int size)
+    {
+        var weights = new float[size];
+        float denom = size - 1;
+        for (int i = 0; i < size; i++)
+        {
+            float t = i / denom;
+            float clipped = Math.Clamp((t * 2f) - 0.5f, 0f, 1f);
+            weights[i] = (MathF.Sin((clipped * MathF.PI) - (MathF.PI / 2f)) + 1f) / 2f;
+        }
+
+        return weights;
+    }
+
+    [Fact]
     public void TileBlender_Horizontal_TwoTiles_SeamlessReconstruction()
     {
         int width = 100;
@@ -1683,6 +1778,44 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void PlanTileSplit_SmallPageBelowTheSessionReservation_TakesTheEmergencySplit()
+    {
+        // A page the quality floor covers in a single tile (both sides <= MinimumTileSize) with a
+        // budget below the 384 MiB session reservation: sessionBudget is negative, so the early return
+        // fires before the grid enumeration. TileSplit.For at the floor would hand back the whole page
+        // as one tile — the same plan the single-pass gate rejects — so the early return has to go
+        // through the emergency normalisation, exactly as the grid fallback does.
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+            200,
+            150,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 100L * 1024 * 1024,
+            isFp16: false
+        );
+
+        Assert.Equal(new OnnxTiler.TileSplit(2, 2, 100, 75), split);
+    }
+
+    [Fact]
+    public void PlanTileSplit_SmallPageWithEnoughBudget_StaysASingleTile()
+    {
+        // The companion to the test above: the same page with a budget well above the reservation
+        // plans the whole page as one inference, so the emergency normalisation only fires when the
+        // budget genuinely cannot hold the session.
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+            200,
+            150,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 8L * 1024 * 1024 * 1024,
+            isFp16: false
+        );
+
+        Assert.Equal(new OnnxTiler.TileSplit(1, 1, 200, 150), split);
+    }
+
+    [Fact]
     public void PlanTileSplit_UsesTheModelsOwnScaleNotTheDeviceDefault()
     {
         // The device default was fitted on a small fp16 ESRGAN (0.90x); the fp32 transformer measured
@@ -1761,6 +1894,7 @@ public class OnnxTilerTests : IDisposable
         {
             ActivationScale = 2.0,
             SessionReservationBytes = 100L * 1024 * 1024,
+            DeviceWideMeasured = true,
         };
         long withProfile = OnnxTiler.PredictTilePeakBytes(
             split,

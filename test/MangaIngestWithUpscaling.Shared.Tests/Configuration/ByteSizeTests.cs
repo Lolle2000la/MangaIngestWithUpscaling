@@ -132,6 +132,19 @@ public class ByteSizeTests
     }
 
     [Fact]
+    public void ToString_OfLongMaxValue_RoundTripsThroughParse()
+    {
+        // The largest unit that keeps the value at least 1 is PiB, and long.MaxValue rounds up to
+        // "8192 PiB" — which is exactly 2^63, one byte past long.MaxValue, so Parse rejects it. ToString
+        // must never emit a string its own Parse throws on, so it falls back to the exact byte count.
+        string text = new ByteSize(long.MaxValue).ToString();
+
+        Assert.NotEqual("8192 PiB", text);
+        Assert.Equal("9223372036854775807 B", text);
+        Assert.Equal(long.MaxValue, ByteSize.Parse(text).Bytes);
+    }
+
+    [Fact]
     public void ImplicitConversions_StayExact()
     {
         const long Bytes = 1073741824L;

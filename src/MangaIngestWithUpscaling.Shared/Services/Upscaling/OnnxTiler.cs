@@ -897,24 +897,26 @@ public static class OnnxTiler
             return (activationScale, sessionReservation);
         }
 
-        double measuredScale = profile.ScaleFor(modelNameOrPath, modelSizeBytes);
+        // null means nothing was measured for this model (neither its own entry nor a measured
+        // device-wide default), so the built-in stays; a *measured* 0 is a value and is honored.
+        double? measuredScale = profile.ScaleFor(modelNameOrPath, modelSizeBytes);
         // The same range the calibrator refuses to write (DeviceMemoryCalibrator): a profile value
         // outside it is corrupt. The old read bound (> 0 and < 12) accepted a value a hundred times too
         // small, which shrinks the predicted activation and oversizes the tile, and rejected exactly
         // 12.0, which the calibrator is willing to write.
-        if (measuredScale is >= 0.2 and <= 12.0)
+        if (measuredScale is { } scale and >= 0.2 and <= 12.0)
         {
-            activationScale = measuredScale;
+            activationScale = scale;
         }
 
-        long measuredReservation = profile.ReservationFor(modelNameOrPath, modelSizeBytes);
+        long? measuredReservation = profile.ReservationFor(modelNameOrPath, modelSizeBytes);
         // 0 included: a calibration that measured no tile-independent footprint (the model's
         // session lives inside the activation estimate) is a legitimate answer, and the
         // calibrator writes exactly 0 for one. Rejecting it silently swapped the 384 MiB
         // default in, oversizing every tile of that model for the rest of the profile's life.
-        if (measuredReservation is >= 0 and < 8L * 1024 * 1024 * 1024)
+        if (measuredReservation is { } reservation and >= 0 and < 8L * 1024 * 1024 * 1024)
         {
-            sessionReservation = measuredReservation;
+            sessionReservation = reservation;
         }
 
         return (activationScale, sessionReservation);
@@ -1011,8 +1013,15 @@ public static class OnnxTiler
         {
             // Nothing left for activations even with the reservation accounted for. Splitting at the
             // quality floor is the best that can be done: it protects the output, and the engine
-            // halves the tiles again if the driver then refuses the allocation.
-            return TileSplit.For(width, height, MinimumTileSize);
+            // halves the tiles again if the driver then refuses the allocation. For a page small
+            // enough that the floor still fits it in one tile the fallback is the whole page — the
+            // very plan the single-pass gate below rejects — so it takes the same emergency
+            // normalisation the grid fallback does.
+            return NormaliseEmergencySplit(
+                TileSplit.For(width, height, MinimumTileSize),
+                width,
+                height
+            );
         }
 
         // Whole page as one inference: only claim it when the padded footprint stays comfortably
@@ -1084,15 +1093,21 @@ public static class OnnxTiler
         // enumeration bounds are floor(width / MinimumTileSize) and floor(height / MinimumTileSize),
         // which are 1 and 1, and the (1,1) candidate is skipped above. The seed would then be a single
         // tile covering the page — the exact plan the single-pass gate rejected, at a fraction of the
-        // budget it was rejected for. An emergency grid is returned instead, its tiles finer than the
-        // floor, which is what the engine would have halved down to after the driver refused the
-        // allocation anyway.
-        if (best.Columns == 1 && best.Rows == 1)
-        {
-            best = new TileSplit(2, 2, Math.Max(1, (width + 1) / 2), Math.Max(1, (height + 1) / 2));
-        }
+        // budget it was rejected for. The shared emergency normalisation below turns it into a 2x2
+        // grid, its tiles finer than the floor, which is what the engine would have halved down to
+        // after the driver refused the allocation anyway.
+        best = NormaliseEmergencySplit(best, width, height);
 
         return best;
+
+        // A whole-page (1,1) split is the plan the single-pass gate above rejected, and must never
+        // escape the planner. Every path that can produce one — the grid fallback here and the
+        // budget-below-reservation early return above — normalises it through this one helper, so the
+        // emergency grid is defined in a single place.
+        static TileSplit NormaliseEmergencySplit(TileSplit split, int width, int height) =>
+            split.Columns == 1 && split.Rows == 1
+                ? new TileSplit(2, 2, Math.Max(1, (width + 1) / 2), Math.Max(1, (height + 1) / 2))
+                : split;
     }
 
     /// <summary>
@@ -2041,6 +2056,17 @@ public static class OnnxTiler
         return (int)count;
     }
 
+    /// <summary>
+    /// True for the provider-level failures that say nothing about the model: an allocation that did
+    /// not fit, and a device/driver fault (a lost device, a reset, an illegal memory access). They
+    /// must not become a permanent "unusable model" verdict, and they are the shared substrate for
+    /// every retryable classification in the codebase (the worker's
+    /// <c>IsInfrastructureFailure</c>/<c>ClassifyStreamingFailure</c>, the detector's
+    /// <c>IsRetryableDetectionFailure</c>, the engine's <c>IsTransientProbeFailure</c>), which is why
+    /// the device-fault tokens live here despite the name: adding one here makes every classifier
+    /// treat it as transient, which is the point — a working model was permanently disabled by a
+    /// one-off "illegal memory access"/"device lost" because no classifier recognised it.
+    /// </summary>
     public static bool IsMemoryException(Exception ex)
     {
         if (ex is OutOfMemoryException)
@@ -2067,6 +2093,22 @@ public static class OnnxTiler
                     "CL_MEM_OBJECT_ALLOCATION_FAILURE",
                     StringComparison.OrdinalIgnoreCase
                 )
+                // Device/driver faults: a lost or reset device, an illegal address from a kernel,
+                // a suspended GPU. Each is produced by a reset/driver event rather than by the
+                // graph, and a fresh session or a retry after the driver recovers runs the same
+                // model fine.
+                || msg.Contains("device lost", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("illegal memory access", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("cudaerrorillegaladdress", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("device_disconnected", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("device disconnected", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("context lost", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("context is lost", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("device suspended", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("driver reset", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("device reset", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("gpu reset", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("will not respond", StringComparison.OrdinalIgnoreCase)
             )
             {
                 return true;

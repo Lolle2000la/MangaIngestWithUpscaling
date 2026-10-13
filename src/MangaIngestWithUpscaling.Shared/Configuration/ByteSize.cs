@@ -134,6 +134,12 @@ public readonly record struct ByteSize : IComparable<ByteSize>
     /// only need it readable, and the whole-number rendering is what makes them so; use
     /// <see cref="Bytes"/> where the exact value matters.
     /// </para>
+    /// <para>
+    /// At the very top of the range the rounded representation would not even parse back:
+    /// <see cref="long.MaxValue"/> renders as "8192 PiB", one byte past a long, which
+    /// <see cref="Parse"/> rejects. The exact byte count is emitted instead then, so this never
+    /// returns a string <see cref="Parse"/> throws on.
+    /// </para>
     /// </summary>
     public override string ToString()
     {
@@ -151,7 +157,11 @@ public readonly record struct ByteSize : IComparable<ByteSize>
                     Math.Abs(scaled - Math.Floor(scaled)) < 0.005
                         ? scaled.ToString("0", CultureInfo.InvariantCulture)
                         : scaled.ToString("0.##", CultureInfo.InvariantCulture);
-                return $"{text} {suffix}";
+                string candidate = $"{text} {suffix}";
+                // The above rounds up to the unit, which can step the value past long.MaxValue and
+                // make the candidate unparseable. Fall back to the exact byte count, which Parse
+                // always accepts, rather than emit a representation this type cannot read back.
+                return TryParse(candidate, out _) ? candidate : $"{Bytes} B";
             }
         }
 

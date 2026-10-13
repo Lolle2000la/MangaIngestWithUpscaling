@@ -30,7 +30,7 @@ public class DeviceMemoryProfileTests
     [Fact]
     public void ScaleFor_FallsBackToTheDeviceDefault()
     {
-        var profile = new DeviceMemoryProfile { ActivationScale = 0.90 };
+        var profile = new DeviceMemoryProfile { ActivationScale = 0.90, DeviceWideMeasured = true };
 
         Assert.Equal(0.90, profile.ScaleFor(Model, ModelBytes));
     }
@@ -38,10 +38,25 @@ public class DeviceMemoryProfileTests
     [Fact]
     public void ScaleFor_IgnoresAnOutOfRangeModelMeasurement()
     {
-        var profile = new DeviceMemoryProfile { ActivationScale = 0.90 };
+        var profile = new DeviceMemoryProfile { ActivationScale = 0.90, DeviceWideMeasured = true };
         profile.Models[Key] = new ModelMemoryProfile { ActivationScale = 50 };
 
         Assert.Equal(0.90, profile.ScaleFor(Model, ModelBytes));
+    }
+
+    [Fact]
+    public void ScaleFor_UnmeasuredDeviceWideDefaults_ReturnNull()
+    {
+        // The production calibration path writes per-model entries only, so a saved profile carries
+        // the device-wide fields at their CLR defaults (1.0 / 0). Reading those as measurements
+        // supplied 1.0 as the activation scale and 0 as the session reservation for every model
+        // without its own entry — the latter silently replacing the 384 MiB built-in and
+        // under-stating the footprint the planner budgets for. Without the flag, "no measurement"
+        // must stay distinguishable from "measured as 0".
+        var skeleton = new DeviceMemoryProfile();
+
+        Assert.Null(skeleton.ScaleFor(Model, ModelBytes));
+        Assert.Null(skeleton.ReservationFor(Model, ModelBytes));
     }
 
     [Fact]
@@ -88,9 +103,28 @@ public class DeviceMemoryProfileTests
     [Fact]
     public void ReservationFor_FallsBackToTheDeviceDefault()
     {
-        var profile = new DeviceMemoryProfile { SessionReservationBytes = 384L * 1024 * 1024 };
+        var profile = new DeviceMemoryProfile
+        {
+            SessionReservationBytes = 384L * 1024 * 1024,
+            DeviceWideMeasured = true,
+        };
 
         Assert.Equal(384L * 1024 * 1024, profile.ReservationFor(Model, ModelBytes));
+    }
+
+    [Fact]
+    public void ReservationFor_HonorsADeviceWideZeroThatWasMeasured()
+    {
+        // The flag is the only thing that separates a measured 0 from an untouched skeleton, so a
+        // device-wide 0 that a benchmark really produced still has to be honoured rather than
+        // falling back to the built-in.
+        var profile = new DeviceMemoryProfile
+        {
+            SessionReservationBytes = 0,
+            DeviceWideMeasured = true,
+        };
+
+        Assert.Equal(0, profile.ReservationFor(Model, ModelBytes));
     }
 
     [Fact]
@@ -137,6 +171,19 @@ public class DeviceMemoryProfileTests
             Assert.Equal(1.28, loaded!.ScaleFor(Model, ModelBytes));
             Assert.Equal(9_437_184, loaded.ReservationFor(Model, ModelBytes));
             Assert.Equal([320, 640], loaded.Models[Key].MeasuredTiles);
+
+            // The comparer has to survive the round trip: System.Text.Json materializes a fresh
+            // dictionary with the default comparer and assigns it, so the rule the writer chose was
+            // lost on load — a key differing only in case then missed its own measurement after a
+            // reload while it hit in memory, and two distinct model files could share one entry.
+            // Both must agree, and both must be ordinal.
+            string differentlyCased = Key.ToUpperInvariant();
+            Assert.NotEqual(Key, differentlyCased);
+            Assert.Equal(
+                profile.Models.ContainsKey(differentlyCased),
+                loaded.Models.ContainsKey(differentlyCased)
+            );
+            Assert.False(loaded.Models.ContainsKey(differentlyCased));
         }
         finally
         {

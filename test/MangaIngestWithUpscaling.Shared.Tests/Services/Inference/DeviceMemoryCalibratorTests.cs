@@ -539,11 +539,13 @@ public class DeviceMemoryCalibratorTests
         {
             ActivationScale = 10.0,
             SessionReservationBytes = 1024L * 1024 * 1024,
+            DeviceWideMeasured = true,
         };
         var lighter = new DeviceMemoryProfile
         {
             ActivationScale = 1.0,
             SessionReservationBytes = 64L * 1024 * 1024,
+            DeviceWideMeasured = true,
         };
 
         OnnxTiler.TileSplit withHeavier = OnnxTiler.PlanTileSplit(
@@ -594,16 +596,30 @@ public class DeviceMemoryCalibratorTests
             isFp16: true
         );
 
-        // A nonsense profile (scale 0, negative scale, absurd reservation) must not change anything
+        // A nonsense profile (scale 0, negative scale, absurd reservation) must not change anything.
+        // The measured flag is set so the profiles are actually consulted — without it they would be
+        // skipped as "no measurement" and the range checks these values exist to exercise would go
+        // untested.
         foreach (
             var profile in new[]
             {
-                new DeviceMemoryProfile { ActivationScale = 0, SessionReservationBytes = 0 },
-                new DeviceMemoryProfile { ActivationScale = -3, SessionReservationBytes = 1 },
+                new DeviceMemoryProfile
+                {
+                    ActivationScale = 0,
+                    SessionReservationBytes = 0,
+                    DeviceWideMeasured = true,
+                },
+                new DeviceMemoryProfile
+                {
+                    ActivationScale = -3,
+                    SessionReservationBytes = 1,
+                    DeviceWideMeasured = true,
+                },
                 new DeviceMemoryProfile
                 {
                     ActivationScale = 50,
                     SessionReservationBytes = 1L << 50,
+                    DeviceWideMeasured = true,
                 },
             }
         )
@@ -650,23 +666,28 @@ public class DeviceMemoryCalibratorTests
         Directory.CreateDirectory(dir);
         try
         {
-            // The benchmark measures device memory through a live session, so it must hold an
-            // inference scope for its duration: without one, a concurrent upscale could evict the
-            // session at capacity or invalidate it on its own failure and dispose it mid-Run. The
-            // session here cannot be used (so the benchmark fails on it, as the retry test does),
-            // but the scope still has to be entered before the measurement starts.
-            var sessionFactory = new ScopeCountingSessionFactory();
+            // The benchmark measures device memory through a live session, so it must hold an inference
+            // scope for its duration: without one, a concurrent upscale could evict the session at
+            // capacity or invalidate it on its own failure and dispose it mid-Run. The factory hands
+            // back a real tiny session (not the null the retry tests use), so the benchmark actually
+            // runs both measurement points rather than failing at the first session use — which is what
+            // makes the scope count below a read-out of the measurement scopes and not just the
+            // input-type probe. The count is one for that probe plus one per measurement point; drop the
+            // scope from MeasurePoint and it falls to one, which this assertion catches.
+            string modelPath = Path.Combine(dir, "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx");
+            TinyOnnxModel.WriteNearestUpscaler(
+                dir,
+                scale: 4,
+                fp16: false,
+                fileName: Path.GetFileName(modelPath)
+            );
+
+            using var sessionFactory = new ScopeCountingSessionFactory(modelPath);
             DeviceMemoryCalibrator calibrator = new(
                 sessionFactory,
                 Options.Create(new UpscalerConfig()),
                 new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance),
                 NullLogger<DeviceMemoryCalibrator>.Instance
-            );
-
-            TinyOnnxModel.WriteNearestUpscaler(
-                dir,
-                scale: 4,
-                fileName: "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx"
             );
 
             DeviceMemoryProfile? profile = await calibrator.GetOrCalibrateAsync(
@@ -676,7 +697,45 @@ public class DeviceMemoryCalibratorTests
             );
 
             Assert.Null(profile);
-            Assert.Equal(1, sessionFactory.ScopeCount);
+            // One scope for probing the input type, then one for each of the two benchmark tiles.
+            Assert.Equal(3, sessionFactory.ScopeCount);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetOrCalibrateForModel_CancelledToken_AbortsTheBenchmarkBeforeMeasuring()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"devmem_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string model = Path.Combine(dir, "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx");
+            TinyOnnxModel.WriteNearestUpscaler(dir, scale: 4, fileName: Path.GetFileName(model));
+
+            using var cts = new CancellationTokenSource();
+            // Cancel the instant the benchmark asks for its first session — reading the input type,
+            // before either measurement point. A pre-cancelled token would abort at the semaphore wait
+            // instead, which says nothing about the benchmark; this cancellation lands inside it, so
+            // only the token check at the first measure boundary can stop it.
+            using var sessionFactory = new CancelOnFirstSessionFactory(model, cts);
+            DeviceMemoryCalibrator calibrator = new(
+                sessionFactory,
+                Options.Create(new UpscalerConfig()),
+                new DeviceMemoryProfileStore(NullLogger<DeviceMemoryProfileStore>.Instance),
+                NullLogger<DeviceMemoryCalibrator>.Instance
+            );
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                calibrator.GetOrCalibrateForModelAsync(0, dir, model, 4, cts.Token)
+            );
+
+            // Cancelled before the first measurement point: only the input-type probe asked for a
+            // session, no benchmark tile ran.
+            Assert.Equal(1, sessionFactory.SessionsCreated);
         }
         finally
         {
@@ -738,20 +797,28 @@ public class DeviceMemoryCalibratorTests
     }
 
     /// <summary>
-    /// Records every inference scope entry and hands out no usable session, so the benchmark fails
-    /// after it has entered the scope but still counts that entry.
+    /// Records every inference scope entry and hands out a real session loaded from
+    /// <paramref name="modelPath"/>, so the benchmark runs to completion and every scope it takes —
+    /// the input-type probe and the two measurement points — is counted.
     /// </summary>
-    private sealed class ScopeCountingSessionFactory : IOnnxSessionFactory
+    private sealed class ScopeCountingSessionFactory(string modelPath) : IOnnxSessionFactory
     {
+        private InferenceSession? _session;
+
         public int ScopeCount { get; private set; }
 
-        public InferenceSession GetOrCreateSession(string modelPath) => null!;
+        public InferenceSession GetOrCreateSession(string path) =>
+            _session ??= new InferenceSession(modelPath);
 
-        public InferenceSession CreateSession(string modelPath) => null!;
+        public InferenceSession CreateSession(string path) => new(modelPath);
 
-        public void InvalidateSession(string modelPath) { }
+        public void InvalidateSession(string modelPath)
+        {
+            _session?.Dispose();
+            _session = null;
+        }
 
-        public void InvalidateAllSessions() { }
+        public void InvalidateAllSessions() => InvalidateSession(modelPath);
 
         public GpuBackend GetEffectiveBackend() => GpuBackend.CPU;
 
@@ -761,11 +828,72 @@ public class DeviceMemoryCalibratorTests
             return new NoOpScope();
         }
 
-        public void Dispose() { }
+        public void Dispose()
+        {
+            _session?.Dispose();
+            _session = null;
+        }
 
         private sealed class NoOpScope : IDisposable
         {
             public void Dispose() { }
+        }
+    }
+
+    /// <summary>
+    /// Hands out a real tiny session, but cancels the supplied source the first time one is asked for,
+    /// so the benchmark is cancelled from inside itself — after the semaphore wait and before the first
+    /// measurement point. <see cref="IOnnxSessionFactory.EnterInferenceScope"/> and
+    /// <see cref="IOnnxSessionFactory.ReleaseCachedSessions"/> keep their default implementations.
+    /// </summary>
+    private sealed class CancelOnFirstSessionFactory(
+        string modelPath,
+        CancellationTokenSource cancellation
+    ) : IOnnxSessionFactory
+    {
+        private readonly Lock _lock = new();
+        private InferenceSession? _session;
+        private bool _cancelled;
+
+        public int SessionsCreated { get; private set; }
+
+        public InferenceSession GetOrCreateSession(string path)
+        {
+            lock (_lock)
+            {
+                SessionsCreated++;
+                if (!_cancelled)
+                {
+                    _cancelled = true;
+                    cancellation.Cancel();
+                }
+
+                return _session ??= new InferenceSession(modelPath);
+            }
+        }
+
+        public InferenceSession CreateSession(string path) => new(modelPath);
+
+        public void InvalidateSession(string path)
+        {
+            lock (_lock)
+            {
+                _session?.Dispose();
+                _session = null;
+            }
+        }
+
+        public void InvalidateAllSessions() => InvalidateSession(modelPath);
+
+        public GpuBackend GetEffectiveBackend() => GpuBackend.CPU;
+
+        public void Dispose()
+        {
+            lock (_lock)
+            {
+                _session?.Dispose();
+                _session = null;
+            }
         }
     }
 }
