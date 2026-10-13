@@ -47,11 +47,14 @@ public static class UpscalerConfigSizeValidation
                 yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a finite fraction such as 0.97, or unset for automatic";
             }
             // Out-of-range values are only silently clamped by CalculateVramBudget (to [0.1, 1.0]), so
-            // the fraction actually applied would not be the one configured. The documented 0.0-1.0
-            // range fails the boot instead, the same reason the preprocessing ranges are checked here.
-            else if (utilization < 0.0 || utilization > 1.0)
+            // the fraction actually applied would not be the one configured. The documented range
+            // fails the boot instead, the same reason the preprocessing ranges are checked here.
+            // Exactly 0.0 is allowed and means "automatic" (CalculateVramBudget treats a non-positive
+            // fraction as unset); a positive fraction below 0.1 is not, because the clamp would apply
+            // 0.1 — the configured value and the applied one have to be the same.
+            else if (utilization != 0.0 && (utilization < 0.1 || utilization > 1.0))
             {
-                yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a fraction between 0.0 and 1.0, or unset for automatic";
+                yield return $"{UpscalerConfig.Position}:{nameof(UpscalerConfig.VramUtilizationFraction)} = {utilization}: expected a fraction between 0.1 and 1.0, exactly 0 for automatic, or unset";
             }
         }
 

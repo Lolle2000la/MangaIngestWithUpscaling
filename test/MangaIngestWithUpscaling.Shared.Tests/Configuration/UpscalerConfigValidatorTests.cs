@@ -345,11 +345,14 @@ public class UpscalerConfigValidatorTests
     [InlineData(1.5)]
     [InlineData(-1.0)]
     [InlineData(1.0000001)]
+    [InlineData(0.05)]
+    [InlineData(0.0999)]
     public void RejectsAnOutOfRangeVramUtilizationFraction(double value)
     {
-        // CalculateVramBudget silently clamps the fraction into [0.1, 1.0], so an out-of-range value
-        // would be applied as something other than what was configured. The documented 0.0-1.0 range
-        // fails the boot instead.
+        // CalculateVramBudget silently clamps a positive fraction into [0.1, 1.0], so such a value
+        // would be applied as something other than what was configured — 0.05 would spend 0.1 of free
+        // VRAM. The validator fails the boot instead. Exactly 0.0 is the one value that legitimately
+        // means "automatic" (not 0%), and it is accepted by the test below.
         List<string> invalid = new UpscalerConfig { VramUtilizationFraction = value }
             .FindInvalidSizeSettings()
             .ToList();
@@ -360,12 +363,12 @@ public class UpscalerConfigValidatorTests
             invalid[0],
             StringComparison.Ordinal
         );
-        Assert.Contains("between 0.0 and 1.0", invalid[0], StringComparison.Ordinal);
+        Assert.Contains("between 0.1 and 1.0", invalid[0], StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData(0.0)]
-    [InlineData(0.05)]
+    [InlineData(0.1)]
     [InlineData(0.97)]
     [InlineData(1.0)]
     public void AcceptsVramUtilizationFractionsInRange(double value) =>

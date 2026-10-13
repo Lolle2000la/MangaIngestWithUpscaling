@@ -131,7 +131,7 @@ public record UpscalerConfig
     ///     Tile size for ONNX upscaling in pixels.
     ///     0 = Auto-estimate from the model's activation footprint and available VRAM (default).
     ///     &gt; 0 = Explicit maximum tile size (e.g. 512, 768, 1024).
-    ///     -1 = Force single pass (no tiling).
+    ///     Any negative value = force single pass (no tiling); -1 is the conventional one.
     ///     The automatic value is derived, not clamped: see docs/UPSCALING_MEMORY_MODEL.md.
     /// </summary>
     public int TileSize { get; set; } = 0;
@@ -154,9 +154,12 @@ public record UpscalerConfig
         ByteSize.TryParse(MemoryBudgetBytes, out ByteSize parsed) ? parsed.Bytes : 0;
 
     /// <summary>
-    ///     Optional fraction of free GPU VRAM to utilize for automatic tile budgeting (0.0 to 1.0).
-    ///     Defaults to null (automatic adaptive budgeting: ~97% when headless/NAS, ~95% with 512MB-1GB safety margin on desktop).
-    ///     Set to 1.0 on dedicated machines (like a NAS) to utilize 100% of free VRAM.
+    ///     Optional fraction of free GPU VRAM to utilize for automatic tile budgeting.
+    ///     Unset (or exactly 0.0) means automatic adaptive budgeting: ~97% when headless/NAS, ~95% with
+    ///     a 512MB-1GB safety margin on desktop. A positive value must be at least 0.1 — the budget it
+    ///     computes is clamped to that floor, so anything below it would apply a different fraction
+    ///     than the one configured and is rejected at startup instead. Set to 1.0 on dedicated
+    ///     machines (like a NAS) to utilize 100% of free VRAM.
     /// </summary>
     public double? VramUtilizationFraction { get; set; } = null;
 

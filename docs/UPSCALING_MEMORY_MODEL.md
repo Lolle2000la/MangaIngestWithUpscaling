@@ -380,8 +380,9 @@ The default threshold is 350 MB — driver plus a display server. That is pessim
 
 That is ~1.6 GB of VRAM handed back to tile sizing. The comparison is inclusive — usage *equal* to
 the threshold still counts as exclusive — and an explicit `VramSafetyMarginBytes` or
-`VramUtilizationFraction` still takes precedence over both branches. A value of 0 or negative falls
-back to the default rather than making every card exclusive.
+`VramUtilizationFraction` still takes precedence over both branches. A value of 0 means automatic and
+falls back to the default rather than making every card exclusive; a negative fraction is rejected at
+startup.
 
 ### 4.3 Human-readable size strings
 
