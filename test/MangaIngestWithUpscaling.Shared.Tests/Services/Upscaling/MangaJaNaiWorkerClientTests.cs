@@ -97,6 +97,72 @@ public class MangaJaNaiWorkerClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunChapterAsync_AggregateWithAPermanentFirstAndIoSecond_PropagatesAsInfrastructure()
+    {
+        // The classifier's own doc names "an IOException inside an AggregateException" as the
+        // retryable case it must see. When the walk followed only InnerException, the first sibling
+        // (the permanent one) hid the IO failure, so the page was recorded as a per-page error instead
+        // of the task being requeued with its spool.
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        engine
+            .UpscaleFileStagedAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CompressionFormat>(),
+                Arg.Any<int?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+                Task.FromException<Task>(
+                    new AggregateException(
+                        new InvalidOperationException("permanent"),
+                        new IOException("disk gone")
+                    )
+                )
+            );
+
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            Substitute.For<IOnnxSessionFactory>(),
+            NullLogger<MangaJaNaiWorkerClient>.Instance
+        );
+
+        string outputDir = Directory.CreateTempSubdirectory("worker_client_aggregate").FullName;
+        try
+        {
+            var request = new ChapterJobRequest
+            {
+                Id = "job",
+                OutputFolder = outputDir,
+                Format = CompressionFormat.Webp,
+                Scale = ScaleFactor.TwoX,
+                TotalPages = 1,
+            };
+
+            var reported = new List<UpscaleJobFile>();
+
+            await Assert.ThrowsAsync<AggregateException>(() =>
+                client.RunChapterAsync(
+                    request,
+                    OnePage(),
+                    progress: null,
+                    onPageDone: reported.Add,
+                    cancellationToken: CancellationToken.None,
+                    timeout: null
+                )
+            );
+
+            Assert.Empty(reported);
+        }
+        finally
+        {
+            Directory.Delete(outputDir, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunChapterAsync_WhenTheEngineStalls_SurfacesTheInactivityTimeout()
     {
         // The engine's staged write task never completes on its own but observes the linked

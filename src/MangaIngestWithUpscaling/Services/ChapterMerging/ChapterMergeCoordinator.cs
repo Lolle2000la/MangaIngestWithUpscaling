@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
@@ -1273,7 +1274,9 @@ public class ChapterMergeCoordinator(
 
         try
         {
-            Directory.CreateDirectory(tempDirectory);
+            // Holds a copy of the existing merged chapter's private page bytes; create it owner-only
+            // rather than letting Directory.CreateDirectory honour the process umask.
+            DirectoryPermissions.CreateDirectoryRestricted(tempDirectory, logger);
 
             // Copy the existing merged chapter to temp location for modification
             File.Copy(existingMergedFilePath, tempMergedFilePath);

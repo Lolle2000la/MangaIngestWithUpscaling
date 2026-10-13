@@ -1,6 +1,7 @@
 ﻿using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Shared.Services.CbzConversion;
@@ -44,8 +45,10 @@ public class CbzConverter(IStringLocalizer<CbzConverter> localizer) : ICbzConver
 
         try
         {
-            // Extract to temporary directory
-            Directory.CreateDirectory(tempExtractDir);
+            // Extract to temporary directory. The directory holds the chapter's private page bytes;
+            // create it owner-only rather than letting Directory.CreateDirectory honour the process
+            // umask. This class has no logger, so a failed chmod stays silent.
+            DirectoryPermissions.CreateDirectoryRestricted(tempExtractDir);
             ZipFile.ExtractToDirectory(cbzPath, tempExtractDir);
 
             // Check if any extensions need fixing

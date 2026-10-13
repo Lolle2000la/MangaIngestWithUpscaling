@@ -58,4 +58,20 @@ public class NaturalSortComparerTests
             .ToArray();
         Assert.Equal(["01.png", "1.png"], ordered);
     }
+
+    [Fact]
+    public void Compare_DelegatesTheTotalOrderToTheSharedComparer()
+    {
+        // The wrapper carries no ordering logic of its own, so it must expose the shared comparer's
+        // total order — including the mixed-run case, where a digit run sorts before a non-digit run
+        // ("NaN" is a non-digit run the numeric parser would otherwise accept).
+        var comparer = new NaturalSortComparer<string>(s => s);
+
+        Assert.True(comparer.Compare("0", "NaN") < 0);
+
+        List<string> names = ["10", "2", "1x", "NaN", "a", "0", "Infinity"];
+        names.Sort(comparer);
+
+        Assert.Equal(["0", "1x", "2", "10", "a", "Infinity", "NaN"], names);
+    }
 }

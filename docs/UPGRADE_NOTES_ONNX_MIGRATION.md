@@ -45,6 +45,11 @@ configuration surface. Nothing here requires a data migration; the database sche
   that carries a leftover `SmartDownscaleFactor` outside `(0, 1)` — `0` is the common one, and it was
   inert while the feature was disabled — now **fails the boot** instead of being ignored. Fix or
   remove the value, or disable the feature.
+* `MaxSpoolBytesPerTask` changed from a plain byte count (`long`) to a **byte-size string** (`8 GiB`,
+  `2GiB`, `8589934592`), parsed by the same `ByteSize` helper as the other memory settings. `0` still
+  means the 8 GiB default, and a plain byte count still parses. But a value that cannot be parsed —
+  including a negative one such as `-1`, which the old `long` silently treated as "use the default" —
+  now **fails the boot** in `UpscalerConfigValidator`. Fix or remove an invalid value to start.
 * The legacy backend aliases `ROCm`, `ROCm_GFX120X`, `XPU` and `CUDA_12_8` are still accepted and are
   remapped to `WebGPU` / `CUDA`, but the remap is not logged. They carry `[Obsolete]` on the
   `GpuBackend` enum; prefer `WebGPU` / `CUDA` directly.

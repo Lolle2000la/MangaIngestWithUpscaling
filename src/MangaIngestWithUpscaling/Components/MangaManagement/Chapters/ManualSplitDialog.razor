@@ -215,7 +215,10 @@
                     "mangaingest_manual_split",
                     Guid.NewGuid().ToString()
                 );
-                Directory.CreateDirectory(tempDir);
+                // The directory holds the chapter's private page bytes extracted from its CBZ; create
+                // it owner-only rather than letting Directory.CreateDirectory honour the process umask
+                // (typically 022, i.e. world-readable). This component has no logger.
+                DirectoryPermissions.CreateDirectoryRestricted(tempDir);
                 _tempDirectories.Add(tempDir); // Store for cleanup
 
                 using var archive = ZipFile.OpenRead(chapterPath);
@@ -494,7 +497,10 @@
                 "mangaingest_manual_split_processing",
                 Guid.NewGuid().ToString()
             );
-            Directory.CreateDirectory(tempDir);
+            // The directory holds the chapter's private page bytes and the split output; create it
+            // owner-only rather than letting Directory.CreateDirectory honour the process umask
+            // (typically 022, i.e. world-readable). This component has no logger.
+            DirectoryPermissions.CreateDirectoryRestricted(tempDir);
             _tempDirectories.Add(tempDir); // Store for cleanup
 
             // Process each image with splits

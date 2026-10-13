@@ -429,8 +429,8 @@ public class OnnxUpscaleEngine(
         }
 
         string tempDir = Path.Combine(Path.GetTempPath(), $"cbz_upscale_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
-        DirectoryPermissions.RestrictToCurrentUser(tempDir, logger);
+        // Owner-only at creation: the per-page scratch holds the chapter's private page bytes.
+        DirectoryPermissions.CreateDirectoryRestricted(tempDir, logger);
 
         // The archive is staged next to its destination, not in tempDir: the library and /tmp are
         // different volumes in the common container/NAS layout, so publishing it out of tempDir would

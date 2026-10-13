@@ -200,13 +200,12 @@ public sealed class PageStreamClient(
         );
         string sourceDirectory = Path.Combine(workDirectory, "source");
         string outputDirectory = Path.Combine(workDirectory, "output");
-        Directory.CreateDirectory(sourceDirectory);
-        Directory.CreateDirectory(outputDirectory);
-        // Owner-only: these directories hold private chapter page bytes and upscaled output, and
-        // Directory.CreateDirectory honours the process umask (typically 022, i.e. world-readable).
-        DirectoryPermissions.RestrictToCurrentUser(workDirectory, logger);
-        DirectoryPermissions.RestrictToCurrentUser(sourceDirectory, logger);
-        DirectoryPermissions.RestrictToCurrentUser(outputDirectory, logger);
+        // Owner-only at creation: these directories hold private chapter page bytes and upscaled
+        // output, and Directory.CreateDirectory would honour the process umask (typically 022, i.e.
+        // world-readable).
+        DirectoryPermissions.CreateDirectoryRestricted(workDirectory, logger);
+        DirectoryPermissions.CreateDirectoryRestricted(sourceDirectory, logger);
+        DirectoryPermissions.CreateDirectoryRestricted(outputDirectory, logger);
 
         try
         {
@@ -541,11 +540,11 @@ public sealed class PageStreamClient(
             $"mangaingest_page_detect_{taskId}_{Guid.NewGuid():N}"
         );
         string sourceDirectory = Path.Combine(workDirectory, "source");
-        Directory.CreateDirectory(sourceDirectory);
-        // Owner-only: the directory holds the fetched chapter page bytes, and Directory.CreateDirectory
-        // honours the process umask (typically 022, i.e. world-readable).
-        DirectoryPermissions.RestrictToCurrentUser(workDirectory, logger);
-        DirectoryPermissions.RestrictToCurrentUser(sourceDirectory, logger);
+        // Owner-only at creation: the directory holds the fetched chapter page bytes, and
+        // Directory.CreateDirectory would honour the process umask (typically 022, i.e.
+        // world-readable).
+        DirectoryPermissions.CreateDirectoryRestricted(workDirectory, logger);
+        DirectoryPermissions.CreateDirectoryRestricted(sourceDirectory, logger);
 
         try
         {

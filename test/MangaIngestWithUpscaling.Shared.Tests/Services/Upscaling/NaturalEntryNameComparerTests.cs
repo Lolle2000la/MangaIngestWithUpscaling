@@ -60,4 +60,33 @@ public class NaturalEntryNameComparerTests
 
         Assert.Equal(["1.png", "1.png.jpg"], ordered);
     }
+
+    [Fact]
+    public void Compare_IsATotalOrderWhenANumericRunMeetsANonNumericRun()
+    {
+        // "NaN" and "Infinity" are non-digit runs that the numeric parser accepts. Treating them as
+        // numbers made the comparison depend on the pair being compared: "0" < "a" and "a" < "NaN" by
+        // text, but "NaN" < "0" by number — the cycle 0 < a < NaN < 0. A sort over names like these
+        // then returns a different order for every input permutation.
+        Assert.True(NaturalEntryNameComparer.Instance.Compare("0", "a") < 0);
+        Assert.True(NaturalEntryNameComparer.Instance.Compare("a", "NaN") < 0);
+        Assert.True(NaturalEntryNameComparer.Instance.Compare("0", "NaN") < 0);
+
+        // Kind decides a mixed pair: a digit run sorts before a non-digit run, however the text run
+        // would parse.
+        Assert.True(NaturalEntryNameComparer.Instance.Compare("1", "a") < 0);
+        Assert.True(NaturalEntryNameComparer.Instance.Compare("1", "NaN") < 0);
+    }
+
+    [Fact]
+    public void Compare_SortsNamesWithAMixedRunDeterministically()
+    {
+        // A list that used to form a comparison cycle; List.Sort would not throw here, but it would
+        // return a different order for each permutation of the same names.
+        List<string> names = ["10", "2", "1x", "NaN", "a", "0", "Infinity"];
+
+        names.Sort(NaturalEntryNameComparer.Instance);
+
+        Assert.Equal(["0", "1x", "2", "10", "a", "Infinity", "NaN"], names);
+    }
 }

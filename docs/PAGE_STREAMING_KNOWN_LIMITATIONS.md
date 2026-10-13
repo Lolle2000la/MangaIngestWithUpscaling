@@ -70,6 +70,15 @@ swallowing them, keeps the original only for a page it cannot decode, and expose
 effective options are folded into the server-computed content identity (see the H2 note below), so
 a change resets the spool and the worker's engine identity no longer varies with its local config.
 
+## Permanently unreadable repair source consumes the retry budget — fixed
+
+`DistributedUpscaleTaskProcessor` now counts consecutive transient preparation failures per repair
+task (`transientPreparationFailures`). A source that reports `PageDifferenceResult.ReadFailed` is
+still re-offered on the same 10 s interval, but the streak is incremented on each deferral and the
+task is failed once it reaches its `RetryFor` budget, so a permanently unreadable source can no
+longer defer for ever. A readable source and every terminal exit clear the streak. The counter is
+process-local, matching the repair state beside it and the supported single-replica deployment.
+
 ## Residual medium items
 
 - **Permanent local I/O faults burn a chapter per retry (M6).** `ClassifyStreamingFailure` maps every
@@ -119,8 +128,6 @@ a change resets the spool and the worker's engine identity no longer varies with
   `TryCommitPage`'s `size = 0` default is a budget footgun.
 - The streaming inactivity allowance keeps a documented 15-minute floor that the local whole-CBZ
   path does not have, so the two paths kill a wedged engine on different schedules.
-- A permanently unreadable source (`ReadFailed`) is re-offered every 10 s and never consumes the
-  retry budget, so `RetryFor` never escalates; a separate transient-attempt counter is needed.
 - An identity-raced manifest can pair new descriptors with the old identity while the old session is
   still `Assembling`; it self-heals via a `GetPages` `FailedPrecondition` at the cost of extra
   restart round-trips.

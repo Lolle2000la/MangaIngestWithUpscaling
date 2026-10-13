@@ -984,6 +984,40 @@ public class SplitDetectionServiceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_AggregateWithAPermanentFirstAndIoSecond_IsStillTransient()
+    {
+        // The IO failure is a sibling of the permanent one inside an AggregateException, not the
+        // InnerException spine. A walk that follows only InnerException sees the permanent sibling
+        // first and reports a per-page error; the IO failure must still make the whole thing transient.
+        string modelsDir = Path.Combine(_root, "aggregate_io_models");
+        Directory.CreateDirectory(modelsDir);
+        File.WriteAllBytes(Path.Combine(modelsDir, "page_break_detector.onnx"), [0]);
+        string imagePath = WriteDecodableImage("aggregate_io_page.png");
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        factory
+            .GetOrCreateSession(Arg.Any<string>())
+            .Returns(_ =>
+                throw new AggregateException(
+                    new InvalidOperationException("permanent"),
+                    new IOException("disk gone")
+                )
+            );
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        await Assert.ThrowsAsync<AggregateException>(() =>
+            service.DetectSplitsAsync(imagePath, null, TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task DetectSplitsAsync_SetupFaultAfterReachingTheModel_IsNotCachedAsAModelVerdict()
     {
         // An argument fault after the model is reached is this code's own setup around it, not a

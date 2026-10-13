@@ -298,12 +298,11 @@ public sealed class PageStreamSpool : IPageSpoolStore
             // Build the path and open the temp file under the gate: a concurrent Reset/Detach can
             // delete the session directory, which would otherwise turn a clean identity rejection into
             // an unhandled DirectoryNotFoundException.
-            Directory.CreateDirectory(session.Directory);
-            // Owner-only: the directory holds private page bytes and Directory.CreateDirectory
-            // honours the process umask (typically 022, i.e. world-readable). The root as well as the
-            // session directory; both are app-created for exactly this purpose.
-            DirectoryPermissions.RestrictToCurrentUser(SpoolRoot, _logger);
-            DirectoryPermissions.RestrictToCurrentUser(session.Directory, _logger);
+            // Owner-only at creation: the root and the session directory both hold private page
+            // bytes, and Directory.CreateDirectory would honour the process umask (typically 022,
+            // i.e. world-readable).
+            DirectoryPermissions.CreateDirectoryRestricted(SpoolRoot, _logger);
+            DirectoryPermissions.CreateDirectoryRestricted(session.Directory, _logger);
             string path = session.PagePath(pageIndex);
             // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
             tempPath = $"{path}.{Guid.NewGuid():N}.tmp";

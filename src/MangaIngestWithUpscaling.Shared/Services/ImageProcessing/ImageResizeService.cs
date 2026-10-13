@@ -97,10 +97,10 @@ public class ImageResizeService(
 
         try
         {
-            Directory.CreateDirectory(tempDir);
-            // The extraction directory holds a whole chapter's private page bytes; Directory.
-            // CreateDirectory uses the process umask, which is typically world-readable.
-            DirectoryPermissions.RestrictToCurrentUser(tempDir);
+            // The extraction directory holds a whole chapter's private page bytes; create it owner-only
+            // rather than letting Directory.CreateDirectory honour the process umask (typically
+            // world-readable), which the post-hoc chmod would leave a window around.
+            DirectoryPermissions.CreateDirectoryRestricted(tempDir, logger);
 
             logger.LogInformation(
                 "Preprocessing images in {InputPath} (MaxDimension={MaxDimension}, ConversionRules={RuleCount}, SmartDownscale={SmartDownscale})",
@@ -115,8 +115,9 @@ public class ImageResizeService(
             await ProcessImagesInDirectory(tempDir, options, cancellationToken);
 
             ZipFile.CreateFromDirectory(tempDir, tempCbzPath);
-            // The assembled archive also holds the chapter's private page bytes.
-            DirectoryPermissions.RestrictToCurrentUser(tempCbzPath);
+            // The assembled archive also holds the chapter's private page bytes. There is no
+            // create-with-mode overload for a file the zip writer owns, so it is tightened after.
+            DirectoryPermissions.RestrictToCurrentUser(tempCbzPath, logger);
 
             logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
 
@@ -152,8 +153,7 @@ public class ImageResizeService(
         );
         try
         {
-            Directory.CreateDirectory(tempDir);
-            DirectoryPermissions.RestrictToCurrentUser(tempDir);
+            DirectoryPermissions.CreateDirectoryRestricted(tempDir, logger);
             string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
             File.Copy(imagePath, workingPath, overwrite: true);
 
