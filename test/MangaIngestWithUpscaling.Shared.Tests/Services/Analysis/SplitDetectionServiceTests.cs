@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.Extensions.Localization;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
@@ -297,7 +298,8 @@ public class SplitDetectionServiceTests : IDisposable
             )
         );
 
-        // Four windows at the 2048-row chunk, the last one partial; 100 rows are dropped at each end.
+        // Windows at whatever chunk the budget buys (512-row chunks for 64MiB, one whole-page pass
+        // for 4GiB), the last one partial; 100 rows are dropped at each end.
         const int height = 7000;
         SplitDetectionResult result = Assert.Single(
             await service.DetectSplitsAsync(
@@ -839,6 +841,155 @@ public class SplitDetectionServiceTests : IDisposable
         await Assert.ThrowsAsync<OutOfMemoryException>(() =>
             service.DetectSplitsAsync(imagePath, null, TestContext.Current.CancellationToken)
         );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WrappedIoFailure_IsStillTransient()
+    {
+        // A retryable cause can surface wrapped (an IO error inside another exception), which is
+        // why the aligned classifiers walk the chain. An outer-only check failed this page into
+        // the structural catch, where the wrapped IO error was cached as a model verdict for the
+        // process — the failure mode the walk exists to prevent.
+        string modelsDir = Path.Combine(_root, "wrapped_io_models");
+        Directory.CreateDirectory(modelsDir);
+        File.WriteAllBytes(Path.Combine(modelsDir, "page_break_detector.onnx"), [0]);
+        string imagePath = WriteDecodableImage("wrapped_io_page.png");
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        factory
+            .GetOrCreateSession(Arg.Any<string>())
+            .Returns(_ =>
+                throw new InvalidOperationException("wrapped", new IOException("disk gone"))
+            );
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DetectSplitsAsync(imagePath, null, TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_SetupFaultAfterReachingTheModel_IsNotCachedAsAModelVerdict()
+    {
+        // An argument fault after the model is reached is this code's own setup around it, not a
+        // property of the model file — the same distinction the upscaler's IsModelFault makes.
+        // Recorded as a known failure, a planner or setup bug was cached under the model file's
+        // identity and permanently failed detection for every later chapter, outliving whatever
+        // budget or input produced it. The page carries the error; the next page re-probes.
+        string modelsDir = Path.Combine(_root, "own_fault_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        bool failNext = true;
+        factory
+            .GetOrCreateSession(Arg.Any<string>())
+            .Returns(_ =>
+            {
+                if (failNext)
+                {
+                    failNext = false;
+                    throw new ArgumentException("planner bug");
+                }
+
+                return session;
+            });
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        string imagePath = WriteDecodableImage("own_fault_page.png");
+
+        SplitDetectionResult first = Assert.Single(
+            await service.DetectSplitsAsync(imagePath, null, TestContext.Current.CancellationToken)
+        );
+        Assert.NotNull(first.Error);
+        Assert.NotEmpty(first.Error);
+
+        // The verdict was not cached: the next page rebuilds nothing and succeeds.
+        SplitDetectionResult second = Assert.Single(
+            await service.DetectSplitsAsync(imagePath, null, TestContext.Current.CancellationToken)
+        );
+        Assert.Null(second.Error);
+        factory.Received(0).InvalidateSession(Arg.Any<string>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_OnTheCpu_UsesTheBoundedDefaultChunkNotAVramShapedBudget()
+    {
+        // The budget helper's floor is shaped for GPU tile planning and can never report "no
+        // budget measurable", so without this the CPU path planned a whole-page pass in host RAM
+        // against a number that said nothing about it — the opposite of the bounded default the
+        // code and the upgrade notes promise. The plan is observable in the debug log; the splits
+        // are the same either way, because the margin (not the chunk) is what makes a window exact.
+        string modelsDir = Path.Combine(_root, "cpu_budget_models");
+        Directory.CreateDirectory(modelsDir);
+        string modelPath = TinyOnnxModel.WritePeakMaskDetector(
+            modelsDir,
+            fileName: "page_break_detector.onnx"
+        );
+
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        using var session = new InferenceSession(modelPath);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+        factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+        var logger = new CapturingLogger();
+        var service = new SplitDetectionService(
+            factory,
+            logger,
+            Substitute.For<IStringLocalizer<SplitDetectionService>>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = modelsDir })
+        );
+
+        SplitDetectionResult result = Assert.Single(
+            await service.DetectSplitsAsync(
+                WriteGradientImage("cpu_budget.png", 7000),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Null(result.Error);
+        Assert.Contains(
+            logger.Messages,
+            m => m.Contains("4 window(s) of 2048 rows", StringComparison.Ordinal)
+        );
+    }
+
+    /// <summary>An ILogger that records the formatted messages, for asserting logged decisions.</summary>
+    private sealed class CapturingLogger : ILogger<SplitDetectionService>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        ) => Messages.Add(formatter(state, exception));
     }
 
     [Fact]

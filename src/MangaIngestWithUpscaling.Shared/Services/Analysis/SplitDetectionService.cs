@@ -120,7 +120,14 @@ public class SplitDetectionService(
         }
 
         long chunk = affordableRows - (2L * DetectorWindowMargin);
-        int chunkRows = (int)Math.Clamp(chunk, DetectorMinChunkRows, pageRows);
+        // A page shorter than the minimum chunk is its own only window: every window's context
+        // clamps to the page's edges, so splitting such a page cannot make its inference any
+        // smaller than the page. Clamping to the page instead would invert Math.Clamp's bounds
+        // and throw for exactly those pages.
+        int chunkRows =
+            pageRows < DetectorMinChunkRows
+                ? pageRows
+                : (int)Math.Clamp(chunk, DetectorMinChunkRows, pageRows);
         return (chunkRows, (pageRows + chunkRows - 1) / chunkRows);
     }
 
@@ -177,8 +184,9 @@ public class SplitDetectionService(
     );
 
     /// <summary>
-    /// Compares keys case-insensitively on the path, matching how the session factory resolves model
-    /// paths.
+    /// Compares keys ordinally on the path, matching the session cache's comparer: on a
+    /// case-sensitive filesystem two paths differing only in case are two different model files,
+    /// and a case-insensitive verdict key would let a verdict recorded for one silence the other.
     /// </summary>
     private sealed class DetectorBackendKeyComparer : IEqualityComparer<DetectorBackendKey>
     {
@@ -186,12 +194,12 @@ public class SplitDetectionService(
 
         public bool Equals(DetectorBackendKey x, DetectorBackendKey y) =>
             x.Backend == y.Backend
-            && string.Equals(x.ModelPath, y.ModelPath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.ModelPath, y.ModelPath, StringComparison.Ordinal)
             && x.Signature == y.Signature;
 
         public int GetHashCode(DetectorBackendKey obj) =>
             HashCode.Combine(
-                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ModelPath),
+                StringComparer.Ordinal.GetHashCode(obj.ModelPath),
                 obj.Backend,
                 obj.Signature.Length,
                 obj.Signature.LastWriteUtcTicks
@@ -225,6 +233,16 @@ public class SplitDetectionService(
         }
     }
 
+    /// <summary>
+    /// True for a failure that is a property of the loaded model or of running it on this backend —
+    /// the only verdicts the known-failure cache may remember, because its key is the model file's
+    /// identity and its lifetime is the process. Mirrors the upscaler's <c>IsModelFault</c>: our own
+    /// argument and invariant faults are excluded on purpose, because they say nothing about the
+    /// model file a verdict would be recorded under.
+    /// </summary>
+    private static bool IsModelOrBackendFault(Exception ex) =>
+        ex is ModelContractMismatchException or OnnxRuntimeException;
+
     private static void RecordKnownFailure(string modelPath, GpuBackend backend, string error)
     {
         lock (KnownFailuresGate)
@@ -254,14 +272,28 @@ public class SplitDetectionService(
     /// requeues the task with the spool intact, exactly as the upscaler path does.
     /// </para>
     /// </summary>
-    private static bool IsRetryableDetectionFailure(Exception ex) =>
-        OnnxTiler.IsMemoryException(ex)
-        || ex is IOException
-        // Aligned with the upscaler's classifiers, which walk the chain for UnauthorizedAccessException:
-        // a mount that is briefly unavailable during detection should not permanently fail the chapter
-        // when the same condition during upscaling is treated as retryable.
-        || ex is UnauthorizedAccessException
-        || ex is NonFiniteModelOutputException;
+    private static bool IsRetryableDetectionFailure(Exception ex)
+    {
+        // The whole chain, not just the outermost exception — aligned with the upscaler's classifiers
+        // (MangaJaNaiWorkerClient.IsInfrastructureFailure, ClassifyStreamingFailure), which walk it
+        // for exactly these types: a mount that is briefly unavailable during detection should not
+        // permanently fail the chapter when the same condition during upscaling is retryable, even
+        // when it surfaces wrapped in another exception.
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (
+                OnnxTiler.IsMemoryException(current)
+                || current is IOException
+                || current is UnauthorizedAccessException
+                || current is NonFiniteModelOutputException
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
@@ -431,6 +463,21 @@ public class SplitDetectionService(
                             ? rgb.Copy()
                             : rgb.Cast(NetVips.Enums.BandFormat.Uchar);
 
+                    // The packing loop below strides three bytes per pixel, so anything the
+                    // conversion above did not normalize to three bands would be silently
+                    // mis-read into the tensor — mixed channels rather than an error. libvips
+                    // converts every standard interpretation to 3-band sRGB, so this is a guard
+                    // against the unexpected rather than an expected case; it fires before the
+                    // model is reached, so it is reported as a per-page error and does not
+                    // poison the known-failure cache for the model.
+                    if (ucharRgb.Bands != 3)
+                    {
+                        throw new InvalidOperationException(
+                            $"The page converted to {ucharRgb.Bands} bands instead of the 3 the "
+                                + $"detector packs; it is not a format the detector can read."
+                        );
+                    }
+
                     byte[] mem = ucharRgb.WriteToMemory<byte>();
                     int planeSize = actualHeight * actualWidth;
                     float[] tensorData = new float[1 * 3 * actualHeight * actualWidth];
@@ -478,15 +525,29 @@ public class SplitDetectionService(
                     // the chunk) is what makes a window exact, so the chunk only trades memory against
                     // speed and the budget is free to buy the faster whole-page pass.
                     int deviceId = Math.Max(0, upscalerConfig?.Value.SelectedDeviceIndex - 1 ?? 0);
-                    long budget =
-                        (upscalerConfig?.Value.ResolvedMemoryBudgetBytes ?? 0) > 0
-                            ? upscalerConfig!.Value.ResolvedMemoryBudgetBytes
-                            : OnnxTiler.GetAvailableVramBudget(
-                                deviceId,
-                                upscalerConfig?.Value.VramUtilizationFraction,
-                                upscalerConfig?.Value.ResolvedVramSafetyMarginBytes,
-                                upscalerConfig?.Value.ResolvedVramExclusiveThresholdBytes
-                            );
+                    long budget;
+                    if ((upscalerConfig?.Value.ResolvedMemoryBudgetBytes ?? 0) > 0)
+                    {
+                        budget = upscalerConfig!.Value.ResolvedMemoryBudgetBytes;
+                    }
+                    else if (backend == GpuBackend.CPU)
+                    {
+                        // On the CPU the budget helper's VRAM-shaped floor says nothing about the host
+                        // RAM the pass actually lives in, and the floor can never report "no budget
+                        // measurable", so it would buy a whole-page pass in host RAM for a tall page —
+                        // exactly what the bounded default chunk exists to prevent. Treat the CPU as
+                        // the unmeasurable case it is; an explicit MemoryBudgetBytes above still wins.
+                        budget = 0;
+                    }
+                    else
+                    {
+                        budget = OnnxTiler.GetAvailableVramBudget(
+                            deviceId,
+                            upscalerConfig?.Value.VramUtilizationFraction,
+                            upscalerConfig?.Value.ResolvedVramSafetyMarginBytes,
+                            upscalerConfig?.Value.ResolvedVramExclusiveThresholdBytes
+                        );
+                    }
                     (int chunkRows, int windowCount) = PlanDetectorWindows(actualHeight, budget);
                     logger.LogDebug(
                         "Detector: {Rows} resized rows in {Windows} window(s) of {ChunkRows} rows (budget {BudgetMiB} MiB).",
@@ -718,7 +779,7 @@ public class SplitDetectionService(
             // spool intact, which is exactly what the same machinery does on the upscaler path.
             throw;
         }
-        catch (Exception ex) when (reachedModel)
+        catch (Exception ex) when (reachedModel && IsModelOrBackendFault(ex))
         {
             logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
 
@@ -733,6 +794,18 @@ public class SplitDetectionService(
             }
 
             RecordKnownFailure(modelPath, backend, ex.Message);
+            return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
+        }
+        catch (Exception ex) when (reachedModel)
+        {
+            // The model was reached, but the failure is not a property of it or of the backend: it
+            // is this code's own setup around the model — an argument or invariant fault, the same
+            // types the upscaler's IsModelFault explicitly refuses to condemn a model for. Recording
+            // it as a model verdict would permanently fail detection for every later chapter under
+            // the current model file (a planner bug would outlive the budget that triggered it), so
+            // it is reported per page instead: the chapter fails, the next one retries, and the
+            // healthy session stays cached.
+            logger.LogError(ex, "Error running ONNX split detection for {ImagePath}", imagePath);
             return new SplitDetectionResult { ImagePath = imagePath, Error = ex.Message };
         }
         catch (Exception ex)
@@ -910,7 +983,10 @@ public class SplitDetectionService(
             return;
         }
 
-        throw new InvalidOperationException(
+        // ModelContractMismatchException, like RequireDetectorContract and the upscaler's
+        // equivalent checks: this is a property of the loaded model (its baked output geometry),
+        // which the known-failure cache may remember and replacing the model file clears.
+        throw new ModelContractMismatchException(
             $"The detector returned an unexpected output shape: peak_mask is "
                 + $"[{string.Join(", ", peakMaskTensor.Dimensions.ToArray())}] and probabilities is "
                 + $"[{string.Join(", ", probsTensor.Dimensions.ToArray())}], but one row per row of "

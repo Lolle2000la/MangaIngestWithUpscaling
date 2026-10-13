@@ -50,6 +50,24 @@ public class DetectorWindowPlanTests
     }
 
     [Fact]
+    public void PageShorterThanTheMinimumChunk_IsItsOwnSingleWindow()
+    {
+        // A wide/short page (3000x1800 → 460 resized rows) with a budget too small for the
+        // page. Every window's context clamps to the page's own edges, so splitting such a
+        // page cannot make its inference smaller than the page — and clamping the chunk up to
+        // the minimum inverted Math.Clamp's bounds and threw for exactly these pages, after the
+        // model was reached, where the throw was cached as a model verdict for the process.
+        // The single pass over the short page is the only plan that exists.
+        (int chunkRows, int windowCount) = SplitDetectionService.PlanDetectorWindows(
+            pageRows: 460,
+            budgetBytes: 64 * MiB
+        );
+
+        Assert.Equal(1, windowCount);
+        Assert.Equal(460, chunkRows);
+    }
+
+    [Fact]
     public void UnmeasurableBudget_UsesTheBoundedDefault()
     {
         // No budget is not evidence of abundance: the default bounds the footprint instead of letting a
