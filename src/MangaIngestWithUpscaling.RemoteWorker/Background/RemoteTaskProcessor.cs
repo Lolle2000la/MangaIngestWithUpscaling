@@ -601,6 +601,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     "Task {TaskId} was cancelled prior to page streaming, skipping.",
                     item.TaskId
                 );
+                // Clean stop, not a failure: drop any count the task accumulated earlier, or the
+                // stale entry outlives the task for the process lifetime.
+                _softFailures.Reset(item.TaskId);
                 await item.PersistentKeepAliveCts.CancelAsync();
                 try
                 {
@@ -646,7 +649,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             }
             catch (OperationCanceledException)
             {
-                // Normal user interruption or task cancellation.
+                // Normal user interruption or task cancellation. A clean stop is not a failure, so
+                // clear the task's counter like the success and terminal paths do; otherwise a task
+                // that was counted and then cancelled keeps its stale count for the process.
+                _softFailures.Reset(item.TaskId);
             }
             catch (Exception) when (item.KeepAliveState.TaskGone)
             {
@@ -655,7 +661,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 // RpcException(StatusCode.Cancelled), not as an OperationCanceledException, so it
                 // otherwise fell into the general catch and consumed a soft-failure slot for a task
                 // the server already retired — repeated infrastructure requeues could then push it to
-                // the terminal cap. A task the server has forgotten needs no report: stop cleanly.
+                // the terminal cap. A task the server has forgotten needs no report: stop cleanly,
+                // dropping whatever count it accumulated before it was retired.
+                _softFailures.Reset(item.TaskId);
                 logger.LogInformation(
                     "Task {TaskId} stopped streaming because the server no longer tracks it.",
                     item.TaskId

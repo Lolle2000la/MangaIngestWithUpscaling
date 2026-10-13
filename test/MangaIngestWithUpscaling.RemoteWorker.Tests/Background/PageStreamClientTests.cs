@@ -75,6 +75,59 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunAsync_OmitsUnknownProgressFieldsFromKeepAlives()
+    {
+        // A keep-alive must only carry the optional progress fields the engine actually reported.
+        // Sending an unset total/current/phase as an explicit 0/"" would make the server regress the
+        // UI to 0/total (proto3 optional presence is what the server keys on).
+        string directory = Directory.CreateTempSubdirectory("page_stream_progress").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+
+            var worker = Substitute.For<IMangaJaNaiWorkerClient>();
+            worker
+                .RunChapterAsync(
+                    Arg.Any<ChapterJobRequest>(),
+                    Arg.Any<IAsyncEnumerable<ChapterPage>>(),
+                    Arg.Any<IProgress<UpscaleProgress>?>(),
+                    Arg.Any<Action<UpscaleJobFile>>(),
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<TimeSpan?>()
+                )
+                .Returns(async ci =>
+                {
+                    ci.ArgAt<IProgress<UpscaleProgress>?>(2)
+                        ?.Report(new UpscaleProgress(null, null, null, null));
+                    // Wait for the reporter to flush a keep-alive before ending the chapter, so the
+                    // assertion below cannot race the 500 ms debounce.
+                    await server.FirstKeepAlive.Task.WaitAsync(
+                        TimeSpan.FromSeconds(30),
+                        ci.ArgAt<CancellationToken>(4)
+                    );
+                    return new UpscaleJobResult("chapter", "ok", new List<UpscaleJobFile>(), 0);
+                });
+
+            await CreateClient(worker)
+                .RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            KeepAliveRequest keepAlive = await server.FirstKeepAlive.Task;
+            Assert.Equal(1, keepAlive.TaskId);
+            Assert.False(keepAlive.HasTotal);
+            Assert.False(keepAlive.HasCurrent);
+            Assert.False(keepAlive.HasPhase);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunAsync_UsesTheServersPreprocessingOptions()
     {
         // The server owns the preprocessing settings, so the worker must apply the options the
@@ -618,22 +671,20 @@ public class PageStreamClientTests
     [Trait("Category", "Unit")]
     public async Task RunAsync_CapturesTheEngineIdentityForTheWholeStream()
     {
-        // A backend change mid-stream (GetEffectiveBackend re-probes a resolution that came from a
-        // transient probe failure) must not make the uploads carry a new engine identity. The server
-        // records the identity the manifest established and rejects a page whose engine differs,
-        // which restarts the chapter and discards every already-upscaled page. The stream must use
-        // the captured identity throughout, while the next chapter must see the new one.
+        // The identity is captured once and stamped on the manifest and every upload, so a
+        // page-streamed chapter is always keyed to the identity it was manifested under. A backend
+        // that genuinely changes mid-stream is handled by the abort path (see
+        // RunAsync_WhenTheBackendChangesMidStream_RestartsRatherThanBlending); this pins the capture
+        // itself: the manifest and every upload carry the captured identity, and the next stream
+        // re-reads the provider so a backend change is not lost.
         string directory = Directory.CreateTempSubdirectory("page_stream_engine_capture").FullName;
         try
         {
             string source = CreateManyPageSourceCbz(directory, pageCount: 3);
             string destination = Path.Combine(directory, "out.cbz");
             var server = new FakePageServer(source, destination);
-            var engineIdentity = new StubEngineIdentityProvider { Upscaler = "engine-A" };
-            // Flip the reported backend the moment the first page's upload is processed: a second
-            // read during the stream (the bug) would then carry "engine-B".
-            server.OnUploadPage = _ => engineIdentity.Upscaler = "engine-B";
             var client = server.CreateClient();
+            var engineIdentity = new StubEngineIdentityProvider { Upscaler = "engine-A" };
             var sut = CreateClient(new FakeWorkerClient(), engineIdentity: engineIdentity);
 
             await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
@@ -643,6 +694,7 @@ public class PageStreamClientTests
             Assert.All(server.UploadEngineIdentities, value => Assert.Equal("engine-A", value));
 
             // The next stream re-reads the provider, so a genuine backend change is not lost.
+            engineIdentity.Upscaler = "engine-B";
             var secondServer = new FakePageServer(source, Path.Combine(directory, "out2.cbz"));
             var secondSut = CreateClient(new FakeWorkerClient(), engineIdentity: engineIdentity);
             await secondSut.RunAsync(
@@ -653,6 +705,49 @@ public class PageStreamClientTests
             );
 
             Assert.Equal("engine-B", secondServer.ManifestEngineIdentity);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_WhenTheBackendChangesMidStream_RestartsRatherThanBlending()
+    {
+        // The capture alone is not enough: the provider deliberately re-probes a backend whose
+        // resolution came from a transient probe failure, and a session rebuild mid-chapter attaches
+        // whatever provider is resolved then, so a page can be produced by the new provider while
+        // still being stamped with the manifest's identity — two execution providers blended into one
+        // chapter. A genuine change must abort through the non-terminal restart, so the server
+        // re-manifests under the new identity (resetting the spool) instead of committing the blend,
+        // and no page may be uploaded carrying the new identity.
+        string directory = Directory.CreateTempSubdirectory("page_stream_engine_change").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var engineIdentity = new StubEngineIdentityProvider { Upscaler = "engine-A" };
+            // Flip the reported backend once the first page's upload has been processed. The upload
+            // loop processes uploads sequentially, so the next page's identity check deterministically
+            // observes the change; a per-upload read with no comparison would send "engine-B".
+            server.OnUploadPage = _ => engineIdentity.Upscaler = "engine-B";
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient(), engineIdentity: engineIdentity);
+
+            var error = await Assert.ThrowsAsync<PageStreamRestartException>(() =>
+                sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken)
+            );
+
+            // A restart, not a permanent failure: the server keeps the spool and re-manifests.
+            Assert.Equal(
+                PageStreamDisposition.Retry,
+                RemoteTaskProcessor.ClassifyStreamingDisposition(error)
+            );
+            Assert.Equal("engine-A", server.ManifestEngineIdentity);
+            Assert.DoesNotContain("engine-B", server.UploadEngineIdentities);
         }
         finally
         {
@@ -897,6 +992,184 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunDetectionAsync_ReleasesTheCachedSessionAtTheChapterBoundary()
+    {
+        // Detection caches its session in the same shared OnnxSessionFactory as upscaling, but
+        // RunDetectionAsync only deleted its work directory. With MaxCachedSessions == 1 the detector
+        // session and its execution-provider arena therefore stayed resident until the next inference
+        // of any kind, so an idle worker kept that VRAM and a following upscale planned its budget
+        // against a device that still held it. Mirror the upscale path's chapter-boundary release.
+        string directory = Directory.CreateTempSubdirectory("page_detect_release").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination)
+            {
+                ManifestTaskType = TaskType.SplitDetection,
+            };
+            var client = server.CreateClient();
+
+            var detection = Substitute.For<ISplitDetectionService>();
+            detection
+                .DetectSplitsAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<IProgress<UpscaleProgress>?>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(ci => new List<SplitDetectionResult>
+                {
+                    new() { ImagePath = ci.Arg<string>(), Count = 0 },
+                });
+
+            var worker = new FakeWorkerClient();
+            var sut = CreateClient(worker, CreateDetectionScopeFactory(detection));
+
+            await sut.RunDetectionAsync(client, 1, TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, worker.ReleaseGpuCacheCalls);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_RestrictsTheWorkDirectoriesToTheCurrentUser()
+    {
+        // The streamed source pages and their upscaled output are private chapter content; the work,
+        // source and output directories must not be world-readable under a typical umask.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string directory = Directory.CreateTempSubdirectory("page_stream_permissions").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+
+            UnixFileMode? workMode = null;
+            UnixFileMode? sourceMode = null;
+            UnixFileMode? outputMode = null;
+            var worker = Substitute.For<IMangaJaNaiWorkerClient>();
+            worker
+                .RunChapterAsync(
+                    Arg.Any<ChapterJobRequest>(),
+                    Arg.Any<IAsyncEnumerable<ChapterPage>>(),
+                    Arg.Any<IProgress<UpscaleProgress>?>(),
+                    Arg.Any<Action<UpscaleJobFile>>(),
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<TimeSpan?>()
+                )
+                .Returns(async ci =>
+                {
+                    // Capture the modes while the directories still exist: the client tears them down
+                    // in its finally once the chapter returns.
+                    string outputDirectory = ci.ArgAt<ChapterJobRequest>(0).OutputFolder;
+                    workMode = TryGetUnixFileMode(Path.GetDirectoryName(outputDirectory)!);
+                    outputMode = TryGetUnixFileMode(outputDirectory);
+                    await foreach (ChapterPage page in ci.ArgAt<IAsyncEnumerable<ChapterPage>>(1))
+                    {
+                        sourceMode ??= TryGetUnixFileMode(Path.GetDirectoryName(page.Path)!);
+                    }
+
+                    return new UpscaleJobResult("chapter", "ok", new List<UpscaleJobFile>(), 0);
+                });
+
+            await CreateClient(worker)
+                .RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            UnixFileMode ownerOnly =
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+            Assert.NotNull(workMode);
+            Assert.NotNull(sourceMode);
+            Assert.NotNull(outputMode);
+            Assert.Equal(ownerOnly, workMode!.Value);
+            Assert.Equal(ownerOnly, sourceMode!.Value);
+            Assert.Equal(ownerOnly, outputMode!.Value);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunDetectionAsync_RestrictsTheSourceDirectoryToTheCurrentUser()
+    {
+        // Detection also fetches the chapter's private page bytes into a work directory; that
+        // directory must not be world-readable under a typical umask.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string directory = Directory.CreateTempSubdirectory("page_detect_permissions").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination)
+            {
+                ManifestTaskType = TaskType.SplitDetection,
+            };
+            var client = server.CreateClient();
+
+            UnixFileMode? sourceMode = null;
+            var detection = Substitute.For<ISplitDetectionService>();
+            detection
+                .DetectSplitsAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<IProgress<UpscaleProgress>?>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(ci =>
+                {
+                    sourceMode ??= TryGetUnixFileMode(Path.GetDirectoryName(ci.ArgAt<string>(0))!);
+                    return new List<SplitDetectionResult>
+                    {
+                        new() { ImagePath = ci.Arg<string>(), Count = 0 },
+                    };
+                });
+
+            var sut = CreateClient(new FakeWorkerClient(), CreateDetectionScopeFactory(detection));
+            await sut.RunDetectionAsync(client, 1, TestContext.Current.CancellationToken);
+
+            UnixFileMode ownerOnly =
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+            Assert.NotNull(sourceMode);
+            Assert.Equal(ownerOnly, sourceMode!.Value);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    /// <summary>
+    /// Reads a path's Unix mode, or null on Windows where the mode is not meaningful. The platform
+    /// guard lives here (not in the tests' callbacks) because the analyzer does not see the tests'
+    /// enclosing <c>OperatingSystem.IsWindows()</c> early return through a delegate body.
+    /// </summary>
+    private static UnixFileMode? TryGetUnixFileMode(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        return File.GetUnixFileMode(path);
+    }
+
     private static async Task WaitUntilAsync(
         Func<bool> condition,
         CancellationToken cancellationToken
@@ -1031,6 +1304,70 @@ public class PageStreamClientTests
             Assert.Equal(jpegBytes, bytes);
             Assert.Equal(0xFF, bytes[0]);
             Assert.Equal(0xD8, bytes[1]);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_WithAFormatConversion_DeletesTheConvertedPageWhenDone()
+    {
+        // The fetch yields the converted path, not the pre-conversion worker name. Deleting the
+        // reconstructed pre-conversion name pointed at the file preprocessing had already removed
+        // and left the converted copy in the source directory until the whole work directory was
+        // torn down — a second copy of every page for a conversion-enabled chapter. OnPageDone must
+        // delete the path the fetch actually yielded.
+        string directory = Directory
+            .CreateTempSubdirectory("page_stream_conversion_cleanup")
+            .FullName;
+        try
+        {
+            string source = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(source, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.png", new byte[] { 1, 2, 3 });
+            }
+
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+
+            // Mirror the real service's conversion: write the converted file under its new name,
+            // delete the original, and report the converted path.
+            var resize = Substitute.For<IImageResizeService>();
+            resize
+                .PreprocessImageInPlaceAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<ImagePreprocessingOptions>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(ci =>
+                {
+                    string input = ci.ArgAt<string>(0);
+                    string converted = Path.ChangeExtension(input, ".jpg");
+                    File.WriteAllBytes(converted, [0xFF, 0xD8, 0xFF]);
+                    File.Delete(input);
+                    return Task.FromResult(converted);
+                });
+
+            var existenceAfterDone = new List<(string Path, bool Exists)>();
+            var worker = new FakeWorkerClient
+            {
+                AfterPageDone = page => existenceAfterDone.Add((page.Path, File.Exists(page.Path))),
+            };
+            var sut = CreateClient(worker, CreateScopeFactory(resize), new UpscalerConfig());
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            (string path, bool exists) = Assert.Single(existenceAfterDone);
+            Assert.EndsWith(".jpg", path);
+            Assert.False(
+                exists,
+                "The converted page must be deleted once the page is reported done, not left until the work directory is torn down."
+            );
         }
         finally
         {
@@ -1282,6 +1619,10 @@ public class PageStreamClientTests
         /// <summary>The engine identity carried by each upload the client sent, in order.</summary>
         public List<string> UploadEngineIdentities { get; } = new();
 
+        /// <summary>Completes with the first KeepAlive the client sends.</summary>
+        public TaskCompletionSource<KeepAliveRequest> FirstKeepAlive { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         /// <summary>Invoked with the page index of each upload, before the response is produced.</summary>
         public Action<int>? OnUploadPage { get; set; }
 
@@ -1378,7 +1719,12 @@ public class PageStreamClientTests
                     Arg.Any<DateTime?>(),
                     Arg.Any<CancellationToken>()
                 )
-                .Returns(_ => Unary(new KeepAliveResponse { IsAlive = true }));
+                .Returns(ci =>
+                {
+                    KeepAliveRequest request = ci.Arg<KeepAliveRequest>();
+                    FirstKeepAlive.TrySetResult(request);
+                    return Unary(new KeepAliveResponse { IsAlive = true });
+                });
             return client;
         }
 

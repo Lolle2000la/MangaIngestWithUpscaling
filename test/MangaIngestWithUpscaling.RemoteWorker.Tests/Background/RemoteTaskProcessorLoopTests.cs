@@ -66,6 +66,49 @@ public class RemoteTaskProcessorLoopTests
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task ExecuteAsync_ResetsTheSoftFailureCounterAfterACleanStop()
+    {
+        // A task that fails transiently and is then cleanly cancelled must not carry its old count
+        // into the next delegation: the clean-stop branch resets it, exactly as the success and
+        // terminal paths do. Without the reset the pre-cancellation failure still counts, so the
+        // cap is reached one manifest call earlier (6 instead of the reset's 7).
+        int manifestCalls = 0;
+        var reported = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var client = CreateServer(
+            manifestError: () =>
+            {
+                int call = Interlocked.Increment(ref manifestCalls);
+                return call == 2
+                    ? new OperationCanceledException("clean stop")
+                    : new RpcException(new Status(StatusCode.Unavailable, "blip"));
+            },
+            onReported: () => reported.TrySetResult(Volatile.Read(ref manifestCalls))
+        );
+
+        RemoteTaskProcessor processor = CreateProcessor(client);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await processor.StartAsync(cts.Token);
+        try
+        {
+            int callsAtReport = await reported.Task.WaitAsync(
+                TimeSpan.FromSeconds(30),
+                TestContext.Current.CancellationToken
+            );
+
+            // The clean stop is the second manifest call; the five counted failures that reach the
+            // cap span calls 1 and 3-7. A reset-less branch would report at call 6.
+            Assert.Equal(SoftFailureCap + 2, callsAtReport);
+        }
+        finally
+        {
+            await processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task ExecuteAsync_ReportsAPermanentFailureImmediately()
     {
         // A deterministic failure must not be retried to the cap: report it on the first attempt so a
@@ -195,7 +238,7 @@ public class RemoteTaskProcessorLoopTests
     }
 
     private static UpscalingService.UpscalingServiceClient CreateServer(
-        Func<RpcException> manifestError,
+        Func<Exception> manifestError,
         Action onReported
     )
     {

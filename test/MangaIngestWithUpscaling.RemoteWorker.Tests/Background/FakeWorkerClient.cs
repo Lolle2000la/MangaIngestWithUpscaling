@@ -28,6 +28,15 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
     /// <summary>The inactivity timeout the chapter was driven with, for tests that pin the scaling.</summary>
     public TimeSpan? LastTimeout { get; private set; }
 
+    /// <summary>
+    /// Invoked with each consumed page right after it is reported done, so a test can observe what
+    /// the page-done callback left on disk (for example whether the fetched source copy was deleted).
+    /// </summary>
+    public Action<ChapterPage>? AfterPageDone { get; set; }
+
+    /// <summary>Number of times the chapter boundary released the cached GPU session.</summary>
+    public int ReleaseGpuCacheCalls { get; private set; }
+
     public async Task<UpscaleJobResult> RunChapterAsync(
         ChapterJobRequest request,
         IAsyncEnumerable<ChapterPage> pages,
@@ -60,6 +69,7 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
                 files.Add(file);
                 onPageDone(file);
                 ProcessedPages++;
+                AfterPageDone?.Invoke(page);
 
                 if (DropAfterPages is int dropAt && ProcessedPages >= dropAt)
                 {
@@ -83,6 +93,9 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
         TimeSpan? timeout
     ) => throw new NotSupportedException();
 
-    public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(true);
+    public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken)
+    {
+        ReleaseGpuCacheCalls++;
+        return Task.FromResult(true);
+    }
 }

@@ -124,10 +124,15 @@ public sealed class PageStreamClient(
     {
         // Capture the engine identity once and use it for the whole stream (the manifest and every
         // upload). The provider deliberately re-probes a backend that was resolved from a transient
-        // probe failure, so reading it per page could flip mid-chapter: the server records the
-        // identity the manifest established and rejects a page carrying a different one, and the
-        // resulting restart discards every already-upscaled page. A genuine backend change still
-        // takes effect on the next chapter, which re-reads the provider here.
+        // probe failure, and a session rebuild mid-chapter (a shape change, a memory descent, a
+        // model change) attaches whatever provider is resolved then, so reading the identity fresh
+        // for each upload would stamp pages produced by one provider with the identity of another
+        // and blend them into one chapter. The capture is what keeps every page of the chapter under
+        // the manifest's identity. The upload loop separately re-reads the live identity and aborts
+        // through a non-terminal restart when it genuinely changed, so a real backend switch
+        // re-manifests the chapter under the new identity (which resets the spool) instead of mixing
+        // providers. A genuine change therefore does not wait for the next chapter: this one aborts
+        // and restarts under the new identity.
         string upscalerIdentity = engineIdentity.Upscaler;
 
         PageManifestResponse manifest = await client.GetPageManifestAsync(
@@ -169,6 +174,15 @@ public sealed class PageStreamClient(
         {
             indexByName.TryAdd(WorkerPageName(page.Index, page.SourceName), page.Index);
         }
+
+        // The on-disk path each fetched page was actually yielded under, keyed by manifest index.
+        // Preprocessing can rename a page when a format conversion changes the extension, so the
+        // yielded path is not always the worker page name reconstructed from the manifest; OnPageDone
+        // deletes from here rather than reconstructing, or the converted copy would be left behind.
+        var fetchedPagePaths = new System.Collections.Concurrent.ConcurrentDictionary<
+            int,
+            string
+        >();
         HashSet<int> completed = manifest.CompletedPages.ToHashSet();
         List<int> missing = manifest
             .Pages.Where(p => !completed.Contains(p.Index))
@@ -187,6 +201,11 @@ public sealed class PageStreamClient(
         string outputDirectory = Path.Combine(workDirectory, "output");
         Directory.CreateDirectory(sourceDirectory);
         Directory.CreateDirectory(outputDirectory);
+        // Owner-only: these directories hold private chapter page bytes and upscaled output, and
+        // Directory.CreateDirectory honours the process umask (typically 022, i.e. world-readable).
+        RestrictToCurrentUser(workDirectory);
+        RestrictToCurrentUser(sourceDirectory);
+        RestrictToCurrentUser(outputDirectory);
 
         try
         {
@@ -270,6 +289,24 @@ public sealed class PageStreamClient(
                 TaskScheduler.Default
             );
 
+            void DeleteFetchedSource(int index)
+            {
+                // Delete the path the fetch actually yielded. A format conversion renames the page,
+                // so reconstructing the worker name points at the file preprocessing already deleted
+                // and leaves the converted copy on disk until the whole work directory goes.
+                if (fetchedPagePaths.TryRemove(index, out string? fetchedPath))
+                {
+                    TryDeleteFile(fetchedPath, index);
+                }
+
+                // Defensive: also remove the pre-conversion work name, for a page whose yielded path
+                // was never recorded (and for the no-conversion case, where the two coincide).
+                TryDeleteFile(
+                    Path.Combine(sourceDirectory, WorkerPageName(index, nameByIndex[index])),
+                    index
+                );
+            }
+
             void OnPageDone(UpscaleJobFile file)
             {
                 if (!indexByName.TryGetValue(file.Input, out int doneIndex))
@@ -277,11 +314,6 @@ public sealed class PageStreamClient(
                     pageErrors.Add($"{file.Input}: {file.Status}");
                     return;
                 }
-
-                string sourcePagePath = Path.Combine(
-                    sourceDirectory,
-                    WorkerPageName(doneIndex, nameByIndex[doneIndex])
-                );
 
                 // Block the worker's page-done callback until an upload slot frees, so a fast GPU on
                 // a slow link cannot accumulate an unbounded upload backlog on disk.
@@ -301,7 +333,7 @@ public sealed class PageStreamClient(
                     );
                     // The worker has finished this page, so its fetched source copy can go; this
                     // keeps the source directory from growing to a second copy of the chapter.
-                    TryDeleteFile(sourcePagePath, doneIndex);
+                    DeleteFetchedSource(doneIndex);
                 }
                 else
                 {
@@ -313,7 +345,7 @@ public sealed class PageStreamClient(
                     // recorded error fails the run — the whole-CBZ path fails the chapter the same
                     // way, so the two agree.
                     pageErrors.Add($"{file.Input}: {file.Status}");
-                    TryDeleteFile(sourcePagePath, doneIndex);
+                    DeleteFetchedSource(doneIndex);
 
                     // Released immediately, because nothing was handed to the upload loop: the slot
                     // is otherwise only freed after an upload, so every failed page would burn one
@@ -335,7 +367,8 @@ public sealed class PageStreamClient(
                         nameByIndex,
                         sourceDirectory,
                         uploadFailureCts.Token,
-                        preprocessing: ResolvePreprocessing(manifest)
+                        preprocessing: ResolvePreprocessing(manifest),
+                        fetchedPaths: fetchedPagePaths
                     ),
                     progressReporter.Progress,
                     OnPageDone,
@@ -508,6 +541,10 @@ public sealed class PageStreamClient(
         );
         string sourceDirectory = Path.Combine(workDirectory, "source");
         Directory.CreateDirectory(sourceDirectory);
+        // Owner-only: the directory holds the fetched chapter page bytes, and Directory.CreateDirectory
+        // honours the process umask (typically 022, i.e. world-readable).
+        RestrictToCurrentUser(workDirectory);
+        RestrictToCurrentUser(sourceDirectory);
 
         try
         {
@@ -602,6 +639,15 @@ public sealed class PageStreamClient(
         }
         finally
         {
+            // Hand the detector's device memory back at the chapter boundary, mirroring the upscale
+            // path's chapter-boundary release. Detection caches its session in the same shared
+            // OnnxSessionFactory (MaxCachedSessions == 1), so without this an idle worker keeps the
+            // detector session and its execution-provider arena resident until the next inference of
+            // any kind, and a following upscale plans its memory budget against a device that still
+            // holds it. ReleaseGpuCacheAsync already swallows and logs its own failures, exactly as
+            // the upscale finally relies on.
+            await workerClient.ReleaseGpuCacheAsync(stoppingToken);
+
             try
             {
                 if (Directory.Exists(workDirectory))
@@ -652,7 +698,8 @@ public sealed class PageStreamClient(
         [System.Runtime.CompilerServices.EnumeratorCancellation]
             CancellationToken cancellationToken,
         bool preprocess = true,
-        ImagePreprocessingOptions? preprocessing = null
+        ImagePreprocessingOptions? preprocessing = null,
+        System.Collections.Concurrent.ConcurrentDictionary<int, string>? fetchedPaths = null
     )
     {
         if (missingPages.Count == 0)
@@ -817,6 +864,11 @@ public sealed class PageStreamClient(
                         }
                     }
 
+                    // Record where the bytes actually landed before handing the page over, so the
+                    // page-done side can delete the yielded file rather than reconstruct a name that
+                    // a format conversion has already renamed away.
+                    fetchedPaths?.TryAdd(currentIndex, pagePath);
+
                     yield return new ChapterPage(currentIndex, currentName, pagePath);
                 }
             }
@@ -893,6 +945,22 @@ public sealed class PageStreamClient(
     {
         await foreach (PageUpload upload in uploads.ReadAllAsync(stoppingToken))
         {
+            // Re-read the live engine identity at the point a page is stamped for upload. The
+            // identity captured for the chapter (see RunAsync) is still what every chunk carries, so
+            // the server never sees a mixed chapter; but the page was produced by whichever provider
+            // the session factory resolved when it ran, and the capture alone would hide that. When
+            // the provider now reports a different identity, the page must not be committed into a
+            // chapter manifested under the old one: stop through the same non-terminal restart the
+            // server's own engine-mismatch rejection triggers, so the next manifest re-establishes
+            // the identity and resets the spool rather than blending two providers into one chapter.
+            string liveEngineIdentity = engineIdentity.Upscaler;
+            if (!string.Equals(liveEngineIdentity, engineIdentityValue, StringComparison.Ordinal))
+            {
+                throw new PageStreamRestartException(
+                    $"The engine identity changed mid-chapter for task {taskId}: the chapter was manifested as '{engineIdentityValue}' but the provider now reports '{liveEngineIdentity}'; restarting so the server re-manifests under the new identity."
+                );
+            }
+
             using AsyncClientStreamingCall<UploadPageChunk, UploadPageResponse> call =
                 client.UploadPage(
                     deadline: DateTime.UtcNow.Add(PageTimeout),
@@ -1036,6 +1104,33 @@ public sealed class PageStreamClient(
     }
 
     /// <summary>
+    /// Restricts an app-created directory that holds private page bytes to the current user.
+    /// <c>Directory.CreateDirectory</c> honours the process umask (typically 022, i.e. world-readable),
+    /// so the work, source and output directories would otherwise be readable by other users on the
+    /// host. Best effort: the deployment is Linux containers, and a filesystem that does not support
+    /// Unix modes must not fail a chapter over a permission tightening.
+    /// </summary>
+    private static void RestrictToCurrentUser(string directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(
+                directory,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            );
+        }
+        catch (Exception)
+        {
+            // Best effort only.
+        }
+    }
+
+    /// <summary>
     /// Forwards upscale progress as keep-alives without blocking the worker's event reader thread.
     /// </summary>
     private sealed class StreamingProgressReporter : IAsyncDisposable
@@ -1075,14 +1170,27 @@ public sealed class PageStreamClient(
                             {
                                 try
                                 {
+                                    var keepAlive = new KeepAliveRequest { TaskId = taskId };
+                                    // proto3 optional: leave an unknown field unset (rather than
+                                    // sending an explicit 0/""), so the server keeps the last known
+                                    // value instead of regressing the UI to 0/total.
+                                    if (pending.Total is int total)
+                                    {
+                                        keepAlive.Total = total;
+                                    }
+
+                                    if (pending.Current is int current)
+                                    {
+                                        keepAlive.Current = current;
+                                    }
+
+                                    if (pending.Phase is not null)
+                                    {
+                                        keepAlive.Phase = pending.Phase;
+                                    }
+
                                     await client.KeepAliveAsync(
-                                        new KeepAliveRequest
-                                        {
-                                            TaskId = taskId,
-                                            Total = pending.Total ?? 0,
-                                            Current = pending.Current ?? 0,
-                                            Phase = pending.Phase ?? string.Empty,
-                                        },
+                                        keepAlive,
                                         deadline: DateTime.UtcNow.AddSeconds(10),
                                         cancellationToken: _cts.Token
                                     );
