@@ -95,6 +95,75 @@ public class MangaJaNaiWorkerClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunChapterAsync_WhenTheEngineStalls_SurfacesTheInactivityTimeout()
+    {
+        // The engine's staged write task never completes on its own but observes the linked
+        // cancellation token, the way the real engine's encoder does. The client's inactivity clock
+        // (timeoutCts.CancelAfter) must fire and its OperationCanceledException catch must turn the
+        // cancellation into a TimeoutException — the transient signal the streaming classifier
+        // requeues. Without either the chapter would hang (the WaitAsync bound catches that) or the
+        // raw OCE would escape as a permanent failure.
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        engine
+            .UpscaleFileStagedAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CompressionFormat>(),
+                Arg.Any<int?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(ci => Task.FromResult(NeverCompletingWrite(ci.Arg<CancellationToken>())));
+
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            Substitute.For<IOnnxSessionFactory>(),
+            NullLogger<MangaJaNaiWorkerClient>.Instance
+        );
+
+        string outputDir = Directory.CreateTempSubdirectory("worker_client_timeout").FullName;
+        try
+        {
+            var request = new ChapterJobRequest
+            {
+                Id = "stalled",
+                OutputFolder = outputDir,
+                Format = CompressionFormat.Webp,
+                Scale = ScaleFactor.TwoX,
+                TotalPages = 1,
+            };
+
+            var reported = new List<UpscaleJobFile>();
+
+            TimeoutException error = await Assert
+                .ThrowsAsync<TimeoutException>(() =>
+                    client.RunChapterAsync(
+                        request,
+                        OnePage(),
+                        progress: null,
+                        onPageDone: reported.Add,
+                        cancellationToken: CancellationToken.None,
+                        timeout: TimeSpan.FromMilliseconds(200)
+                    )
+                )
+                .WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+
+            Assert.Contains("inactivity", error.Message, StringComparison.Ordinal);
+            Assert.Empty(reported);
+        }
+        finally
+        {
+            Directory.Delete(outputDir, true);
+        }
+    }
+
+    private static async Task NeverCompletingWrite(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+    }
+
     private static async IAsyncEnumerable<ChapterPage> OnePage()
     {
         yield return new ChapterPage(0, "page0.png", "page0.png");

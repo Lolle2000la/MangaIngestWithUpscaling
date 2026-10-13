@@ -113,8 +113,11 @@ re-inferred, so windowing costs time). On the CPU the bounded default window (20
 instead — a VRAM-shaped budget says nothing about the host RAM the pass lives in there. Its own
 footprint is therefore bounded independently of the page
 height — a whole-page pass would need ~1.5 GiB at 4000 resized rows and ~5.6 GiB at 15000. The window's
-context margin is what makes it exact: it covers the model's 1423-row receptive field, so the result is
-bit-identical to a whole-page pass at any window size (see the detector section of
+context margin is what makes it exact: it covers the model's 1431-row receptive field (the dilated
+residual stack reaches ±1023 — ten 3x3 blocks with dilations 1, 2, 4, … 512 — the smoothing convolution
+after the sigmoid ±8, and the peak test's MaxPool ±400 for the calibrated `peak_distance` of 800, so
+1023 + 8 + 400 = 1431; the source comment's 1423 is a slip, and the 1536-row margin covers it either
+way), so the result is bit-identical to a whole-page pass at any window size (see the detector section of
 [the migration notes](UPGRADE_NOTES_ONNX_MIGRATION.md#splits-and-detection)).
 
 The chapter and session-cache boundaries also run deliberate full `GC.Collect()` calls

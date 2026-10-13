@@ -7,8 +7,9 @@ services:
     # In the `default` profile so plain `docker compose up` starts it. Compose never auto-enables
     # profiles, so the tracked `.env` (which sets COMPOSE_PROFILES=default) is what turns this
     # profile on — keep that file committed or a fresh clone skips the app service. Passing
-    # `--profile remote-only` starts only the remote-only service instead. Also in `postgres` so the
-    # documented `docker compose --profile postgres up` brings the app up together with the server.
+    # `--profile remote-only` starts the remote-only service instead of this one (the unprofiled
+    # `kavita` service starts either way). Also in `postgres` so the documented
+    # `docker compose --profile postgres up` brings the app up together with the server.
     profiles:
       - default
       - postgres

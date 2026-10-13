@@ -112,6 +112,33 @@ public class Fp16CapabilityDetectorTests
     [Fact]
     public void EngineIdentity_ForUpscaler_ReflectsResolvedFp16()
     {
+        // The resolved precision decides which model set is downloaded, so it has to be observable in
+        // the identity: two configs that differ only in fp16 vs fp32 must not hash the same or a
+        // spool built for one model set would be accepted for the other. Both configs run on the same
+        // CUDA backend, so the fp16 term is the only difference between them.
+        var configFp16 = new UpscalerConfig
+        {
+            UseFp16 = true,
+            UseCPU = false,
+            SelectedDeviceIndex = 1,
+            PreferredGpuBackend = GpuBackend.CUDA,
+        };
+
+        var configFp32 = new UpscalerConfig
+        {
+            UseFp16 = false,
+            UseCPU = false,
+            SelectedDeviceIndex = 1,
+            PreferredGpuBackend = GpuBackend.CUDA,
+        };
+
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(configFp16, GpuBackend.CUDA),
+            EngineIdentity.ForUpscaler(configFp32, GpuBackend.CUDA)
+        );
+
+        // A genuinely-equal case, kept so the operator's spelling does not fragment the spool: an
+        // unset UseFp16 that resolves false on CPU must hash the same as an explicit false on CPU.
         var configAuto = new UpscalerConfig
         {
             UseFp16 = null,
@@ -126,9 +153,9 @@ public class Fp16CapabilityDetectorTests
             SelectedDeviceIndex = 0,
         };
 
-        string hashAuto = EngineIdentity.ForUpscaler(configAuto);
-        string hashExplicitFalse = EngineIdentity.ForUpscaler(configExplicitFalse);
-
-        Assert.Equal(hashExplicitFalse, hashAuto);
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(configAuto),
+            EngineIdentity.ForUpscaler(configExplicitFalse)
+        );
     }
 }

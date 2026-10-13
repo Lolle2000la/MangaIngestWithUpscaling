@@ -86,8 +86,9 @@ configuration surface. Nothing here requires a data migration; the database sche
   repository's. The model's vertical receptive field is 1431 rows: the dilated residual stack
   reaches ±1023 (ten 3x3 blocks with dilations 1, 2, 4, … 512), the smoothing convolution after the
   sigmoid ±8, and the peak test's MaxPool ±400 (kernel 801, i.e. the calibrated `peak_distance` of
-  800) — 1023 + 8 + 400 = 1431, where the source comment writes 1423. The 1536-row margin sits above
-  both figures, so the slip never changed a window. A window with less context scores the rows near
+  800) — 1023 + 8 + 400 = 1431. An earlier revision of the source comment and of this figure said
+  1423; both now derive the same 1431. The 1536-row margin sits above the field either way, so the
+  imprecision never changed a window. A window with less context scores the rows near
   its edges from a truncated neighbourhood. The reference can use 512 because it windows the *logits*
   and applies the sigmoid, the smoothing and the peak search afterwards; this export bakes those three
   into the graph, so its windows are already post-calibration and the margin has to cover the whole

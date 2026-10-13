@@ -133,21 +133,38 @@ public class VulkanMemoryProviderTests
     {
         Assert.SkipWhen(!VulkanMemoryProvider.IsAvailable, NoVulkan);
 
-        bool supportsFp16 = VulkanMemoryProvider.SupportsFp16(0);
-
         // IsCpuDevice takes an accelerator index and ResolveGpuIndex skips software rasterizers by
-        // construction, so IsCpuDevice is false for every accelerator and the old
-        // "if (IsCpuDevice(0)) ..." branch could never run. What is left to pin is the host that
-        // enumerated rasterizers and no accelerator at all: SupportsFp16 there must be false rather
-        // than fall back to the vendor heuristic.
+        // construction, so IsCpuDevice is false for every accelerator and the "if (IsCpuDevice(0))"
+        // branch can never run. What the host that enumerated rasterizers and no accelerator at all
+        // must still pin is that SupportsFp16 is false there rather than falling back to the vendor
+        // heuristic.
         if (VulkanMemoryProvider.DeviceCount == 0)
         {
-            Assert.False(supportsFp16);
+            Assert.False(VulkanMemoryProvider.SupportsFp16(0));
+            return;
         }
 
-        // Nothing is asserted for a real GPU: fp16 is optional in Vulkan and every older
-        // integrated part lacks it, so "supported" would be a claim about the hardware, not about
-        // this code. What is pinned is that the answer is a bool and does not throw.
+        // On a host with a real accelerator the decision must be the one derived from that device's
+        // own data, not a constant: QueryDevice(i).VendorId is the vendor the provider reads for the
+        // accelerator, and the four modern vendors are fp16-capable. A SupportsFp16 hardcoded to
+        // false (or one indexing the wrong device) fails this, whereas the old body asserted nothing
+        // whenever DeviceCount > 0.
+        for (int accelerator = 0; accelerator < VulkanMemoryProvider.DeviceCount; accelerator++)
+        {
+            VulkanGpuMemory? device = VulkanMemoryProvider.QueryDevice(accelerator);
+            Assert.SkipWhen(device is null, NoBudgetInformation);
+
+            Assert.Equal(
+                VulkanMemoryProvider.ResolveFp16Support(
+                    featureQueryRan: false,
+                    shaderFloat16: false,
+                    storageBuffer16BitAccess: false,
+                    uniformAndStorageBuffer16BitAccess: false,
+                    vendorId: device!.VendorId
+                ),
+                VulkanMemoryProvider.SupportsFp16(accelerator)
+            );
+        }
     }
 
     /// <summary>

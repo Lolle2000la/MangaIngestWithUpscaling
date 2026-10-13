@@ -252,7 +252,7 @@ Without this, after being redirected back to the application, you might be faced
    ```
 4. **Run the application:**
    ```sh
-   dotnet run
+   dotnet run --project src/MangaIngestWithUpscaling
    ```
 
 ## Configuration
