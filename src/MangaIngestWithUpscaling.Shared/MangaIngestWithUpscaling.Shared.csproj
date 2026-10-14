@@ -107,8 +107,11 @@
       Version="8.18.6"
       Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"
     />
-    <!-- Work around an issue with a critical security hole not being fixed yet -->
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.12" />
+    <!-- Both are pinned above what Microsoft.Build.Tasks.Core resolves transitively (Pkcs 10.0.10,
+         Xml 10.0.12); those versions carry published advisories, and the audit warnings are errors
+         under /warnaserror. Raise these together with the rest of the 10.0.x line. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>
