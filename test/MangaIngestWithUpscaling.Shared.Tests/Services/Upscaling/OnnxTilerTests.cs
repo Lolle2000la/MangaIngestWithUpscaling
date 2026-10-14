@@ -2119,6 +2119,84 @@ public class OnnxTilerTests : IDisposable
         Assert.Equal(1, outputs.DisposeCount);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void UpscaleRgb_CancelledBeforeTheDecode_UnwindsOnlyAfterTheReleaseHasFinished()
+    {
+        // The release attached to the decode task runs only when the delegate never started, and
+        // ExecuteSynchronously is a scheduling hint rather than a promise: on a loaded runner it can be
+        // deferred past the unwind, so the native output collection — whose tensors the session owns —
+        // was still being released while the engine had already been handed the exception and released
+        // that session. CI caught that once, and only by timing.
+        //
+        // Here the collection parks inside Dispose until the test lets it finish, which makes "the
+        // unwind waited for the release" observable instead of a matter of scheduling.
+        string dir = CreateDir();
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(dir, scale: 2);
+        using var session = new InferenceSession(modelPath);
+
+        const int width = 512;
+        const int height = 512;
+        const int scale = 2;
+        byte[] rgb = new byte[width * height * 3];
+        OnnxTiler.TileSplit split = OnnxTiler.TileSplit.For(width, height, 128);
+        var outputs = new ParkingOutputCollection();
+        using var cts = new CancellationTokenSource();
+
+        OnnxTiler.RunImplOverride.Value = (_, _) =>
+        {
+            cts.Cancel();
+            return outputs;
+        };
+
+        Exception? thrown = null;
+        var finished = new ManualResetEventSlim(false);
+        // A dedicated thread, not the pool: ExecuteSynchronously is refused when the completing thread
+        // is not a pool thread, so this is what makes the release land on a queued continuation instead
+        // of running inline — the interleaving the loaded runner produced.
+        var runner = new Thread(() =>
+        {
+            try
+            {
+                OnnxTiler.UpscaleRgb(
+                    rgb,
+                    width,
+                    height,
+                    scale,
+                    session,
+                    split,
+                    cancellationToken: cts.Token
+                );
+            }
+            catch (Exception ex)
+            {
+                thrown = ex;
+            }
+            finally
+            {
+                finished.Set();
+            }
+        });
+        runner.IsBackground = true;
+        runner.Start();
+
+        Assert.True(
+            outputs.DisposeStarted.Wait(TimeSpan.FromSeconds(30)),
+            "the cancelled path never started releasing the output collection"
+        );
+        // Parked inside the release: the unwind must be waiting for it, not carrying on.
+        Assert.False(
+            finished.Wait(TimeSpan.FromSeconds(2)),
+            "UpscaleRgb unwound while the output collection was still being released"
+        );
+
+        outputs.DisposeGate.Set();
+        Assert.True(finished.Wait(TimeSpan.FromSeconds(30)), "UpscaleRgb never unwound");
+        Assert.True(runner.Join(TimeSpan.FromSeconds(30)), "the upscaling thread did not finish");
+        Assert.IsAssignableFrom<OperationCanceledException>(thrown);
+        Assert.True(outputs.DisposeCompleted, "the release did not finish");
+    }
+
     /// <summary>
     /// An empty ONNX output collection that counts how often it is disposed, so a test can tell a
     /// single-owner release from a double one. Empty because the delegate that would read it never
@@ -2140,6 +2218,38 @@ public class OnnxTilerTests : IDisposable
             GetEnumerator();
 
         public void Dispose() => DisposeCount++;
+    }
+
+    /// <summary>
+    /// An empty ONNX output collection whose <see cref="Dispose"/> parks until the test opens
+    /// <see cref="DisposeGate"/>, so a test can tell "the release finished before the caller got
+    /// control back" from "the release is still running behind the caller".
+    /// </summary>
+    private sealed class ParkingOutputCollection
+        : IDisposableReadOnlyCollection<DisposableNamedOnnxValue>
+    {
+        public ManualResetEventSlim DisposeStarted { get; } = new(false);
+
+        public ManualResetEventSlim DisposeGate { get; } = new(false);
+
+        public bool DisposeCompleted { get; private set; }
+
+        public int Count => 0;
+
+        public DisposableNamedOnnxValue this[int index] => throw new IndexOutOfRangeException();
+
+        public void Dispose()
+        {
+            DisposeStarted.Set();
+            DisposeGate.Wait(TimeSpan.FromSeconds(30));
+            DisposeCompleted = true;
+        }
+
+        public IEnumerator<DisposableNamedOnnxValue> GetEnumerator() =>
+            Enumerable.Empty<DisposableNamedOnnxValue>().GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+            GetEnumerator();
     }
 
     private string CreateDir()

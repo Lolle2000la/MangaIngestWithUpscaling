@@ -1848,6 +1848,17 @@ public static class OnnxTiler
         );
 
         Task<byte[]>? prevDecodeTask = null;
+
+        /// <summary>
+        /// The release attached to <see cref="prevDecodeTask"/>. It owns the previous tile's native
+        /// output collection on the one path where the decode delegate never runs, and it is awaited
+        /// wherever the decode task is drained: <c>ExecuteSynchronously</c> is a scheduling hint, not a
+        /// promise, so without draining it a page could unwind (and the engine then release the session
+        /// that owns those tensors) while the collection was still undisposed. CI caught exactly that
+        /// once: the cancelled-before-the-decode test saw the collection undisposed at the moment
+        /// UpscaleRgb threw.
+        /// </summary>
+        Task? prevDecodeContinuation = null;
         TileJob prevJob = default;
 
         // The whole pipeline — the loop and the final blend below — runs under one watch. An
@@ -1987,7 +1998,7 @@ public static class OnnxTiler
                         cancellationToken
                     );
 
-                    prevDecodeTask.ContinueWith(
+                    prevDecodeContinuation = prevDecodeTask.ContinueWith(
                         completed =>
                         {
                             // Claim only when the delegate never ran (a task cancelled before it
@@ -2049,9 +2060,11 @@ public static class OnnxTiler
             // left running behind it. The input prefetch holds no native state, so observing it
             // is enough (see ObserveAbandonedInputTask). The previous tile's decode does hold
             // native state — the previous Run's output collection, which the session owns — so
-            // it is waited out rather than only observed.
+            // it is waited out rather than only observed, and so is the release attached to it:
+            // the caller (the engine) releases the session as soon as this unwinds.
             ObserveAbandonedInputTask(nextInputTask);
             DrainAbandonedDecodeTask(prevDecodeTask);
+            DrainAbandonedTask(prevDecodeContinuation);
             throw;
         }
 
@@ -2106,6 +2119,30 @@ public static class OnnxTiler
         catch
         {
             // Observed and dropped: the primary exception is what the caller needs to see.
+        }
+    }
+
+    /// <summary>
+    /// The same for a task with no result — the release attached to a decode task. It must be awaited
+    /// on the unwind path so the native output collection is disposed before the caller releases the
+    /// session that owns its tensors, and awaiting it also publishes the disposal to the caller's
+    /// thread rather than leaving it to whenever the continuation happens to be scheduled.
+    /// </summary>
+    private static void DrainAbandonedTask(Task? task)
+    {
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            task.GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Observed and dropped, as above. A release that threw is already a fault of its own; the
+            // page's own exception is what the caller needs to see.
         }
     }
 
