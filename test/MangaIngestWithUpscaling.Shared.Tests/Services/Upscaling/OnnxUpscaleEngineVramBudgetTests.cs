@@ -88,26 +88,32 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task AutomaticBudget_SessionNotCached_DiscountsNothing()
+    public async Task AutomaticBudget_DiscountsWhatTheDeviceChargedThisProcess()
     {
-        // The page-break detector shares the factory, so the upscaler's session can be gone between two
-        // pages; the engine's own GTT safety net flushes it too, after a page that grew GTT. The next
-        // page then allocates a fresh arena and cannot reuse the memory, so discounting it would plan
-        // past the card instead of against it.
+        // The discount is measured, not only predicted: ONNX Runtime's arena outlives a released
+        // session, so after the GTT safety net flushed the cache the device still reports the page's
+        // memory. The measured delta covers that, a benchmark's leftover session and a retry's arena —
+        // none of which the predicted peak knows about. Here the device charges more than the
+        // prediction, so the larger figure is discounted.
         string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
-        var factory = new CachedSessionFactory(modelPath) { ReportsSessionCached = false };
         var engine = new RecordingBudgetEngine(
-            factory,
+            new CachedSessionFactory(modelPath),
             Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
             Substitute.For<IDeviceMemoryCalibrator>(),
             NullLogger<OnnxUpscaleEngine>.Instance,
             FixedBudget
         );
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 10L));
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L)); // page 1: +8000 MiB
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L));
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L));
 
         await RunPageAsync(engine, "1.webp");
         await RunPageAsync(engine, "2.webp");
 
-        Assert.Equal(new long[] { 0, 0 }, engine.OwnSessionBytesSeen);
+        // Page 2 measured nothing of its own (it reused the session), so it keeps page 1's figure:
+        // that persistence is what makes the budget stable instead of wobbling between pages.
+        Assert.Equal(new long[] { 0, 8_000L * 1024 * 1024 }, engine.OwnSessionBytesSeen);
     }
 
     [Fact]
@@ -276,6 +282,19 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
             }
         }
 
+        /// <summary>Device readings handed out in order, one pair per read.</summary>
+        public Queue<(long Vram, long Gtt)> DeviceReadings { get; } = new();
+
+        protected internal override (long VramUsed, long GttUsed) ReadDeviceMemoryUsage(
+            int deviceId
+        )
+        {
+            lock (DeviceReadings)
+            {
+                return DeviceReadings.Count > 0 ? DeviceReadings.Dequeue() : (0, 0);
+            }
+        }
+
         protected internal override long ReadAutoVramBudget(int deviceId, long ownSessionBytes)
         {
             lock (_seen)
@@ -289,19 +308,12 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
     }
 
     /// <summary>
-    /// Hands out a real session for the tiny model and models the cache the engine discounts against:
-    /// present while a session exists, and reported through <see cref="IsSessionCached"/>.
+    /// Hands out a real session for the tiny model.
     /// </summary>
     private sealed class CachedSessionFactory(string modelPath) : IOnnxSessionFactory
     {
         private readonly Lock _lock = new();
         private InferenceSession? _session;
-
-        /// <summary>
-        /// Whether the factory admits to caching the session. <c>false</c> models an eviction by the
-        /// detector, which shares the real factory.
-        /// </summary>
-        public bool ReportsSessionCached { get; set; } = true;
 
         public InferenceSession GetOrCreateSession(string modelPath)
         {
@@ -325,19 +337,6 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         public void InvalidateAllSessions() => InvalidateSession(modelPath);
 
         public void ReleaseCachedSessions() => InvalidateAllSessions();
-
-        public bool IsSessionCached(string modelPath)
-        {
-            if (!ReportsSessionCached)
-            {
-                return false;
-            }
-
-            lock (_lock)
-            {
-                return _session is not null;
-            }
-        }
 
         public GpuBackend GetEffectiveBackend() => GpuBackend.CPU;
 

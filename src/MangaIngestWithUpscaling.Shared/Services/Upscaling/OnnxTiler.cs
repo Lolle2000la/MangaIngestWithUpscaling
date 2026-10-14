@@ -1311,14 +1311,46 @@ public static class OnnxTiler
         long? safetyMarginBytes = null,
         long? exclusiveThresholdBytes = null,
         long ownSessionBytes = 0
+    ) =>
+        ResolveAvailableVramBudget(
+            VulkanMemoryProvider.QueryDevice(deviceId),
+            GetSystemWideVramInfo(deviceId),
+            utilizationFraction,
+            safetyMarginBytes,
+            exclusiveThresholdBytes,
+            ownSessionBytes
+        );
+
+    /// <summary>
+    /// The budget from already-gathered device figures. Pure, so every branch — including the one a
+    /// Windows host without sysfs takes — can be pinned without a GPU.
+    /// </summary>
+    internal static long ResolveAvailableVramBudget(
+        VulkanGpuMemory? vulkanMetrics,
+        (long Total, long Used, long Free) systemWide,
+        double? utilizationFraction,
+        long? safetyMarginBytes,
+        long? exclusiveThresholdBytes,
+        long ownSessionBytes
     )
     {
-        // 1. Try Vulkan VK_EXT_memory_budget (primary for all GPUs)
-        var vkMem = VulkanMemoryProvider.QueryDevice(deviceId);
-        if (vkMem != null && vkMem.TotalVramBytes > 0)
+        // 1. Vulkan VK_EXT_memory_budget (primary for all GPUs), with its used figure replaced by a
+        //    device-wide one — see ResolveSystemWideUsedVram for why the raw heapUsage is not it.
+        if (vulkanMetrics is { TotalVramBytes: > 0 })
         {
+            long used = ResolveSystemWideUsedVram(
+                vulkanMetrics.TotalVramBytes,
+                vulkanMetrics.BudgetBytes,
+                vulkanMetrics.UsedVramBytes,
+                ownSessionBytes,
+                systemWide.Used
+            );
+
             return BudgetFromVulkanMetrics(
-                vkMem,
+                vulkanMetrics with
+                {
+                    UsedVramBytes = used,
+                },
                 utilizationFraction,
                 safetyMarginBytes,
                 exclusiveThresholdBytes,
@@ -1327,12 +1359,14 @@ public static class OnnxTiler
         }
 
         // 2. Secondary fallback: DRM sysfs or nvidia-smi
-        var (total, used, free) = GetGpuVramInfo(deviceId);
-        if (total > 0 && free > 0)
+        if (systemWide.Total > 0 && systemWide.Free > 0)
         {
             return CalculateVramBudget(
-                total,
-                Math.Max(0, used - Math.Clamp(ownSessionBytes, 0, Math.Max(0, used))),
+                systemWide.Total,
+                Math.Max(
+                    0,
+                    systemWide.Used - Math.Clamp(ownSessionBytes, 0, Math.Max(0, systemWide.Used))
+                ),
                 utilizationFraction,
                 safetyMarginBytes,
                 exclusiveThresholdBytes
@@ -1344,9 +1378,99 @@ public static class OnnxTiler
     }
 
     /// <summary>
+    /// The device-wide memory in use, from whichever source can answer it, for the budget arithmetic.
+    /// <para>
+    /// VK_EXT_memory_budget's <c>heapUsage</c> is not that figure on every driver: RADV reports only
+    /// this process's own allocations — measured on an RX 9070 XT, 64 MB against a sysfs 2677 MB with
+    /// nothing but a desktop on the card, and 11695 against 14301 mid-chapter, the difference being
+    /// exactly the desktop's share. Budgeting against that figure ignores every other tenant, which is
+    /// the memory the 15% eviction margin exists to stay away from. <c>heapBudget</c> *is* device-wide:
+    /// it is what this process may still allocate once every other tenant is accounted for (the same
+    /// measurement: 13690 = 16304 − (2677 − 64)).
+    /// </para>
+    /// <para>
+    /// The driver's own accounting is therefore preferred where it exists: <c>total − heapBudget</c> is
+    /// what others hold, plus the caller's own footprint, which <see cref="BudgetFromVulkanMetrics"/>
+    /// then takes back out as the discount — so the budget is the same on every page and the tile shape
+    /// stops churning. That branch is portable (the driver reports it on Windows too). A system-wide
+    /// source (Linux DRM sysfs for AMD/Intel, nvidia-smi for NVIDIA on either OS) is the fallback for a
+    /// host whose driver reports no budget, and there the caller's own footprint is discounted out of
+    /// the figure instead.
+    /// </para>
+    /// </summary>
+    internal static long ResolveSystemWideUsedVram(
+        long vulkanTotal,
+        long vulkanBudget,
+        long vulkanUsed,
+        long ownSessionBytes,
+        long systemWideUsed
+    )
+    {
+        // The driver's own accounting first: heapBudget is what this process may still allocate once
+        // every other tenant is accounted for, so total − heapBudget is exactly the memory that is not
+        // ours — measured above as 16304 − 13690 = 2614 with a desktop holding 2677 MB and this process
+        // 64 MB. Adding the caller's own footprint back makes the figure "everything except what we can
+        // reuse", which is what the discount then reduces to the other tenants alone: the budget is
+        // therefore the same on the first page as on the tenth, which is what keeps the tile shape from
+        // churning. It is also the portable branch — the driver reports it on Windows too.
+        if (vulkanTotal > 0 && vulkanBudget > 0)
+        {
+            return Math.Max(0, vulkanTotal - vulkanBudget) + Math.Max(0, ownSessionBytes);
+        }
+
+        // Without a driver budget there is nothing that separates our own memory from everyone else's,
+        // so the system-wide figure is used and the caller's footprint is taken out of it by the
+        // discount instead.
+        if (systemWideUsed > 0)
+        {
+            return systemWideUsed;
+        }
+
+        return Math.Max(0, vulkanUsed);
+    }
+
+    /// <summary>
+    /// Total, used and free device memory from a source that measures the whole device rather than this
+    /// process: Linux DRM sysfs (AMD/Intel) or nvidia-smi (NVIDIA, both OSes). (0, 0, 0) when neither is
+    /// available, which is the case on a Windows AMD or Intel host.
+    /// </summary>
+    private static (long Total, long Used, long Free) GetSystemWideVramInfo(int deviceId)
+    {
+        var drmCards = QueryDrmGpus();
+        if (drmCards.Count > 0)
+        {
+            var selected =
+                (deviceId >= 0 && deviceId < drmCards.Count)
+                    ? drmCards[deviceId]
+                    : drmCards.OrderByDescending(c => c.Total).First();
+
+            return (selected.Total, selected.Used, Math.Max(0, selected.Total - selected.Used));
+        }
+
+        var nvidiaInfo = TryGetNvidiaGpuMemory(deviceId);
+        if (nvidiaInfo.HasValue && nvidiaInfo.Value.Total > 0)
+        {
+            return (
+                nvidiaInfo.Value.Total,
+                nvidiaInfo.Value.Used,
+                Math.Max(0, nvidiaInfo.Value.Total - nvidiaInfo.Value.Used)
+            );
+        }
+
+        return (0, 0, 0);
+    }
+
+    /// <summary>
     /// Gets total, used, and free GPU VRAM in bytes for the specified device.
     /// Supports Vulkan VK_EXT_memory_budget (primary), Linux AMD/Intel DRM sysfs, and NVIDIA via nvidia-smi.
     /// Returns (0, 0, 0) if GPU memory cannot be detected.
+    /// <para>
+    /// <paramref name="Used"/> is whatever the source reports, and that is <em>not</em> the device-wide
+    /// figure on a Vulkan source: RADV's <c>heapUsage</c> counts only this process's own allocations
+    /// while <c>Free</c> (the driver's <c>heapBudget</c>) is device-wide. Use
+    /// <see cref="ResolveSystemWideUsedVram"/> for the budget arithmetic; this accessor exists for the
+    /// total, which is what its other callers read.
+    /// </para>
     /// </summary>
     public static (long Total, long Used, long Free) GetGpuVramInfo(int deviceId = 0)
     {

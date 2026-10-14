@@ -159,6 +159,14 @@ public class OnnxUpscaleEngine(
     /// </summary>
     private long _ownSessionPeakBytes;
 
+    /// <summary>
+    /// Device memory this process's own work added, measured across the pages (vramAfter − vramBefore)
+    /// and kept at its largest. The read takes the larger of this and the predicted peak: the measured
+    /// figure is the arena's real contribution to the device's used figure, so subtracting it leaves the
+    /// budget the same on every page of a chapter — which is what stops the tile shape from churning.
+    /// </summary>
+    private long _ownSessionMeasuredDeltaBytes;
+
     private readonly record struct UpscaledPage(
         byte[] Bytes,
         int Width,
@@ -261,7 +269,7 @@ public class OnnxUpscaleEngine(
                 // The budget is read inside UpscaleWithModelAsync, after the first-use benchmark: that
                 // benchmark and the model probe allocate device memory of their own, and a budget read
                 // before them plans the page as if that memory were free.
-                var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
+                var (vramBefore, gttBefore) = ReadDeviceMemoryUsage(deviceId);
 
                 (string model, byte[] upscaledBytes) = await UpscaleWithFirstWorkingModelAsync(
                     inputPath,
@@ -286,7 +294,21 @@ public class OnnxUpscaleEngine(
                 // on every page and turns the per-shape buffer cache's own reuse into a rebuild per
                 // page. The per-shape growth is handled proactively in UpscaleWithModelAsync; this is
                 // the safety net for anything that still grows.
-                var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
+                var (vramAfter, gttAfter) = ReadDeviceMemoryUsage(deviceId);
+
+                // What the device charged this process for the page — the arena, a benchmark's leftover
+                // session, a retry's. The next page's budget discounts it, and the figure is kept at its
+                // largest rather than reassigned: a page that reuses the session adds nothing, so a
+                // reassignment would drop the discount back to the prediction on every reused page and
+                // the budget would wobble again. See _ownSessionMeasuredDeltaBytes.
+                lock (_sessionShapeGate)
+                {
+                    _ownSessionMeasuredDeltaBytes = Math.Max(
+                        _ownSessionMeasuredDeltaBytes,
+                        Math.Max(0, vramAfter - vramBefore)
+                    );
+                }
+
                 if (gttAfter - gttBefore > ElevatedGttGrowthBytes)
                 {
                     logger.LogWarning(
@@ -1283,7 +1305,7 @@ public class OnnxUpscaleEngine(
         // and the page peaked at 15.2 GB of the 16.3 GB card, spilling 2.4 GB into GTT; the GTT safety
         // net answered by flushing the session, the memory did not come back, and the pages after that
         // planned against a nearly full card and fell below the 256 px quality floor.
-        long ownSessionBytes = OwnCachedSessionFootprintBytes();
+        long ownSessionBytes = OwnSessionFootprintBytes();
         long budget =
             config.Value.ResolvedMemoryBudgetBytes > 0
                 ? config.Value.ResolvedMemoryBudgetBytes
@@ -1339,7 +1361,7 @@ public class OnnxUpscaleEngine(
                 // The registration and release happen per attempt inside AcquireSessionForShape;
                 // see _sessionShape for the measurement behind this.
 
-                var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
+                var (vramBefore, gttBefore) = ReadDeviceMemoryUsage(deviceId);
                 logger.LogDebug(
                     "Upscaling {InputPath} ({Width}x{Height}, scale {Scale}) using model {Model} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (predicted peak: {PredictedMb} MB, budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
                     Path.GetFileName(inputPath),
@@ -1558,7 +1580,7 @@ public class OnnxUpscaleEngine(
     /// </para>
     /// </summary>
     /// <param name="ownSessionBytes">
-    /// The footprint to discount, from <see cref="OwnCachedSessionFootprintBytes"/>.
+    /// The footprint to discount, from <see cref="OwnSessionFootprintBytes"/>.
     /// </param>
     protected internal virtual long ReadAutoVramBudget(int deviceId, long ownSessionBytes) =>
         OnnxTiler.GetAvailableVramBudget(
@@ -1573,18 +1595,20 @@ public class OnnxUpscaleEngine(
     /// Device memory the engine's own cached session holds, or 0 when it holds none. Only the session
     /// the shape gate last registered counts, and only while the factory still caches it.
     /// </summary>
-    private long OwnCachedSessionFootprintBytes()
+    private long OwnSessionFootprintBytes()
     {
         lock (_sessionShapeGate)
         {
-            return
-                _sessionShapeModel is { } cachedModel
-                && _ownSessionPeakBytes > 0
-                && sessionFactory.IsSessionCached(cachedModel)
-                ? _ownSessionPeakBytes
-                : 0;
+            return Math.Max(_ownSessionPeakBytes, _ownSessionMeasuredDeltaBytes);
         }
     }
+
+    /// <summary>
+    /// Current device memory usage, isolated as a seam so the footprint the budget discounts can be
+    /// pinned in a test without a device.
+    /// </summary>
+    protected internal virtual (long VramUsed, long GttUsed) ReadDeviceMemoryUsage(int deviceId) =>
+        OnnxTiler.GetGpuMemoryUsage(deviceId);
 
     /// <summary>
     /// Registers the padded tensor shape the caller is about to run and returns the session to run it

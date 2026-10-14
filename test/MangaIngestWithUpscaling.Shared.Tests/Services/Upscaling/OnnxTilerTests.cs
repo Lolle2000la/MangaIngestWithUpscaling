@@ -1549,6 +1549,193 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void ResolveSystemWideUsedVram_PrefersTheDriversOwnAccounting()
+    {
+        // The measured case: RADV's heapUsage reported 64 MB (this process) while the card held
+        // 2677 MB (a desktop). total − heapBudget is exactly the memory that is not ours — the
+        // measurement gives 16304 − 13690 = 2614 with a desktop holding 2677 MB and this process 64 MB —
+        // and it is available on the first page, which is what makes the budget stable there. The
+        // caller's own footprint is added back so the discount lands on the other tenants alone.
+        long expected = (16L * 1024 * 1024 * 1024) - (long)(13.37 * 1024 * 1024 * 1024);
+
+        Assert.Equal(
+            expected,
+            OnnxTiler.ResolveSystemWideUsedVram(
+                vulkanTotal: 16L * 1024 * 1024 * 1024,
+                vulkanBudget: (long)(13.37 * 1024 * 1024 * 1024),
+                vulkanUsed: 64L * 1024 * 1024,
+                ownSessionBytes: 0,
+                systemWideUsed: 2677L * 1024 * 1024
+            )
+        );
+        Assert.Equal(
+            expected + 7000L * 1024 * 1024,
+            OnnxTiler.ResolveSystemWideUsedVram(
+                vulkanTotal: 16L * 1024 * 1024 * 1024,
+                vulkanBudget: (long)(13.37 * 1024 * 1024 * 1024),
+                vulkanUsed: 64L * 1024 * 1024,
+                ownSessionBytes: 7000L * 1024 * 1024,
+                systemWideUsed: 2677L * 1024 * 1024
+            )
+        );
+    }
+
+    [Fact]
+    public void ResolveSystemWideUsedVram_WithoutADriverBudget_UsesTheSystemWideSource()
+    {
+        // A driver that reports no budget leaves nothing that separates our own memory from everyone
+        // else's, so the system-wide figure is used and the caller's footprint is discounted out of it.
+        Assert.Equal(
+            14301L * 1024 * 1024,
+            OnnxTiler.ResolveSystemWideUsedVram(
+                vulkanTotal: 16L * 1024 * 1024 * 1024,
+                vulkanBudget: 0,
+                vulkanUsed: 11695L * 1024 * 1024,
+                ownSessionBytes: 7000L * 1024 * 1024,
+                systemWideUsed: 14301L * 1024 * 1024
+            )
+        );
+    }
+
+    [Fact]
+    public void ResolveSystemWideUsedVram_WithoutOne_DerivesItFromTheDriversOwnAccounting()
+    {
+        // A Windows AMD or Intel host has no sysfs, so the driver's figures are all there is. heapBudget
+        // is device-wide — total minus what every other tenant holds — so total − heapBudget is the
+        // others, plus the caller's own footprint, which the discount takes back out again.
+        long total = 16L * 1024 * 1024 * 1024;
+        long budget = (long)(13.37 * 1024 * 1024 * 1024);
+        long others = total - budget;
+
+        Assert.Equal(
+            others,
+            OnnxTiler.ResolveSystemWideUsedVram(
+                total,
+                budget,
+                64,
+                ownSessionBytes: 0,
+                systemWideUsed: 0
+            )
+        );
+        Assert.Equal(
+            others + 7000L * 1024 * 1024,
+            OnnxTiler.ResolveSystemWideUsedVram(
+                total,
+                budget,
+                64,
+                ownSessionBytes: 7000L * 1024 * 1024,
+                systemWideUsed: 0
+            )
+        );
+    }
+
+    [Fact]
+    public void ResolveSystemWideUsedVram_NoBudgetFigure_FallsBackToTheDriversUsage()
+    {
+        // Nothing better to go on: a driver that reports no budget still reports a usage, and a
+        // conservative answer is not available from it.
+        Assert.Equal(
+            500L * 1024 * 1024,
+            OnnxTiler.ResolveSystemWideUsedVram(
+                vulkanTotal: 16L * 1024 * 1024 * 1024,
+                vulkanBudget: 0,
+                vulkanUsed: 500L * 1024 * 1024,
+                ownSessionBytes: 0,
+                systemWideUsed: 0
+            )
+        );
+        Assert.Equal(0, OnnxTiler.ResolveSystemWideUsedVram(0, 0, -5, 0, 0));
+    }
+
+    [Fact]
+    public void ResolveAvailableVramBudget_LeavesOutTheOtherTenants_NotTheDriversOwnUsage()
+    {
+        // The measured relationship on an RX 9070 XT with a desktop: heapBudget = total − (everything
+        // that is not ours), so total − heapBudget is the other tenants (6894 MiB here) and adding our
+        // own 7407 MiB back gives exactly the sysfs figure (14301 MiB). The budget then leaves the other
+        // tenants out, so it is the same on the first page as on the tenth — rather than shrinking to
+        // the 1.3 GB the raw heapUsage left on the second one, which planned 5x7 of 225x229.
+        long total = 16L * 1024 * 1024 * 1024;
+        long own = 7407L * 1024 * 1024;
+        long others = 6894L * 1024 * 1024;
+        var vulkan = new VulkanGpuMemory(
+            DeviceIndex: 0,
+            DeviceName: "test",
+            VendorId: 0x1002,
+            TotalVramBytes: total,
+            BudgetBytes: total - others,
+            UsedVramBytes: 11695L * 1024 * 1024
+        );
+
+        long budget = OnnxTiler.ResolveAvailableVramBudget(
+            vulkan,
+            (total, others + own, 2003L * 1024 * 1024),
+            utilizationFraction: null,
+            safetyMarginBytes: null,
+            exclusiveThresholdBytes: null,
+            ownSessionBytes: own
+        );
+
+        Assert.InRange(budget, (long)(6.5 * 1024 * 1024 * 1024), (long)(7.1 * 1024 * 1024 * 1024));
+    }
+
+    [Fact]
+    public void ResolveAvailableVramBudget_WithoutASystemWideSource_UsesTheDriversBudget()
+    {
+        // The Windows path: no sysfs, so the others come from total − heapBudget (2.63 GiB here) and our
+        // own footprint from the caller. The budget is what the session may hold in total: 16 GiB minus
+        // the other tenant minus the desktop margin — not the 13.4 GiB the driver's own budget would
+        // hand out verbatim, because the driver's usage alone looks quasi-exclusive on this host.
+        var vulkan = new VulkanGpuMemory(
+            DeviceIndex: 0,
+            DeviceName: "test",
+            VendorId: 0x1002,
+            TotalVramBytes: 16L * 1024 * 1024 * 1024,
+            BudgetBytes: (long)(13.37 * 1024 * 1024 * 1024),
+            UsedVramBytes: 64L * 1024 * 1024
+        );
+
+        long budget = OnnxTiler.ResolveAvailableVramBudget(
+            vulkan,
+            (0, 0, 0),
+            utilizationFraction: null,
+            safetyMarginBytes: null,
+            exclusiveThresholdBytes: null,
+            ownSessionBytes: 7000L * 1024 * 1024
+        );
+
+        Assert.InRange(
+            budget,
+            (long)(10.8 * 1024 * 1024 * 1024),
+            (long)(11.2 * 1024 * 1024 * 1024)
+        );
+    }
+
+    [Fact]
+    public void ResolveAvailableVramBudget_NoVulkan_UsesTheSystemWideSourceWithTheDiscount()
+    {
+        long budget = OnnxTiler.ResolveAvailableVramBudget(
+            vulkanMetrics: null,
+            systemWide: (16L * 1024 * 1024 * 1024, 14301L * 1024 * 1024, 2003L * 1024 * 1024),
+            utilizationFraction: null,
+            safetyMarginBytes: null,
+            exclusiveThresholdBytes: null,
+            ownSessionBytes: 7407L * 1024 * 1024
+        );
+
+        Assert.InRange(budget, (long)(6.7 * 1024 * 1024 * 1024), (long)(7.1 * 1024 * 1024 * 1024));
+    }
+
+    [Fact]
+    public void ResolveAvailableVramBudget_NoSourceAtAll_ReturnsTheSafeDefault()
+    {
+        Assert.Equal(
+            4L * 1024 * 1024 * 1024,
+            OnnxTiler.ResolveAvailableVramBudget(null, (0, 0, 0), null, null, null, 0)
+        );
+    }
+
+    [Fact]
     public void BudgetFromVulkanMetrics_DiscountsTheCallersOwnCachedSession()
     {
         // The live case this exists for: a 16 GiB card, a desktop holding ~2.8 GiB, and the upscaler's

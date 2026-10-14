@@ -59,26 +59,6 @@ public interface IOnnxSessionFactory : IDisposable
     void ReleaseCachedSessions() => InvalidateAllSessions();
 
     /// <summary>
-    /// Whether a session for <paramref name="modelPath"/> is currently cached and therefore holding
-    /// device memory on the accelerator.
-    /// <para>
-    /// The upscaler discounts its own cached session's footprint from the automatic VRAM budget it
-    /// plans the next page with, because that memory is reused (same tile shape) or released before
-    /// the next plan allocates; see <see cref="Upscaling.OnnxTiler.GetAvailableVramBudget"/>. The
-    /// discount is only valid while the session really is cached: the page-break detector shares this
-    /// factory, so a worker running detection and upscaling at the same time can evict the upscaler's
-    /// session between two pages, and after the upscaler's own GTT safety net flushed the cache the
-    /// next page has to allocate a fresh arena — discounting memory the next plan cannot reuse would
-    /// plan a page larger than the card instead of against it.
-    /// </para>
-    /// <para>
-    /// Defaults to <c>false</c>, so a test double that does not model the cache simply gets no
-    /// discount rather than an invented one.
-    /// </para>
-    /// </summary>
-    bool IsSessionCached(string modelPath) => false;
-
-    /// <summary>
     /// Resolves and returns the effective hardware accelerator backend (e.g. CUDA, WebGPU, or CPU)
     /// based on configuration and platform availability.
     /// </summary>
