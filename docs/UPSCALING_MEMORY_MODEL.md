@@ -217,6 +217,44 @@ The first two rows are the single-pass and 2x2 case of a normal page; the third 
 both axes is a large fraction of a 200 px tall tile — unavoidable, and irrelevant because such strips
 are not the common case.
 
+### 2.2 What the budget excludes, and when it is read
+
+`memoryBudgetBytes` above is the device's *automatic* budget, and two things about how it is read
+matter for the grid the planner can reach:
+
+* **It is read after the first-use benchmark and the model probe, not before them.** Both allocate
+  device memory of their own — the benchmark runs two inferences on their own sessions (§6.1) and the
+  probe creates a third — and ONNX Runtime's arenas keep their high-water mark, so that memory is
+  resident while the page runs. Reading the budget before them plans the page as if it were free.
+  Measured on an RX 9070 XT with the fp16 4x ESRGAN and a 1125x1600 page: the pre-benchmark figure was
+  13.4 GB and planned 2x2 of 563x800 (predicted 10.5 GB), while the page's own arena plus the ~4.9 GB
+  the benchmark and probe left resident peaked at 15.2 GB of the 16.3 GB card and spilled 2.4 GB into
+  GTT. The post-benchmark figure is 8.9 GB, which plans 2x3 of 563x534 — still 512 px of context — and
+  peaks at 14.1 GB with GTT at its 261 MB baseline.
+* **The upscaler's own cached session is discounted from it.** After a page the card still shows the
+  ~12.5 GB that page's tiles peaked at, because the arenas are not returned; the next page reuses that
+  memory when the tile shape is unchanged, so counting it as a competitor shrinks the grid for no
+  reason. Measured on the same machine and page: without the discount the second page's budget came out
+  as the 1.3 GB the device had left and planned 5x7 of 225x229 — below the 256 px floor — with the
+  pages after that oscillating between 512 and 375 px context and a session rebuild each; with it the
+  plan is the same 2x3 on every page, the session is reused, and the footprint stays flat at 14.1 GB.
+
+The discount is taken only while the factory really caches that session. The page-break detector shares
+the factory, so on a worker the two evict each other's model, and the GTT safety net below flushes the
+cache after a page that grew GTT; in both cases the next page allocates a fresh arena and cannot reuse
+the old one, so the memory must count against it. The figure is also clamped at the device's used
+total, so a stale value cannot invent memory that does not exist.
+
+Two consequences worth writing down rather than hiding:
+
+* The benchmark's footprint is not reclaimable — the WebGPU EP exposes no way to return it — so the
+  automatic budget stays ~4.9 GB below the card's free memory for the rest of the process. That is the
+  price of not spilling; an operator who wants those gigabytes back pins `MemoryBudgetBytes` (or raises
+  `VramExclusiveThresholdBytes`), accepting the spill risk that comes with it.
+* A page that *does* spill leaves its arena behind and the next page allocates a second one on top, so
+  the card stays nearly full for the rest of the process. Preventing the spill is what the two points
+  above are for; once it has happened, no budget arithmetic recovers the memory.
+
 ---
 
 ## 3. Coefficients (`OnnxTiler.GetOutputLiveChannels`)

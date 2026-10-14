@@ -174,6 +174,21 @@ public sealed class OnnxSessionFactory(
         }
     }
 
+    /// <inheritdoc />
+    public bool IsSessionCached(string modelPath)
+    {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        string fullPath = Path.GetFullPath(modelPath);
+        lock (_lock)
+        {
+            return _sessions.ContainsKey(fullPath);
+        }
+    }
+
     /// <summary>
     /// Removes <paramref name="fullPath"/> from the LRU list.
     /// <para>

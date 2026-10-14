@@ -1132,14 +1132,30 @@ public static class OnnxTiler
     /// boundary is the same configurable one the calculated path uses, so a card shared with a partner
     /// that stays bounded can still be budgeted as exclusive.
     /// </para>
+    /// <para>
+    /// <paramref name="ownSessionBytes"/> is device memory the caller's own cached session holds,
+    /// which the plan this budget sizes will reuse or release before allocating — see
+    /// <see cref="GetAvailableVramBudget"/>. It is discounted from the used figure before the
+    /// exclusive/shared decision, because that decision asks whether <em>anything else</em> is using
+    /// the card, and added back to the driver's own budget figure, which is total-minus-used.
+    /// </para>
     /// </summary>
     internal static long BudgetFromVulkanMetrics(
         VulkanGpuMemory metrics,
         double? utilizationFraction = null,
         long? safetyMarginBytes = null,
-        long? exclusiveThresholdBytes = null
+        long? exclusiveThresholdBytes = null,
+        long ownSessionBytes = 0
     )
     {
+        // Clamped at the used figure: memory cannot be discounted that the card does not show as in
+        // use. A footprint larger than that is stale (the session was evicted, or another model now
+        // holds the arena), and letting it through would add memory to the budget that does not exist —
+        // on the driver's figure, which is total-minus-used, it would even exceed the card.
+        long own = Math.Clamp(ownSessionBytes, 0, Math.Max(0, metrics.UsedVramBytes));
+        long used = metrics.UsedVramBytes - own;
+        long driverBudget = metrics.BudgetBytes > 0 ? metrics.BudgetBytes + own : 0;
+
         // If explicit overrides were provided, respect them
         if (
             HasExplicitVramBudgetOverride(
@@ -1151,7 +1167,7 @@ public static class OnnxTiler
         {
             return CalculateVramBudget(
                 metrics.TotalVramBytes,
-                metrics.UsedVramBytes,
+                used,
                 utilizationFraction,
                 safetyMarginBytes,
                 exclusiveThresholdBytes
@@ -1162,20 +1178,20 @@ public static class OnnxTiler
             ? exclusiveThresholdBytes.Value
             : DefaultExclusiveThresholdBytes;
 
-        if (metrics.BudgetBytes > 0 && metrics.UsedVramBytes <= exclusiveThreshold)
+        if (driverBudget > 0 && used <= exclusiveThreshold)
         {
-            return metrics.BudgetBytes;
+            return driverBudget;
         }
 
         long calculated = CalculateVramBudget(
             metrics.TotalVramBytes,
-            metrics.UsedVramBytes,
+            used,
             utilizationFraction,
             safetyMarginBytes,
             exclusiveThresholdBytes
         );
 
-        return metrics.BudgetBytes > 0 ? Math.Min(metrics.BudgetBytes, calculated) : calculated;
+        return driverBudget > 0 ? Math.Min(driverBudget, calculated) : calculated;
     }
 
     /// <summary>
@@ -1278,12 +1294,23 @@ public static class OnnxTiler
     /// total-minus-used with no eviction headroom and would spend the card to the point where the
     /// driver starts evicting into GTT.
     /// </para>
+    /// <para>
+    /// <paramref name="ownSessionBytes"/> is device memory the caller's own cached session already
+    /// holds. ONNX Runtime's arenas keep their high-water mark, so a card that has just upscaled a page
+    /// still shows that page's peak as "used" even though the memory belongs to the caller and will be
+    /// reused (same tile shape) or released before the plan this budget sizes allocates. Counting it as
+    /// a competitor made the next page plan against a nearly full card: the grid shrank, the tile shape
+    /// changed, the session was rebuilt, and the tiles fell below the quality floor on a card with
+    /// gigabytes free. The caller must pass this only while that session really is cached — memory
+    /// nobody holds must not be discounted.
+    /// </para>
     /// </summary>
     public static long GetAvailableVramBudget(
         int deviceId = 0,
         double? utilizationFraction = null,
         long? safetyMarginBytes = null,
-        long? exclusiveThresholdBytes = null
+        long? exclusiveThresholdBytes = null,
+        long ownSessionBytes = 0
     )
     {
         // 1. Try Vulkan VK_EXT_memory_budget (primary for all GPUs)
@@ -1294,7 +1321,8 @@ public static class OnnxTiler
                 vkMem,
                 utilizationFraction,
                 safetyMarginBytes,
-                exclusiveThresholdBytes
+                exclusiveThresholdBytes,
+                ownSessionBytes
             );
         }
 
@@ -1304,7 +1332,7 @@ public static class OnnxTiler
         {
             return CalculateVramBudget(
                 total,
-                used,
+                Math.Max(0, used - Math.Clamp(ownSessionBytes, 0, Math.Max(0, used))),
                 utilizationFraction,
                 safetyMarginBytes,
                 exclusiveThresholdBytes

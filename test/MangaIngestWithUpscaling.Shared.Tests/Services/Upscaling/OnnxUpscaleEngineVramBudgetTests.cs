@@ -1,0 +1,355 @@
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.ML.OnnxRuntime;
+using NetVips;
+using NSubstitute;
+using Xunit;
+
+namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
+
+/// <summary>
+/// The automatic VRAM budget discounts the engine's own cached session.
+/// <para>
+/// ONNX Runtime's arenas keep their high-water mark, so after a page the accelerator still shows that
+/// page's peak as used. Without the discount every page after the first was planned against a card the
+/// previous page had filled: measured on an RX 9070 XT, 1125x1600 page, fp16 4x ESRGAN, 10.8 GB
+/// budget, page 1 planned 2x2 of 563x800 (512 px context) and page 2 planned 5x7 of 225x229 from the
+/// 1.3 GB residual — below the 256 px quality floor — with the session rebuilt on every page because
+/// the shape kept changing. The discount is only taken while the factory really caches that session:
+/// the page-break detector shares the factory and can evict it between two pages.
+/// </para>
+/// </summary>
+public class OnnxUpscaleEngineVramBudgetTests : IDisposable
+{
+    private const int Width = 256;
+    private const int Height = 288;
+    private const int Scale = 2;
+
+    /// <summary>
+    /// A fixed budget for the recording engine below. Large enough for the tiny model that the whole
+    /// page is a single tile, so the footprint under test is that one grid's.
+    /// </summary>
+    private const long FixedBudget = 4L * 1024 * 1024 * 1024;
+
+    private readonly string _tempDir;
+
+    public OnnxUpscaleEngineVramBudgetTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"onnx_engine_budget_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_tempDir))
+            {
+                Directory.Delete(_tempDir, recursive: true);
+            }
+        }
+        catch { }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task AutomaticBudget_DiscountsTheCachedSessionFromTheSecondPageOn()
+    {
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var factory = new CachedSessionFactory(modelPath);
+        var engine = new RecordingBudgetEngine(
+            factory,
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+
+        await RunPageAsync(engine, "1.webp");
+        await RunPageAsync(engine, "2.webp");
+        await RunPageAsync(engine, "3.webp");
+
+        // One budget read per page. The first page holds no session, so there is nothing to discount;
+        // from the second page on the discount is the grid the first page ran — and it stays the same
+        // figure, because the plan stays the same, which is the point: a discount that let the plan
+        // shrink would feed back into a smaller discount and walk the grid down page by page.
+        Assert.Equal(3, engine.OwnSessionBytesSeen.Count);
+        Assert.Equal(0, engine.OwnSessionBytesSeen[0]);
+        Assert.Equal(ExpectedFootprint(modelPath), engine.OwnSessionBytesSeen[1]);
+        Assert.Equal(ExpectedFootprint(modelPath), engine.OwnSessionBytesSeen[2]);
+        Assert.True(engine.OwnSessionBytesSeen[1] > 0);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task AutomaticBudget_SessionNotCached_DiscountsNothing()
+    {
+        // The page-break detector shares the factory, so the upscaler's session can be gone between two
+        // pages; the engine's own GTT safety net flushes it too, after a page that grew GTT. The next
+        // page then allocates a fresh arena and cannot reuse the memory, so discounting it would plan
+        // past the card instead of against it.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var factory = new CachedSessionFactory(modelPath) { ReportsSessionCached = false };
+        var engine = new RecordingBudgetEngine(
+            factory,
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+
+        await RunPageAsync(engine, "1.webp");
+        await RunPageAsync(engine, "2.webp");
+
+        Assert.Equal(new long[] { 0, 0 }, engine.OwnSessionBytesSeen);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task AutomaticBudget_IsReadAfterTheFirstUseBenchmark()
+    {
+        // The benchmark and the model probe allocate device memory of their own and ONNX Runtime's
+        // arenas keep their high-water mark, so that memory is resident while the page runs. A budget
+        // read before them plans the page as if it were free: on an RX 9070 XT that planned 2x2 of
+        // 563x800 (predicted 10.5 GB) for a page that then peaked at 15.2 GB of the 16.3 GB card.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var factory = new CachedSessionFactory(modelPath);
+        var order = new List<string>();
+        var calibrator = Substitute.For<IDeviceMemoryCalibrator>();
+        calibrator
+            .GetOrCalibrateForModelAsync(
+                Arg.Any<int>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+            {
+                lock (order)
+                {
+                    order.Add("benchmark");
+                }
+
+                return Task.FromResult<DeviceMemoryProfile?>(null);
+            });
+        var engine = new RecordingBudgetEngine(
+            factory,
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            calibrator,
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget,
+            onBudgetRead: () =>
+            {
+                lock (order)
+                {
+                    order.Add("budget");
+                }
+            }
+        );
+
+        await RunPageAsync(engine, "1.webp");
+
+        Assert.Equal(new[] { "benchmark", "budget" }, order);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExplicitBudgetBytes_IsNeverDiscounted()
+    {
+        // An explicit MemoryBudgetBytes is the operator's own number for the whole session, so it is
+        // taken as written rather than adjusted by what the process happens to hold.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var factory = new CachedSessionFactory(modelPath);
+        var engine = new RecordingBudgetEngine(
+            factory,
+            Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = _tempDir,
+                    UseCPU = true,
+                    MemoryBudgetBytes = "4GiB",
+                }
+            ),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+
+        await RunPageAsync(engine, "1.webp");
+        await RunPageAsync(engine, "2.webp");
+
+        Assert.Empty(engine.OwnSessionBytesSeen);
+    }
+
+    /// <summary>
+    /// The footprint the engine should discount after a page: the planner's predicted peak for the grid
+    /// it ran. Recomputed here from the same inputs so the test pins the figure rather than "something
+    /// positive" — a discount built from the wrong grid would size the next page against the wrong
+    /// memory.
+    /// </summary>
+    private static long ExpectedFootprint(string modelPath)
+    {
+        long modelSizeBytes = new FileInfo(modelPath).Length;
+        bool isFp16;
+        using (var probe = new InferenceSession(modelPath))
+        {
+            isFp16 =
+                probe.InputMetadata.TryGetValue("input", out var meta)
+                && meta.ElementType == typeof(Float16);
+        }
+
+        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+            Width,
+            Height,
+            Scale,
+            modelPath,
+            FixedBudget,
+            modelSizeBytes,
+            isFp16
+        );
+
+        return OnnxTiler.PredictTilePeakBytes(split, Scale, modelPath, modelSizeBytes, isFp16);
+    }
+
+    private async Task RunPageAsync(OnnxUpscaleEngine engine, string outputName)
+    {
+        await engine.UpscaleFileAsync(
+            CreateTestJpeg(),
+            Path.Combine(_tempDir, outputName),
+            Scale,
+            CompressionFormat.Webp,
+            quality: 80,
+            TestContext.Current.CancellationToken
+        );
+    }
+
+    private string CreateTestJpeg()
+    {
+        byte[] rgb = new byte[Width * Height * 3];
+        for (int y = 0; y < Height; y++)
+        {
+            for (int x = 0; x < Width; x++)
+            {
+                int i = (y * Width + x) * 3;
+                rgb[i] = (byte)(x % 256);
+                rgb[i + 1] = (byte)(y % 256);
+                rgb[i + 2] = (byte)((x + y) % 256);
+            }
+        }
+
+        using var image = Image.NewFromMemory(rgb, Width, Height, 3, Enums.BandFormat.Uchar);
+        string path = Path.Combine(_tempDir, $"engine_budget_{Guid.NewGuid():N}.jpg");
+        image.WriteToFile(path, new VOption());
+        return path;
+    }
+
+    /// <summary>
+    /// An engine that records the footprint it was asked to discount and returns a fixed budget, so the
+    /// discount can be asserted without a GPU and without the device's own figures.
+    /// </summary>
+    private sealed class RecordingBudgetEngine(
+        IOnnxSessionFactory sessionFactory,
+        IOptions<UpscalerConfig> config,
+        IDeviceMemoryCalibrator calibrator,
+        ILogger<OnnxUpscaleEngine> logger,
+        long budget,
+        Action? onBudgetRead = null
+    ) : OnnxUpscaleEngine(sessionFactory, config, calibrator, logger)
+    {
+        private readonly List<long> _seen = [];
+
+        public IReadOnlyList<long> OwnSessionBytesSeen
+        {
+            get
+            {
+                lock (_seen)
+                {
+                    return _seen.ToList();
+                }
+            }
+        }
+
+        protected internal override long ReadAutoVramBudget(int deviceId, long ownSessionBytes)
+        {
+            lock (_seen)
+            {
+                _seen.Add(ownSessionBytes);
+            }
+
+            onBudgetRead?.Invoke();
+            return budget;
+        }
+    }
+
+    /// <summary>
+    /// Hands out a real session for the tiny model and models the cache the engine discounts against:
+    /// present while a session exists, and reported through <see cref="IsSessionCached"/>.
+    /// </summary>
+    private sealed class CachedSessionFactory(string modelPath) : IOnnxSessionFactory
+    {
+        private readonly Lock _lock = new();
+        private InferenceSession? _session;
+
+        /// <summary>
+        /// Whether the factory admits to caching the session. <c>false</c> models an eviction by the
+        /// detector, which shares the real factory.
+        /// </summary>
+        public bool ReportsSessionCached { get; set; } = true;
+
+        public InferenceSession GetOrCreateSession(string modelPath)
+        {
+            lock (_lock)
+            {
+                return _session ??= new InferenceSession(modelPath);
+            }
+        }
+
+        public InferenceSession CreateSession(string modelPath) => new(modelPath);
+
+        public void InvalidateSession(string modelPath)
+        {
+            lock (_lock)
+            {
+                _session?.Dispose();
+                _session = null;
+            }
+        }
+
+        public void InvalidateAllSessions() => InvalidateSession(modelPath);
+
+        public void ReleaseCachedSessions() => InvalidateAllSessions();
+
+        public bool IsSessionCached(string modelPath)
+        {
+            if (!ReportsSessionCached)
+            {
+                return false;
+            }
+
+            lock (_lock)
+            {
+                return _session is not null;
+            }
+        }
+
+        public GpuBackend GetEffectiveBackend() => GpuBackend.CPU;
+
+        public IDisposable EnterInferenceScope() => NoOpScope.Instance;
+
+        public void Dispose() => InvalidateAllSessions();
+
+        private sealed class NoOpScope : IDisposable
+        {
+            public static readonly NoOpScope Instance = new();
+
+            public void Dispose() { }
+        }
+    }
+}

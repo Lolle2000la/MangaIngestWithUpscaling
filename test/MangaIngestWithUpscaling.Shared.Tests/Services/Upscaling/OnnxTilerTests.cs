@@ -1549,6 +1549,92 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void BudgetFromVulkanMetrics_DiscountsTheCallersOwnCachedSession()
+    {
+        // The live case this exists for: a 16 GiB card, a desktop holding ~2.8 GiB, and the upscaler's
+        // own cached session still resident after a page (~9.7 GiB — ONNX Runtime's arena keeps its
+        // high-water mark). The next page has to be planned against the ~10.8 GiB the card really
+        // offers, not the ~1.1 GiB the raw used figure leaves.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = (long)(12.5 * 1024 * 1024 * 1024);
+        long own = (long)(9.7 * 1024 * 1024 * 1024);
+        var metrics = new VulkanGpuMemory(0, "test", 0x1002, total, total - used, used);
+
+        long withoutDiscount = OnnxTiler.BudgetFromVulkanMetrics(metrics);
+        long withDiscount = OnnxTiler.BudgetFromVulkanMetrics(metrics, ownSessionBytes: own);
+
+        Assert.InRange(
+            withoutDiscount,
+            (long)(1.0 * 1024 * 1024 * 1024),
+            (long)(1.2 * 1024 * 1024 * 1024)
+        );
+        Assert.InRange(
+            withDiscount,
+            (long)(10.5 * 1024 * 1024 * 1024),
+            (long)(11.0 * 1024 * 1024 * 1024)
+        );
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_OwnSessionDoesNotMakeTheCardLookShared()
+    {
+        // The exclusive/shared decision asks whether *anything else* is using the card. A worker whose
+        // only device memory is its own cached session is quasi-exclusive, and used to be budgeted as a
+        // desktop (15% margin) purely because its own arena was counted as a competitor.
+        long total = 16L * 1024 * 1024 * 1024;
+        long own = (long)(11.9 * 1024 * 1024 * 1024);
+        long used = own + 100L * 1024 * 1024;
+        var metrics = new VulkanGpuMemory(0, "test", 0x1002, total, total - used, used);
+
+        long withoutDiscount = OnnxTiler.BudgetFromVulkanMetrics(metrics);
+        long withDiscount = OnnxTiler.BudgetFromVulkanMetrics(metrics, ownSessionBytes: own);
+
+        // ~4 GiB free with the desktop margin, against the driver's own figure plus our own share.
+        Assert.InRange(
+            withoutDiscount,
+            (long)(1.5 * 1024 * 1024 * 1024),
+            (long)(1.7 * 1024 * 1024 * 1024)
+        );
+        Assert.True(
+            withDiscount > (long)(15.5 * 1024 * 1024 * 1024),
+            $"the caller's own arena must not read as a competing process: {withDiscount}"
+        );
+        Assert.True(withDiscount <= total);
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_NoOwnSession_IsUnchanged()
+    {
+        // The discount is additive and must not move anything when the caller holds no session.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 3L * 1024 * 1024 * 1024;
+        var metrics = new VulkanGpuMemory(0, "test", 0x1002, total, total - used, used);
+
+        Assert.Equal(
+            OnnxTiler.BudgetFromVulkanMetrics(metrics),
+            OnnxTiler.BudgetFromVulkanMetrics(metrics, ownSessionBytes: 0)
+        );
+    }
+
+    [Fact]
+    public void BudgetFromVulkanMetrics_OwnSessionLargerThanUsed_NeverExceedsTheCard()
+    {
+        // A stale footprint — the session was evicted by the detector and this figure was not cleared —
+        // must not become an invented budget. The discount is clamped at the used figure, so the
+        // driver's total-minus-used figure plus it still cannot exceed the device.
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 2L * 1024 * 1024 * 1024;
+        var metrics = new VulkanGpuMemory(0, "test", 0x1002, total, total - used, used);
+
+        long budget = OnnxTiler.BudgetFromVulkanMetrics(
+            metrics,
+            ownSessionBytes: (long)(12.0 * 1024 * 1024 * 1024)
+        );
+
+        Assert.InRange(budget, 0, total);
+    }
+
+    [Fact]
     public void CalculateVramBudget_SharedCardWithBoundedPartner_CanStayExclusive()
     {
         // A video transcoder reliably holds ~700 MB. With the default threshold the card is treated
