@@ -594,6 +594,7 @@ profile**, and inside each profile a map of model key to measurement:
         "sessionReservationBytes": 9437184,
         "measuredTiles": [192, 576],
         "measuredPeakBytes": [2100000000, 13100000000],
+        "observedTilePeaks": { "640x864@4": 10074877952 },
         "calibratedAtUtc": "2026-10-12T01:20:00Z"
       }
     }
@@ -658,6 +659,43 @@ process. Keeping the shape stable — which is what the budget derivation in §2
 avoids that; the release only keeps a *continued* session from adding a second set for a shape it is
 about to run anyway. The absolute `gttAfter > 1 GB` trigger it replaces fired on essentially every page (the GTT
 baseline alone is ~1 GB on a desktop), which turned the cache's own reuse into a rebuild per page.
+
+### 6.6 Footprints measured at the operating shape
+
+The calibration of §6.1 fits its slope at two *small* benchmark tiles and extrapolates it to the
+operating tile. That is the right shape of model — the working set is quadratic with no cliff — but the
+extrapolation is an assumption about how the execution provider scales between 192 px and, say, 640 px,
+and the fixed per-inference overheads of the provider weigh relatively more at the small end. The
+estimate is therefore checked against a measurement as soon as one exists.
+
+Every page the engine builds a fresh tensor shape for measures what that shape cost: the growth of the
+device's usage between the reading taken just before the page's session was acquired and the reading
+taken after the page. That figure — the model weights if the page uploaded them, the provider's buffers
+for the shape, and its arena — is stored per **(device fingerprint, model key, padded shape × scale)** in
+`observedTilePeaks` inside the model's own profile entry, kept at its largest, and the next plan for that
+shape uses it instead of the analytic estimate. A page that reused a shape measures nothing and records
+nothing (it allocated nothing; whatever the device shows it gaining belongs to something else), and a page
+that descended through halved shapes is not fresh either, because the halving path registers the shape it
+retries at.
+
+Measured on an RX 9070 XT / WebGPU EP, 1125×1600 page, fp16 4× ESRGAN, 2×2 of 563×800 (padded 640×864):
+
+| figure | value |
+|---|---|
+| analytic estimate (`PredictTilePeakBytes`) | 10830 MB |
+| page growth measured from the pre-session reading | 9604 MB |
+
+The estimate was 11 % *above* the measurement there, which is the conservative direction and the reason
+the plan was unchanged. The point of the measurement is the opposite case: a provider whose slope the
+small-tile calibration flattened is under-estimated by the extrapolation, and the first page at a shape
+pays that error out of the safety margin — which is exactly what the margin is not for. After the first
+page at a shape, the estimate is the measurement.
+
+Two guards keep a wrong number out. The stored value is held to 0.25×…4× the analytic estimate for the
+same shape (the same idea as the activation factor's accepted range in §6.4); outside it, the value is not
+a measurement of this model on this device and the estimate is used instead. And a re-measurement of the
+model's coefficients (a forced recalibration, a `CalibrationVersion` bump) carries the observed shapes
+over, so re-measuring a model does not throw away what its real operating shapes cost.
 
 
 ## 7. Reproducing the numbers

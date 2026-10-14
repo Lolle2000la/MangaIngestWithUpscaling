@@ -194,6 +194,69 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         Assert.Empty(engine.OwnSessionBytesSeen);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Page_RecordsTheFootprintItMeasuredForItsTileShape()
+    {
+        // The per-model calibration fits its slope at two small benchmark tiles (96/192 px) and
+        // extrapolates it to the operating shape, so a provider whose overhead does not scale exactly
+        // quadratically is estimated rather than measured. The page is the only place the real figure
+        // can be taken, and the next plan for that shape has to be sized from it.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var calibrator = Substitute.For<IDeviceMemoryCalibrator>();
+        var engine = new RecordingBudgetEngine(
+            new CachedSessionFactory(modelPath),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            calibrator,
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+        // Per page: the outer read before the page, the plan-line read, the read the recording takes,
+        // and the outer read after the page.
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
+        // The second page runs the same shape, which the session already holds: it allocates nothing
+        // of its own, so it measures nothing and must not record. Its readings are deliberately *not*
+        // flat — a page at a reused shape still shows growth from whatever else allocated while it
+        // ran — because that is exactly the figure the shape guard exists to keep out of the store.
+        engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((7500L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((7500L * 1024 * 1024, 0L));
+
+        await RunPageAsync(engine, "1.webp");
+        await RunPageAsync(engine, "2.webp");
+
+        OnnxTiler.TileSplit split = PlannedSplit(modelPath);
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+        // Exactly one call, not "one call with this figure": the reused page would record a different
+        // figure, and an argument-matching Received(1) would not notice it.
+        calibrator
+            .Received(1)
+            .RecordObservedTilePeak(
+                Arg.Any<int>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<int>(),
+                Arg.Any<int>(),
+                Arg.Any<long>()
+            );
+        calibrator
+            .Received(1)
+            .RecordObservedTilePeak(
+                0,
+                _tempDir,
+                modelPath,
+                Scale,
+                paddedWidth,
+                paddedHeight,
+                6000L * 1024 * 1024
+            );
+    }
+
     /// <summary>
     /// The footprint the engine should discount after a page: the planner's predicted peak for the grid
     /// it ran. Recomputed here from the same inputs so the test pins the figure rather than "something
@@ -203,25 +266,33 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
     private static long ExpectedFootprint(string modelPath)
     {
         long modelSizeBytes = new FileInfo(modelPath).Length;
-        bool isFp16;
-        using (var probe = new InferenceSession(modelPath))
-        {
-            isFp16 =
-                probe.InputMetadata.TryGetValue("input", out var meta)
-                && meta.ElementType == typeof(Float16);
-        }
+        OnnxTiler.TileSplit split = PlannedSplit(modelPath);
 
-        OnnxTiler.TileSplit split = OnnxTiler.PlanTileSplit(
+        return OnnxTiler.PredictTilePeakBytes(
+            split,
+            Scale,
+            modelPath,
+            modelSizeBytes,
+            IsFp16(modelPath)
+        );
+    }
+
+    private static OnnxTiler.TileSplit PlannedSplit(string modelPath) =>
+        OnnxTiler.PlanTileSplit(
             Width,
             Height,
             Scale,
             modelPath,
             FixedBudget,
-            modelSizeBytes,
-            isFp16
+            new FileInfo(modelPath).Length,
+            IsFp16(modelPath)
         );
 
-        return OnnxTiler.PredictTilePeakBytes(split, Scale, modelPath, modelSizeBytes, isFp16);
+    private static bool IsFp16(string modelPath)
+    {
+        using var probe = new InferenceSession(modelPath);
+        return probe.InputMetadata.TryGetValue("input", out var meta)
+            && meta.ElementType == typeof(Float16);
     }
 
     private async Task RunPageAsync(OnnxUpscaleEngine engine, string outputName)

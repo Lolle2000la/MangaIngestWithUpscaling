@@ -199,6 +199,63 @@ public sealed class DeviceMemoryProfile
             System.Globalization.CultureInfo.InvariantCulture,
             $"{Path.GetFileName(modelNameOrPath)}|{modelSizeBytes}"
         );
+
+    /// <summary>
+    /// Identity of one padded tile tensor shape: the shape the execution provider caches its buffers
+    /// by, plus the scale that turns it into the output shape. Both are part of the key because the
+    /// footprint is a property of the tensors, not of the grid: a page of 2x2 tiles and one of 2x3
+    /// run the same per-tile shapes and cost the same per tile, because the tiler runs one tile at a
+    /// time.
+    /// </summary>
+    public static string ObservedShapeKey(int scale, int paddedWidth, int paddedHeight) =>
+        string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{paddedWidth}x{paddedHeight}@{Math.Max(1, scale)}"
+        );
+
+    /// <summary>
+    /// The device memory one tile at this padded shape actually cost when this process last ran it,
+    /// or null when this device has no measurement for that shape.
+    /// <para>
+    /// This is the measurement the analytic estimate cannot make: the per-model calibration fits its
+    /// slope at two small benchmark tiles and extrapolates it to the operating tile, so a provider
+    /// whose overhead does not scale exactly quadratically is estimated rather than measured. A shape
+    /// the engine has really run has no such extrapolation left.
+    /// </para>
+    /// <para>
+    /// Only values the producer could plausibly have measured are returned: a non-positive value, or
+    /// one above the device's own total memory, is corruption rather than a measurement (the same
+    /// rule <see cref="ScaleFor"/> and <see cref="ReservationFor"/> apply to theirs). The caller
+    /// additionally holds the value to a band around its own analytic estimate, which it is the only
+    /// side of the pair that can compute.
+    /// </para>
+    /// </summary>
+    public long? ObservedTilePeakFor(
+        string modelNameOrPath,
+        long modelSizeBytes,
+        int scale,
+        int paddedWidth,
+        int paddedHeight
+    )
+    {
+        if (
+            !Models.TryGetValue(
+                ModelKey(modelNameOrPath, modelSizeBytes),
+                out ModelMemoryProfile? m
+            )
+            || m is null
+            || !m.ObservedTilePeaks.TryGetValue(
+                ObservedShapeKey(scale, paddedWidth, paddedHeight),
+                out long bytes
+            )
+            || bytes <= 0
+        )
+        {
+            return null;
+        }
+
+        return TotalDeviceMemoryBytes > 0 && bytes > TotalDeviceMemoryBytes ? null : bytes;
+    }
 }
 
 /// <summary>
@@ -226,6 +283,41 @@ public sealed class ModelMemoryProfile
     /// </summary>
     [JsonPropertyName("measuredPeakBytes")]
     public long[] MeasuredPeakBytes { get; set; } = [];
+
+    private Dictionary<string, long> _observedTilePeaks = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// What one tile at a padded tensor shape really cost this process, keyed by
+    /// <see cref="DeviceMemoryProfile.ObservedShapeKey"/>.
+    /// <para>
+    /// <see cref="MeasuredTiles"/>/<see cref="MeasuredPeakBytes"/> above are the same idea measured
+    /// at benchmark tile sizes and extrapolated to the operating one; these are measurements taken
+    /// at the operating shape itself, by the engine while it ran a page. They exist because the
+    /// calibration's slope is fitted at small tiles where the execution provider's fixed overheads
+    /// weigh relatively more, so the extrapolation can come out flat and the estimate optimistic — a
+    /// risk the estimate does not have to carry once the shape has really run.
+    /// </para>
+    /// <para>
+    /// Entries are added by <c>DeviceMemoryCalibrator.RecordObservedTilePeak</c>, one per distinct
+    /// padded shape a page ran in, and only from a page that built the shape's session fresh: a page
+    /// that reused a shape measures nothing and must not overwrite the value that does exist. The
+    /// stored value is the largest seen, so it does not move with the few tens of megabytes by which
+    /// a re-measurement differs depending on whether the model weights were already resident when
+    /// the page's baseline was read.
+    /// </para>
+    /// </summary>
+    [JsonPropertyName("observedTilePeaks")]
+    public Dictionary<string, long> ObservedTilePeaks
+    {
+        get => _observedTilePeaks;
+        // Re-wrapped on the way in for the same reason as DeviceMemoryProfile.Models: the
+        // deserializer materialises the dictionary with the default comparer, and the lookup rule
+        // must be the same before and after a round trip.
+        set =>
+            _observedTilePeaks = value is null
+                ? new Dictionary<string, long>(StringComparer.Ordinal)
+                : new Dictionary<string, long>(value, StringComparer.Ordinal);
+    }
 
     [JsonPropertyName("calibratedAtUtc")]
     public DateTimeOffset CalibratedAtUtc { get; set; }

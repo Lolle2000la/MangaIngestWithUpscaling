@@ -2244,6 +2244,158 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void PredictTilePeakBytes_PrefersTheFootprintTheDeviceMeasuredForThatShape()
+    {
+        // The estimate extrapolates the calibration's two small benchmark tiles to the operating
+        // shape, so it carries whatever error the provider's scaling has between them. A shape the
+        // engine has really run does not need that extrapolation, and the measurement wins.
+        string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        long weights = 34L * 1024 * 1024;
+        var split = new OnnxTiler.TileSplit(2, 2, 563, 800);
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+
+        long analytic = OnnxTiler.PredictTilePeakBytes(split, 4, model, weights, isFp16: true);
+        long measured = analytic * 3 / 4;
+
+        Assert.Equal(
+            measured,
+            OnnxTiler.PredictTilePeakBytes(
+                split,
+                4,
+                model,
+                weights,
+                true,
+                Measured(model, weights, 4, paddedWidth, paddedHeight, measured)
+            )
+        );
+        // A measurement taken at a different shape is not this shape's: the footprint is a property of
+        // the padded tensors, so the estimate stays for everything the device has not run.
+        Assert.Equal(
+            analytic,
+            OnnxTiler.PredictTilePeakBytes(
+                split,
+                4,
+                model,
+                weights,
+                true,
+                Measured(model, weights, 4, 512, 512, measured)
+            )
+        );
+    }
+
+    [Fact]
+    public void PredictTilePeakBytes_IgnoresAMeasurementOutsideThePlausibleBand()
+    {
+        // A value far from the analytic estimate is not a measurement of this model on this device —
+        // a corrupt or hand-edited profile, or a reading taken while something else distorted the
+        // card. The estimate is the better anchor then, on both sides.
+        string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        long weights = 34L * 1024 * 1024;
+        var split = new OnnxTiler.TileSplit(2, 2, 563, 800);
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+
+        long analytic = OnnxTiler.PredictTilePeakBytes(split, 4, model, weights, isFp16: true);
+
+        Assert.Equal(
+            analytic,
+            OnnxTiler.PredictTilePeakBytes(
+                split,
+                4,
+                model,
+                weights,
+                true,
+                Measured(model, weights, 4, paddedWidth, paddedHeight, analytic * 10)
+            )
+        );
+        Assert.Equal(
+            analytic,
+            OnnxTiler.PredictTilePeakBytes(
+                split,
+                4,
+                model,
+                weights,
+                true,
+                Measured(model, weights, 4, paddedWidth, paddedHeight, analytic / 10)
+            )
+        );
+    }
+
+    [Fact]
+    public void PlanTileSplit_SizesFromTheMeasuredFootprintOfAShapeTheDeviceHasRun()
+    {
+        // The measurement is what keeps the safety margin from being the buffer for the estimate's
+        // error: here it says the grid the estimate allowed really costs three times as much, and the
+        // plan has to give up that shape for a smaller one.
+        string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        long weights = 34L * 1024 * 1024;
+        const long budget = 12L * 1024 * 1024 * 1024;
+
+        OnnxTiler.TileSplit estimateOnly = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            model,
+            budget,
+            weights,
+            isFp16: true
+        );
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(estimateOnly);
+        long analytic = OnnxTiler.PredictTilePeakBytes(estimateOnly, 4, model, weights, true);
+
+        OnnxTiler.TileSplit measured = OnnxTiler.PlanTileSplit(
+            1125,
+            1600,
+            4,
+            model,
+            budget,
+            weights,
+            true,
+            Measured(model, weights, 4, paddedWidth, paddedHeight, analytic * 3)
+        );
+
+        Assert.True(
+            measured.PaddedTilePixels < estimateOnly.PaddedTilePixels,
+            $"the measured footprint should shrink the tile: {measured.PaddedTilePixels} vs {estimateOnly.PaddedTilePixels}"
+        );
+        // And the grid it settles on is still inside the budget by the analytic estimate, which is
+        // what the planner has for a shape it has not run.
+        Assert.True(
+            OnnxTiler.PredictTilePeakBytes(measured, 4, model, weights, true) <= budget,
+            "the replanned grid was expected to fit the budget"
+        );
+    }
+
+    /// <summary>
+    /// A profile whose model entry carries one measured footprint for one padded shape, which is what
+    /// the engine records after a page at that shape. The activation factor is left at the default, so
+    /// the analytic estimate under this profile is the built-in one and the test isolates the
+    /// measurement.
+    /// </summary>
+    private static DeviceMemoryProfile Measured(
+        string model,
+        long weights,
+        int scale,
+        int paddedWidth,
+        int paddedHeight,
+        long bytes
+    )
+    {
+        var profile = new DeviceMemoryProfile();
+        var entry = new ModelMemoryProfile
+        {
+            // The built-ins, so the analytic estimate under this profile is the one without a profile
+            // and the test isolates the measurement.
+            ActivationScale = 1.0,
+            SessionReservationBytes = OnnxTiler.SessionReservationBytes,
+        };
+        entry.ObservedTilePeaks[
+            DeviceMemoryProfile.ObservedShapeKey(scale, paddedWidth, paddedHeight)
+        ] = bytes;
+        profile.Models[DeviceMemoryProfile.ModelKey(model, weights)] = entry;
+        return profile;
+    }
+
+    [Fact]
     public void GetGpuVramInfo_OnSupportedHost_DiscoversValidVram()
     {
         // A GPU-less CI has no VRAM to report and GetGpuVramInfo answers (0, 0, 0) rather than

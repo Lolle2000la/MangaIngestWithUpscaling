@@ -1388,6 +1388,13 @@ public class OnnxUpscaleEngine(
 
                 byte[] upscaledBytes;
                 OnnxTiler.TileSplit attempt = split;
+                // Whether the attempt that ran built its session's tensor shape fresh. Only such a
+                // page measures the shape's footprint: a page that reused a cached shape allocates
+                // nothing, so whatever the device shows it gaining while it ran belongs to something
+                // else. A descent is not fresh either — the halving path registers the halved shape
+                // before it retries, so the attempt that finally runs finds its shape already
+                // registered (see ReleaseAndRegisterSessionShape).
+                bool shapeBuiltFresh = false;
                 while (true)
                 {
                     try
@@ -1397,8 +1404,12 @@ public class OnnxUpscaleEngine(
                         // waits for every in-flight scope, so a caller that decided under the gate
                         // and released outside it could be interleaved with another page's fetch,
                         // which would then run on a session cached for the previous shape.
-                        (IDisposable sessionScope, InferenceSession session) =
-                            AcquireSessionForShape(modelPath, attempt);
+                        (
+                            IDisposable sessionScope,
+                            InferenceSession session,
+                            bool shapeChanged
+                        ) = AcquireSessionForShape(modelPath, attempt);
+                        shapeBuiltFresh = shapeChanged;
                         using (sessionScope)
                         {
                             upscaledBytes = UpscaleViaTiler(
@@ -1523,9 +1534,80 @@ public class OnnxUpscaleEngine(
                     );
                 }
 
+                RecordObservedTileFootprint(
+                    deviceId,
+                    modelPath,
+                    scale,
+                    attempt,
+                    vramBefore,
+                    shapeBuiltFresh
+                );
+
                 return upscaledBytes;
             },
             cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Records what this page's padded tile shape actually cost the device, so the next plan for that
+    /// shape is sized from a measurement instead of the calibration's extrapolation from two small
+    /// benchmark tiles (see <see cref="OnnxTiler.PredictTilePeakBytes"/>).
+    /// <para>
+    /// The figure is the growth of the device's usage between the reading taken just before the page's
+    /// session was acquired and the reading taken here, which is that shape's own footprint: the model
+    /// weights if this page uploaded them, the execution provider's buffers for the shape, and its
+    /// arena. Whatever the process already held — the probe's and the benchmark's arenas, a previous
+    /// shape's buffers — is inside the baseline and stays out of it, which is what the plan that
+    /// baseline's budget sized also assumed.
+    /// </para>
+    /// <para>
+    /// Only a page that built its session's tensor shape fresh measures this: a reused shape allocates
+    /// nothing of its own, so whatever the device shows it gaining while it ran belongs to something
+    /// else — another tenant, a scratch buffer, GTT churn — and recording that would size the next
+    /// plan from noise. A page that descended through halved shapes is not fresh either: the halving
+    /// path registers the shape it retries at, so the attempt that finally runs finds it already
+    /// registered (see <c>ReleaseAndRegisterSessionShape</c>). Nothing here is allowed to fail the
+    /// page — the measurement is an optimisation for the next plan, and the calibrator logs and
+    /// swallows a store it cannot write.
+    /// </para>
+    /// </summary>
+    private void RecordObservedTileFootprint(
+        int deviceId,
+        string modelPath,
+        int scale,
+        OnnxTiler.TileSplit split,
+        long vramBefore,
+        bool shapeBuiltFresh
+    )
+    {
+        if (!shapeBuiltFresh)
+        {
+            return;
+        }
+
+        long growth = ReadDeviceMemoryUsage(deviceId).VramUsed - vramBefore;
+        if (growth <= 0)
+        {
+            return;
+        }
+
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+        deviceCalibrator.RecordObservedTilePeak(
+            deviceId,
+            ModelsDirectory,
+            modelPath,
+            scale,
+            paddedWidth,
+            paddedHeight,
+            growth
+        );
+        logger.LogDebug(
+            "Measured tile footprint for {Model} at {Width}x{Height}: {GrowthMb} MB; the next plan for this shape uses it instead of the analytic estimate.",
+            Path.GetFileName(modelPath),
+            paddedWidth,
+            paddedHeight,
+            growth / (1024 * 1024)
         );
     }
 
@@ -1625,15 +1707,21 @@ public class OnnxUpscaleEngine(
     /// first page's scope to end, so the session it retires is one the first page has finished with —
     /// no session ever carries two shapes. The cost is a brief serialisation of session acquisition.
     /// </para>
+    /// <para>
+    /// <see cref="ShapeChanged"/> is the decision itself, reported to the caller because it is also
+    /// the only page that measures anything about the shape's footprint: a fresh shape allocates its
+    /// buffers now, a reused one allocates nothing (see <c>RecordObservedTileFootprint</c>).
+    /// </para>
     /// </summary>
-    private (IDisposable Scope, InferenceSession Session) AcquireSessionForShape(
+    private (IDisposable Scope, InferenceSession Session, bool ShapeChanged) AcquireSessionForShape(
         string modelPath,
         OnnxTiler.TileSplit split
     )
     {
         lock (_sessionShapeGate)
         {
-            if (RegisterSessionShapeLocked(modelPath, split))
+            bool shapeChanged = RegisterSessionShapeLocked(modelPath, split);
+            if (shapeChanged)
             {
                 (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
                 logger.LogDebug(
@@ -1653,7 +1741,7 @@ public class OnnxUpscaleEngine(
             try
             {
                 InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
-                return (scope, session);
+                return (scope, session, shapeChanged);
             }
             catch
             {

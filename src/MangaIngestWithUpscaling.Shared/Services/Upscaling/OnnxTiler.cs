@@ -542,6 +542,22 @@ public static class OnnxTiler
     /// </summary>
     public const double SinglePassSafetyFraction = 0.9;
 
+    /// <summary>
+    /// The band around its own analytic estimate within which the planner accepts a measurement the
+    /// engine took for the same padded shape (<see cref="DeviceMemoryProfile.ObservedTilePeakFor"/>).
+    /// A value outside it is not a measurement of this model on this device — a corrupt or
+    /// hand-edited profile, a reading taken while another tenant distorted the card — and the
+    /// analytic estimate is the better anchor. 0.25x is the same lower bound the per-model
+    /// activation factor uses (<see cref="DeviceMemoryProfile.MinActivationScale"/>) and the upper
+    /// one is deliberately looser, because a provider whose slope the small-tile calibration
+    /// flattened can really cost several times the estimate at the operating shape — that is the
+    /// case this measurement exists to catch.
+    /// </summary>
+    internal const double MinObservedFootprintFactor = 0.25;
+
+    /// <inheritdoc cref="MinObservedFootprintFactor"/>
+    internal const double MaxObservedFootprintFactor = 4.0;
+
     /// <summary>The tensor name the upscaler expects the single model input to have.</summary>
     private const string ModelInputName = "input";
 
@@ -933,9 +949,68 @@ public static class OnnxTiler
     }
 
     /// <summary>
+    /// The device's own measurement of what one tile of <paramref name="split"/> cost when the engine
+    /// last ran that padded shape, or null when there is none (or it is implausible).
+    /// <para>
+    /// The analytic estimate extrapolates the calibration's two small benchmark tiles up to the
+    /// operating shape, so it carries whatever error the provider's scaling has between them. A shape
+    /// the engine has really run needs no extrapolation, and the engine measures exactly this on every
+    /// page (see <c>OnnxUpscaleEngine.UpscaleWithModelAsync</c>). Preferring the measurement makes the
+    /// estimate exact after the first page at a shape, so the safety margin stops being the buffer for
+    /// the estimate's error.
+    /// </para>
+    /// <para>
+    /// <paramref name="analyticBytes"/> is the estimate the measurement has to be plausible against:
+    /// a measurement outside <see cref="MinObservedFootprintFactor"/>..<see cref="MaxObservedFootprintFactor"/>
+    /// of it is not a measurement of this model on this device, and the estimate is used instead.
+    /// </para>
+    /// </summary>
+    private static long? ObservedTileFootprint(
+        DeviceMemoryProfile? profile,
+        string modelNameOrPath,
+        long modelSizeBytes,
+        int scale,
+        TileSplit split,
+        long analyticBytes
+    )
+    {
+        if (profile is null)
+        {
+            return null;
+        }
+
+        (int paddedWidth, int paddedHeight) = UniformTileTensorShape(split);
+        if (
+            profile.ObservedTilePeakFor(
+                modelNameOrPath,
+                modelSizeBytes,
+                scale,
+                paddedWidth,
+                paddedHeight
+            )
+            is not { } observed
+        )
+        {
+            return null;
+        }
+
+        return
+            observed >= analyticBytes * MinObservedFootprintFactor
+            && observed <= analyticBytes * MaxObservedFootprintFactor
+            ? observed
+            : null;
+    }
+
+    /// <summary>
     /// The device memory one tile of <paramref name="split"/> is predicted to need, using the same
     /// factors <see cref="PlanTileSplit"/> fits the budget with. Logged next to the measured peak so
     /// an estimate that is off shows up as a number in the log instead of only as a spill.
+    /// <para>
+    /// A padded shape this device has already run is answered with what it measured then (see
+    /// <see cref="ObservedTileFootprint"/>) rather than with the analytic estimate. Both are totals —
+    /// weights, the session's own footprint and the activations — so a caller comparing the result
+    /// against a budget compares like with like.
+    /// </para>
     /// </summary>
     public static long PredictTilePeakBytes(
         TileSplit split,
@@ -955,9 +1030,19 @@ public static class OnnxTiler
             ActivationCoefficients.For(modelNameOrPath, modelSizeBytes).BytesPerPixel(scale, isFp16)
             * activationScale;
 
-        return EstimateModelBytes(modelNameOrPath, modelSizeBytes)
+        long analytic =
+            EstimateModelBytes(modelNameOrPath, modelSizeBytes)
             + sessionReservation
             + (long)(bytesPerPixel * split.PaddedTilePixels);
+
+        return ObservedTileFootprint(
+                profile,
+                modelNameOrPath,
+                modelSizeBytes,
+                scale,
+                split,
+                analytic
+            ) ?? analytic;
     }
 
     /// <summary>
@@ -1036,12 +1121,23 @@ public static class OnnxTiler
 
         // Whole page as one inference: only claim it when the padded footprint stays comfortably
         // inside the budget, because a single-pass overflow cannot be recovered without restarting
-        // the page.
+        // the page. A measured footprint for that shape already contains the session reservation,
+        // which is why it is held against the budget and the analytic estimate against the session
+        // budget the reservation was taken off.
         TileSplit singlePass = TileSplit.For(width, height, 0);
-        if (
-            weights + (long)(bytesPerPixel * singlePass.PaddedTilePixels)
-            <= sessionBudget * SinglePassSafetyFraction
-        )
+        long singlePassActivation = (long)(bytesPerPixel * singlePass.PaddedTilePixels);
+        long? singlePassObserved = ObservedTileFootprint(
+            profile,
+            modelNameOrPath,
+            modelSizeBytes,
+            scale,
+            singlePass,
+            weights + sessionReservation + singlePassActivation
+        );
+        bool singlePassFits = singlePassObserved is { } measuredSinglePass
+            ? measuredSinglePass <= memoryBudgetBytes * SinglePassSafetyFraction
+            : weights + singlePassActivation <= sessionBudget * SinglePassSafetyFraction;
+        if (singlePassFits)
         {
             return singlePass;
         }
@@ -1078,7 +1174,23 @@ public static class OnnxTiler
 
                 var candidate = new TileSplit(columns, rows, tileWidth, tileHeight);
 
-                if (weights + (long)(bytesPerPixel * candidate.PaddedTilePixels) > sessionBudget)
+                // Measured for a shape this device has already run, analytic otherwise. The
+                // analytic estimate is held against the session budget (the reservation is already
+                // inside the measured one, not the estimate), which is the same test as
+                // weights + activations <= budget - reservation.
+                long candidateActivation = (long)(bytesPerPixel * candidate.PaddedTilePixels);
+                long? candidateObserved = ObservedTileFootprint(
+                    profile,
+                    modelNameOrPath,
+                    modelSizeBytes,
+                    scale,
+                    candidate,
+                    weights + sessionReservation + candidateActivation
+                );
+                bool candidateFits = candidateObserved is { } measuredCandidate
+                    ? measuredCandidate <= memoryBudgetBytes
+                    : weights + candidateActivation <= sessionBudget;
+                if (!candidateFits)
                 {
                     continue;
                 }

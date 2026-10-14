@@ -77,6 +77,24 @@ public interface IDeviceMemoryCalibrator
         int scale,
         bool usable
     );
+
+    /// <summary>
+    /// Records what one tile at a padded tensor shape really cost, measured by the engine while it ran
+    /// a page at that shape, so the next plan for the shape uses the measurement instead of the
+    /// calibration's extrapolation from two small benchmark tiles (see
+    /// <see cref="DeviceMemoryProfile.ObservedTilePeakFor"/>). Never throws and never creates a
+    /// measurement: a models directory that cannot be written, or a model that has no entry of its
+    /// own, simply leaves the analytic estimate in place.
+    /// </summary>
+    void RecordObservedTilePeak(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale,
+        int paddedWidth,
+        int paddedHeight,
+        long bytes
+    );
 }
 
 /// <summary>
@@ -381,7 +399,9 @@ public sealed class DeviceMemoryCalibrator(
         }
 
         profile.Provider = ToProvider(sessionFactory.GetEffectiveBackend());
-        profile.Models[DeviceMemoryProfile.ModelKey(modelPath, FileLength(modelPath))] = measured;
+        string modelKey = DeviceMemoryProfile.ModelKey(modelPath, FileLength(modelPath));
+        CarryObservedPeaksOver(measured, profile.Models.GetValueOrDefault(modelKey));
+        profile.Models[modelKey] = measured;
         store.Save(modelsDirectory, profile);
 
         logger.LogInformation(
@@ -394,6 +414,24 @@ public sealed class DeviceMemoryCalibrator(
             measured.MeasuredTiles[1]
         );
         return true;
+    }
+
+    /// <summary>
+    /// Carries what the engine measured about a model's real operating shapes onto the entry a
+    /// re-measurement just produced. The freshly measured entry replaces the stored one, so without
+    /// this a forced recalibration (or a bump of <see cref="CalibrationVersion"/>) would throw away
+    /// the footprints measured at the shapes pages actually ran — and the next plan for those shapes
+    /// would fall back to the extrapolation the measurement existed to replace.
+    /// </summary>
+    internal static void CarryObservedPeaksOver(
+        ModelMemoryProfile measured,
+        ModelMemoryProfile? previous
+    )
+    {
+        if (previous is not null && previous.ObservedTilePeaks.Count > 0)
+        {
+            measured.ObservedTilePeaks = previous.ObservedTilePeaks;
+        }
     }
 
     /// <summary>
@@ -449,6 +487,87 @@ public sealed class DeviceMemoryCalibrator(
             logger.LogDebug(
                 ex,
                 "Could not record the model probe verdict in {Directory}",
+                modelsDirectory
+            );
+        }
+    }
+
+    /// <inheritdoc />
+    public void RecordObservedTilePeak(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale,
+        int paddedWidth,
+        int paddedHeight,
+        long bytes
+    )
+    {
+        try
+        {
+            if (
+                bytes <= 0
+                || string.IsNullOrEmpty(modelsDirectory)
+                || !Directory.Exists(modelsDirectory)
+            )
+            {
+                return;
+            }
+
+            string fingerprint = BuildFingerprint(deviceId);
+            if (fingerprint.Length == 0)
+            {
+                return;
+            }
+
+            DeviceMemoryProfile? profile = store.Load(modelsDirectory, fingerprint);
+            if (profile is null)
+            {
+                return;
+            }
+
+            // Only ever into a measurement that already exists. Creating the model's entry here would
+            // hand the planner a skeleton whose ActivationScale of 1.0 takes the place of the built-in
+            // coefficient (DeviceMemoryProfile.ScaleFor returns any value inside the accepted range,
+            // and 1.0 is one) for a model the calibrator never managed to measure. A model without an
+            // entry keeps the analytic estimate, which is the correct fallback.
+            string modelKey = DeviceMemoryProfile.ModelKey(modelPath, FileLength(modelPath));
+            if (
+                !profile.Models.TryGetValue(modelKey, out ModelMemoryProfile? entry)
+                || entry is null
+            )
+            {
+                return;
+            }
+
+            string shapeKey = DeviceMemoryProfile.ObservedShapeKey(
+                scale,
+                paddedWidth,
+                paddedHeight
+            );
+            // Kept at its largest. The same shape re-measured in a later process starts from a
+            // baseline taken after its session already existed (the probe creates it), so it comes out
+            // a few tens of megabytes smaller — and a tile plan that moves between chapters for that
+            // is the churn the shape gate and the budget discount exist to avoid.
+            if (
+                entry.ObservedTilePeaks.TryGetValue(shapeKey, out long previous)
+                && previous >= bytes
+            )
+            {
+                return;
+            }
+
+            entry.ObservedTilePeaks[shapeKey] = bytes;
+            store.Save(modelsDirectory, profile);
+        }
+        catch (Exception ex)
+        {
+            // Not an error: the measurement is an optimisation for the next plan, and the analytic
+            // estimate stays in place when it cannot be stored.
+            logger.LogDebug(
+                ex,
+                "Could not record the observed tile footprint for {Model} in {Directory}",
+                Path.GetFileName(modelPath),
                 modelsDirectory
             );
         }
