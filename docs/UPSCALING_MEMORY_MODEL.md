@@ -217,43 +217,51 @@ The first two rows are the single-pass and 2x2 case of a normal page; the third 
 both axes is a large fraction of a 200 px tall tile — unavoidable, and irrelevant because such strips
 are not the common case.
 
-### 2.2 What the budget excludes, and when it is read
+### 2.2 What the budget counts, and when it is read
 
-`memoryBudgetBytes` above is the device's *automatic* budget, and two things about how it is read
+`memoryBudgetBytes` above is the device's *automatic* budget, and three things about how it is derived
 matter for the grid the planner can reach:
 
-* **It is read after the first-use benchmark and the model probe, not before them.** Both allocate
-  device memory of their own — the benchmark runs two inferences on their own sessions (§6.1) and the
-  probe creates a third — and ONNX Runtime's arenas keep their high-water mark, so that memory is
-  resident while the page runs. Reading the budget before them plans the page as if it were free.
-  Measured on an RX 9070 XT with the fp16 4x ESRGAN and a 1125x1600 page: the pre-benchmark figure was
-  13.4 GB and planned 2x2 of 563x800 (predicted 10.5 GB), while the page's own arena plus the ~4.9 GB
-  the benchmark and probe left resident peaked at 15.2 GB of the 16.3 GB card and spilled 2.4 GB into
-  GTT. The post-benchmark figure is 8.9 GB, which plans 2x3 of 563x534 — still 512 px of context — and
-  peaks at 14.1 GB with GTT at its 261 MB baseline.
-* **The upscaler's own cached session is discounted from it.** After a page the card still shows the
-  ~12.5 GB that page's tiles peaked at, because the arenas are not returned; the next page reuses that
-  memory when the tile shape is unchanged, so counting it as a competitor shrinks the grid for no
-  reason. Measured on the same machine and page: without the discount the second page's budget came out
-  as the 1.3 GB the device had left and planned 5x7 of 225x229 — below the 256 px floor — with the
-  pages after that oscillating between 512 and 375 px context and a session rebuild each; with it the
-  plan is the same 2x3 on every page, the session is reused, and the footprint stays flat at 14.1 GB.
-
-The discount is taken only while the factory really caches that session. The page-break detector shares
-the factory, so on a worker the two evict each other's model, and the GTT safety net below flushes the
-cache after a page that grew GTT; in both cases the next page allocates a fresh arena and cannot reuse
-the old one, so the memory must count against it. The figure is also clamped at the device's used
-total, so a stale value cannot invent memory that does not exist.
+* **It is the memory that is not ours.** VK_EXT_memory_budget's `heapUsage` is not the card's usage on
+  every driver: RADV reports only this process's own allocations — measured on an RX 9070 XT at 64 MB
+  against a sysfs 2677 MB with nothing but a desktop on the card, and 11695 against 14301 mid-chapter,
+  the difference being exactly the desktop's share. `heapBudget` *is* device-wide, so `total − heapBudget`
+  is what the other tenants hold (the same measurement: 16304 − 13690 = 2614), and that is the figure the
+  budget path uses. It is also the portable one: the driver reports it on Windows too, where there is no
+  sysfs. Only a driver that reports no budget at all falls back to a system-wide source (Linux DRM sysfs
+  or nvidia-smi), where the caller's own footprint is discounted out of the figure instead.
+* **The caller's own footprint is measured, not only predicted.** The arena's real contribution to the
+  used figure is `vramAfter − vramBefore` across a page, and it is kept at its largest: a page that reuses
+  the session adds nothing, so reassigning it would drop the discount back to the prediction and the
+  budget would wobble. With the driver-derived figure above the two terms cancel to "the other tenants",
+  so the budget is the same on the first page as on the tenth — which is what keeps the tile shape from
+  churning. Measured over four consecutive pages of a 1125x1600 page at fp16 4x: 11086, 11148, 11104,
+  11125 MB — a 0.3% wobble — each planning 2x2 of 563x800 (512 px of context) and reusing the session.
+  Before, the same four pages went 7918 → 10964 → 7855 MB, changed tile shape on each, and spilled 6.5 GB
+  into GTT.
+* **It is read after the first-use benchmark and the model probe, not before them.** Both allocate device
+  memory of their own — the benchmark runs two inferences on their own sessions (§6.1) and the probe
+  creates a third — and ONNX Runtime's arenas keep their high-water mark, so that memory is resident while
+  the page runs. Reading the budget before them plans the page as if it were free: the pre-benchmark
+  figure was 13.4 GB and planned 2x2 of 563x800 (predicted 10.5 GB), and the page peaked at 15.2 GB of
+  the 16.3 GB card with 2.4 GB spilled into GTT.
 
 Two consequences worth writing down rather than hiding:
 
-* The benchmark's footprint is not reclaimable — the WebGPU EP exposes no way to return it — so the
-  automatic budget stays ~4.9 GB below the card's free memory for the rest of the process. That is the
-  price of not spilling; an operator who wants those gigabytes back pins `MemoryBudgetBytes` (or raises
-  `VramExclusiveThresholdBytes`), accepting the spill risk that comes with it.
-* A page that *does* spill leaves its arena behind and the next page allocates a second one on top, so
-  the card stays nearly full for the rest of the process. Preventing the spill is what the two points
-  above are for; once it has happened, no budget arithmetic recovers the memory.
+* The benchmark's and the probe's footprint is **not reclaimable**. Measured four ways on an RX 9070 XT:
+  disposing the session and running `GC.Collect()`/`WaitForPendingFinalizers()` returns nothing, the
+  ORT `memory.enable_memory_arena_shrinkage` key returns nothing (it governs ORT's CPU/CUDA arena, and the
+  WebGPU EP allocates through Dawn), and the EP's own `lazyRelease` and `disabled` buffer-cache modes
+  return nothing while raising the peak 3–4x — so the `simple` mode the factory sets is the best of the
+  four, and the memory is only released when the process exits. The *probe's* verdict is therefore
+  remembered per device and model (`model-probe-verdicts.json`), so only the first process on a device
+  pays it. An operator who wants the remaining gigabytes back pins `MemoryBudgetBytes`, accepting the
+  spill risk that comes with it.
+* A page that *does* spill leaves its arena behind and the next page allocates a second one on top, so the
+  card stays nearly full for the rest of the process. Preventing the spill is what the points above are
+  for; once it has happened, no budget arithmetic recovers the memory. The remaining slack is the
+  prediction's own accuracy: the arena measured 12683 MB against a predicted 10830 MB, so the card runs at
+  ~95% and the reserve absorbs the difference, not the estimate.
 
 ---
 
@@ -643,7 +651,12 @@ instead of reusing the first. Measured on an RX 9070 XT with the fp16 ESRGAN at 
 Five *same-shape* pages in one session stay at 82-89 MB and 7 s each, so the growth is shape churn,
 not "any second page". The engine therefore releases the cached session when the padded shape
 changes; a rebuild costs ~290 ms, which is far cheaper than the 9.6 GB and 25 s a churned session
-pays. The absolute `gttAfter > 1 GB` trigger it replaces fired on essentially every page (the GTT
+pays. Note, though, that the release is a *session* release: on this driver it does not return the
+buffers to the device (§2.2 measured that neither dispose + GC nor the buffer-cache modes give them
+back), so a chapter that changes shape still accumulates one arena per shape for the lifetime of the
+process. Keeping the shape stable — which is what the budget derivation in §2.2 is for — is what
+avoids that; the release only keeps a *continued* session from adding a second set for a shape it is
+about to run anyway. The absolute `gttAfter > 1 GB` trigger it replaces fired on essentially every page (the GTT
 baseline alone is ~1 GB on a desktop), which turned the cache's own reuse into a rebuild per page.
 
 
