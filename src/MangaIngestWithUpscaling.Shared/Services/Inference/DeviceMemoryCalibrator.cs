@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -49,6 +50,32 @@ public interface IDeviceMemoryCalibrator
         string modelPath,
         int scale,
         CancellationToken cancellationToken = default
+    );
+
+    /// <summary>
+    /// Whether this device has already been told that <paramref name="modelPath"/> is usable at
+    /// <paramref name="scale"/>, from an earlier process. Null when nothing is remembered.
+    /// <para>
+    /// The probe behind that answer runs a 256 px inference, and ONNX Runtime's WebGPU buffer cache
+    /// never gives the memory back: measured on an RX 9070 XT it left ~4.9 GB resident for the rest of
+    /// the process, memory the automatic VRAM budget then has to plan around. Remembering the answer
+    /// per device and model means only the first process on a device pays it.
+    /// </para>
+    /// </summary>
+    bool? TryGetModelUsableVerdict(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale
+    );
+
+    /// <summary>Records the answer <see cref="TryGetModelUsableVerdict"/> reads back.</summary>
+    void SetModelUsableVerdict(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale,
+        bool usable
     );
 }
 
@@ -372,6 +399,110 @@ public sealed class DeviceMemoryCalibrator(
     /// <summary>
     /// Identity of the measured configuration. The execution provider comes from the session factory
     /// (the single place that resolves it, honouring <see cref="UpscalerConfig.PreferredGpuBackend"/>,
+    /// <inheritdoc />
+    public bool? TryGetModelUsableVerdict(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale
+    )
+    {
+        Dictionary<string, Dictionary<string, bool>> verdicts = ReadVerdicts(modelsDirectory);
+        if (!verdicts.TryGetValue(BuildFingerprint(deviceId), out var forDevice))
+        {
+            return null;
+        }
+
+        return forDevice.TryGetValue(VerdictKey(modelPath, scale), out bool usable) ? usable : null;
+    }
+
+    /// <inheritdoc />
+    public void SetModelUsableVerdict(
+        int deviceId,
+        string modelsDirectory,
+        string modelPath,
+        int scale,
+        bool usable
+    )
+    {
+        try
+        {
+            string path = VerdictPath(modelsDirectory);
+            string fingerprint = BuildFingerprint(deviceId);
+            Dictionary<string, Dictionary<string, bool>> verdicts = ReadVerdicts(modelsDirectory);
+
+            if (!verdicts.TryGetValue(fingerprint, out var forDevice))
+            {
+                forDevice = new Dictionary<string, bool>(StringComparer.Ordinal);
+                verdicts[fingerprint] = forDevice;
+            }
+
+            forDevice[VerdictKey(modelPath, scale)] = usable;
+
+            string temp = $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(verdicts, VerdictJson));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            // Not an error: the verdict is an optimisation, and the next process simply probes again.
+            logger.LogDebug(
+                ex,
+                "Could not record the model probe verdict in {Directory}",
+                modelsDirectory
+            );
+        }
+    }
+
+    /// <summary>
+    /// The file the probe verdicts live in, next to the device memory profile: one map of device
+    /// fingerprint to <c>model|size|scale</c>, so a machine that swaps GPUs or runs two providers keeps
+    /// every answer. The model's size is part of the key because a re-exported file can keep its name
+    /// while its graph changes.
+    /// </summary>
+    internal const string VerdictFileName = "model-probe-verdicts.json";
+
+    private static readonly JsonSerializerOptions VerdictJson = new() { WriteIndented = true };
+
+    internal static string VerdictPath(string modelsDirectory) =>
+        Path.Combine(modelsDirectory, VerdictFileName);
+
+    private static string VerdictKey(string modelPath, int scale)
+    {
+        long size = 0;
+        try
+        {
+            size = new FileInfo(modelPath).Length;
+        }
+        catch { }
+
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{Path.GetFileName(modelPath)}|{size}|{scale}"
+        );
+    }
+
+    private static Dictionary<string, Dictionary<string, bool>> ReadVerdicts(string modelsDirectory)
+    {
+        try
+        {
+            string path = VerdictPath(modelsDirectory);
+            if (!File.Exists(path))
+            {
+                return new Dictionary<string, Dictionary<string, bool>>(StringComparer.Ordinal);
+            }
+
+            return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, bool>>>(
+                    File.ReadAllText(path)
+                ) ?? new Dictionary<string, Dictionary<string, bool>>(StringComparer.Ordinal);
+        }
+        catch (Exception)
+        {
+            // A corrupt or unreadable verdict file is not an error: the probe runs again.
+            return new Dictionary<string, Dictionary<string, bool>>(StringComparer.Ordinal);
+        }
+    }
+
     /// <see cref="UpscalerConfig.UseCPU"/> and the device index), so a calibration is only ever
     /// reused for the provider that will actually run the model. The device is part of the key, so a
     /// second GPU, or the same GPU under CUDA instead of WebGPU, gets its own measurement.

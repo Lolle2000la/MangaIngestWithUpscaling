@@ -1129,6 +1129,7 @@ public class OnnxUpscaleEngine(
             (bool usable, Exception? transientFailure) = await ModelUsableOnThisDeviceAsync(
                 modelPath,
                 scale,
+                deviceId,
                 cancellationToken
             );
             if (!usable)
@@ -1691,6 +1692,7 @@ public class OnnxUpscaleEngine(
     private async Task<(bool Usable, Exception? TransientFailure)> ModelUsableOnThisDeviceAsync(
         string modelPath,
         int scale,
+        int deviceId,
         CancellationToken cancellationToken
     )
     {
@@ -1702,6 +1704,33 @@ public class OnnxUpscaleEngine(
             {
                 return (known, null);
             }
+        }
+
+        // What an earlier process already learned about this model on this device. The probe below
+        // costs a 256 px inference whose device memory ONNX Runtime's WebGPU buffer cache never
+        // returns — measured at ~4.9 GB resident for the rest of the process — so it is only run when
+        // the answer is genuinely unknown. A driver change that invalidates it is caught by the
+        // per-tile guard on the page itself, which reports the model fault and condemns the model
+        // through RecordModelFailure.
+        bool? remembered = deviceCalibrator.TryGetModelUsableVerdict(
+            deviceId,
+            ModelsDirectory,
+            modelPath,
+            scale
+        );
+        if (remembered is { } verdict)
+        {
+            logger.LogDebug(
+                "Model {Model} was already probed on this device ({Verdict}); skipping the probe inference.",
+                Path.GetFileName(modelPath),
+                verdict ? "usable" : "unusable"
+            );
+            lock (_modelUsable)
+            {
+                _modelUsable[key] = verdict;
+            }
+
+            return (verdict, null);
         }
 
         bool usable;
@@ -1836,6 +1865,13 @@ public class OnnxUpscaleEngine(
         if (cacheVerdict)
         {
             RecordUsable(key, usable);
+            deviceCalibrator.SetModelUsableVerdict(
+                deviceId,
+                ModelsDirectory,
+                modelPath,
+                scale,
+                usable
+            );
         }
 
         return (usable, transientFailure);
