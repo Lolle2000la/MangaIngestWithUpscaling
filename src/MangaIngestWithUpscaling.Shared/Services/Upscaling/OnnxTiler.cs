@@ -1596,12 +1596,20 @@ public static class OnnxTiler
     /// together — or null when the driver exposes no per-process figure (no Vulkan, or a driver that
     /// does not populate <c>VK_EXT_memory_budget</c>).
     /// <para>
-    /// This is the source a measurement of "what did this page cost *us*" needs.
-    /// <c>VK_EXT_memory_budget</c>'s <c>heapUsage</c> counts only the querying process's allocations —
-    /// measured on an RX 9070 XT at 64 MB against a system-wide 2677 MB with nothing but a desktop on
-    /// the card — while the system-wide sources (<see cref="GetGpuMemoryUsage"/>, and the fallbacks in
-    /// <see cref="GetGpuVramInfo"/>) include every other tenant, so another process allocating or
-    /// freeing while a page runs lands in the measurement.
+    /// This is the source a measurement of "what did this page cost *us*" needs, and the semantics are
+    /// the extension's own rather than a driver quirk: the specification documents
+    /// <c>heapUsage</c> as "the current process estimated heap usage" and <c>heapBudget</c> as how much
+    /// the process may use, and this reads the former. Measured on an RX 9070 XT it is 64 MB against a
+    /// system-wide 2677 MB with nothing but a desktop on the card, while the system-wide sources
+    /// (<see cref="GetGpuMemoryUsage"/>, and the fallbacks in <see cref="GetGpuVramInfo"/>) include
+    /// every other tenant, so another process allocating or freeing while a page runs lands in their
+    /// measurement.
+    /// </para>
+    /// <para>
+    /// The values are estimates and explicitly implementation-dependent, and a driver that reports the
+    /// card's usage here instead would make this the system-wide reading — which is what the caller
+    /// used before this existed, so the degradation is to the previous behaviour rather than to
+    /// something worse. What bounds either is the band the caller applies.
     /// </para>
     /// </summary>
     public static long? TryGetProcessMemoryBytes(int deviceId = 0)

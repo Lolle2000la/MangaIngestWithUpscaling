@@ -2321,6 +2321,65 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void PredictTilePeakBytes_BandIsARatioOfTheShapeNotAnAbsoluteAmount()
+    {
+        // The band has to scale with the shape: a card with more memory, or a larger tile, must be
+        // judged by the same rule. An absolute allowance would accept a wrong measurement on a small
+        // tile and reject a right one on a large tile, so the same relative distances are checked at
+        // two sizes whose estimates differ by roughly four.
+        string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        long weights = 34L * 1024 * 1024;
+
+        foreach (
+            OnnxTiler.TileSplit split in new[]
+            {
+                new OnnxTiler.TileSplit(2, 2, 563, 800),
+                new OnnxTiler.TileSplit(1, 1, 1125, 1600),
+            }
+        )
+        {
+            (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+            long analytic = OnnxTiler.PredictTilePeakBytes(split, 4, model, weights, isFp16: true);
+
+            // Half the estimate is inside the band and is used, at both sizes.
+            Assert.Equal(
+                analytic / 2,
+                OnnxTiler.PredictTilePeakBytes(
+                    split,
+                    4,
+                    model,
+                    weights,
+                    true,
+                    Measured(model, weights, 4, paddedWidth, paddedHeight, analytic / 2)
+                )
+            );
+            // An eighth and eight times are outside it and are ignored, at both sizes.
+            Assert.Equal(
+                analytic,
+                OnnxTiler.PredictTilePeakBytes(
+                    split,
+                    4,
+                    model,
+                    weights,
+                    true,
+                    Measured(model, weights, 4, paddedWidth, paddedHeight, analytic / 8)
+                )
+            );
+            Assert.Equal(
+                analytic,
+                OnnxTiler.PredictTilePeakBytes(
+                    split,
+                    4,
+                    model,
+                    weights,
+                    true,
+                    Measured(model, weights, 4, paddedWidth, paddedHeight, analytic * 8)
+                )
+            );
+        }
+    }
+
+    [Fact]
     public void PlanTileSplit_SizesFromTheMeasuredFootprintOfAShapeTheDeviceHasRun()
     {
         // The measurement is what keeps the safety margin from being the buffer for the estimate's

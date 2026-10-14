@@ -754,10 +754,19 @@ The figure is this process's own growth across the page, and the source matters.
 per-process figure is preferred (`OnnxTiler.TryGetProcessMemoryBytes`, the same `heapUsage` §4.1
 describes), because the system-wide sources count every other tenant: the same padded shape was measured
 at 8406 MB once and 9683 MB another time, 1.3 GB apart, and the lower one reached a plan — anything else
-on the card that allocates or frees while the page runs lands in a system-wide delta. Where the driver
-exposes no per-process figure (no Vulkan, or a driver that does not populate `VK_EXT_memory_budget`) the
-system-wide reading is still the fallback, which is conservative in the common case and bounded by the
-band below.
+on the card that allocates or frees while the page runs lands in a system-wide delta.
+
+That the per-process figure really is per-process is the extension's contract, not a driver quirk:
+`VK_EXT_memory_budget` documents `heapUsage` as "the current process estimated heap usage" and
+`heapBudget` as how much the process may use. It is the same source on AMD, NVIDIA and Intel — the
+provider talks to the Vulkan loader (`libvulkan.so.1` / `vulkan-1.dll`) — and the values are estimates
+that the specification calls implementation-dependent, which is what the band below and the margin in
+§2.2 are for. A driver that reported the card's usage there anyway would make this the system-wide
+reading, which is what this path used before the per-process source existed: the degradation is to the
+previous behaviour, never to something worse. Where there is no Vulkan at all (a minimal container, a
+backend that does not expose the extension) the system-wide reading is the fallback, and on a host where
+that too is unavailable (Windows without Vulkan has no sysfs) the recording simply does not happen and
+the budget's own-footprint discount stays 0 — conservative in both cases.
 
 Pushing the *larger benchmark tile* further, so that the fit happens closer to the operating shape, is a
 wash rather than an obvious win: the reservation is derived as `growth − slope·n² − weights`, so any error
