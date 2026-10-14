@@ -254,7 +254,11 @@ public sealed class DeviceMemoryCalibrator(
                 return cached;
             }
 
-            DeviceMemoryProfile profile = cached ?? CreateProfileSkeleton(fingerprint, deviceId);
+            DeviceMemoryProfile profile = cached is null
+                ? CreateProfileSkeleton(fingerprint, deviceId)
+                // A copy: the store hands the same object to every caller, and this one is about to
+                // write to it (see DeviceMemoryProfile.Clone).
+                : cached.Clone();
 
             bool measured = false;
             try
@@ -594,11 +598,16 @@ public sealed class DeviceMemoryCalibrator(
                 return;
             }
 
-            DeviceMemoryProfile? profile = store.Load(modelsDirectory, fingerprint);
-            if (profile is null)
+            DeviceMemoryProfile? loaded = store.Load(modelsDirectory, fingerprint);
+            if (loaded is null)
             {
                 return;
             }
+
+            // A copy, for the same reason the calibration path takes one: this is about to write to the
+            // profile, and the store's snapshot is what other pages are reading from while they plan
+            // (see DeviceMemoryProfile.Clone).
+            DeviceMemoryProfile profile = loaded.Clone();
 
             // Only ever into a measurement that already exists. Creating the model's entry here would
             // hand the planner a skeleton whose ActivationScale of 1.0 takes the place of the built-in

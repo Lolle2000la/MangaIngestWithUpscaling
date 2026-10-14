@@ -62,6 +62,45 @@ public class DeviceMemoryBenchmarkChildTests
     }
 
     [Fact]
+    public void ChildCommand_HandsTheAssemblyToTheDotnetMuxer()
+    {
+        // The production container starts the app as `dotnet MangaIngestWithUpscaling.dll`, so
+        // Environment.ProcessPath is the muxer, which does not know the benchmark option. Without the
+        // assembly in front of it the child could never run there, and every calibration would silently
+        // fall back to measuring in the host — which is the cost this feature exists to avoid.
+        (string file, string[] prefix) = DeviceMemoryBenchmarkProcessRunner.ChildCommand(
+            "/usr/share/dotnet/dotnet",
+            "/app/MangaIngestWithUpscaling.dll"
+        );
+        Assert.Equal("/usr/share/dotnet/dotnet", file);
+        Assert.Equal(new[] { "/app/MangaIngestWithUpscaling.dll" }, prefix);
+
+        // An apphost (a published executable, or a single-file build) is the application itself, so
+        // there is nothing to put in front of it — the entry assembly's own path is the dll next to it.
+        (file, prefix) = DeviceMemoryBenchmarkProcessRunner.ChildCommand(
+            "/app/MangaIngestWithUpscaling",
+            "/app/MangaIngestWithUpscaling.dll"
+        );
+        Assert.Equal("/app/MangaIngestWithUpscaling", file);
+        Assert.Empty(prefix);
+
+        // Windows spells the muxer dotnet.exe; the file-name comparison is case-insensitive, and the
+        // path separator is the platform's, exactly as it is for Environment.ProcessPath.
+        Assert.Equal(
+            "C:\\app\\App.dll",
+            Assert.Single(
+                DeviceMemoryBenchmarkProcessRunner
+                    .ChildCommand("dotnet.exe", "C:\\app\\App.dll")
+                    .Prefix
+            )
+        );
+        Assert.Empty(DeviceMemoryBenchmarkProcessRunner.ChildCommand("dotnet", null).Prefix);
+        Assert.Empty(
+            DeviceMemoryBenchmarkProcessRunner.ChildCommand("dotnet", string.Empty).Prefix
+        );
+    }
+
+    [Fact]
     public async Task RunAsync_WithAMalformedCommandLine_ReportsUsageWithoutMeasuring()
     {
         Assert.Equal(2, await DeviceMemoryBenchmarkHost.RunAsync([]));
@@ -112,6 +151,16 @@ public class DeviceMemoryBenchmarkChildTests
             );
             string fingerprint = calibrator.BuildFingerprint(0);
 
+            // A profile that exists but has no measurement for this model: that is what makes the
+            // calibrator measure at all, and it is also the object the store hands to every caller.
+            var seeded = new DeviceMemoryProfile { Fingerprint = fingerprint };
+            seeded.Models[DeviceMemoryProfile.ModelKey("other.onnx", 1)] = new ModelMemoryProfile
+            {
+                ActivationScale = 1.1,
+            };
+            store.Save(dir, seeded);
+            DeviceMemoryProfile published = store.Load(dir, fingerprint)!;
+
             runner
                 .RunAsync(
                     Arg.Any<UpscalerConfig>(),
@@ -123,17 +172,17 @@ public class DeviceMemoryBenchmarkChildTests
                 .Returns(_ =>
                 {
                     // What the child does: measure and write to the store both processes share.
-                    DeviceMemoryProfile profile =
-                        store.Load(dir, fingerprint)
+                    DeviceMemoryProfile written =
+                        store.Load(dir, fingerprint)?.Clone()
                         ?? new DeviceMemoryProfile { Fingerprint = fingerprint };
-                    profile.Models[DeviceMemoryProfile.ModelKey(model, size)] =
+                    written.Models[DeviceMemoryProfile.ModelKey(model, size)] =
                         new ModelMemoryProfile
                         {
                             ActivationScale = 1.28,
                             SessionReservationBytes = 9L * 1024 * 1024,
                             MeasuredTiles = [192, 576],
                         };
-                    store.Save(dir, profile);
+                    store.Save(dir, written);
                     return Task.FromResult(true);
                 });
 
@@ -150,6 +199,13 @@ public class DeviceMemoryBenchmarkChildTests
             Assert.Equal(9L * 1024 * 1024, profile.ReservationFor(model, size));
             // The child did the measuring, so this process never built a session for it.
             sessionFactory.DidNotReceiveWithAnyArgs().GetOrCreateSession(default!);
+            // And the object the store published before the measurement is untouched: the calibration
+            // writes to a copy (DeviceMemoryProfile.Clone), because another page may be reading that
+            // same object while it plans.
+            Assert.False(
+                published.Models.ContainsKey(DeviceMemoryProfile.ModelKey(model, size)),
+                "the calibration mutated the profile the store had handed out"
+            );
         }
         finally
         {

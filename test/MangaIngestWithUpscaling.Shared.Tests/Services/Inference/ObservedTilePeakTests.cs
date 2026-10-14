@@ -232,6 +232,64 @@ public class ObservedTilePeakTests : IDisposable
     }
 
     [Fact]
+    public void Recording_DoesNotTouchTheProfileTheStoreHandedOut()
+    {
+        // Load hands every caller the same object (the store's cached snapshot), and two pages of one
+        // chapter plan — reading the per-shape measurements — while a third records what it measured.
+        // A Dictionary read concurrent with a write is undefined behaviour, so the recorder must work
+        // on a copy: the published object has to stay exactly as it was.
+        (string model, long size) = SeedModelWithMeasurement();
+        DeviceMemoryProfile published = _store.Load(_tempDir, _calibrator.BuildFingerprint(0))!;
+        Assert.Empty(published.Models[DeviceMemoryProfile.ModelKey(model, size)].ObservedTilePeaks);
+
+        _calibrator.RecordObservedTilePeak(
+            0,
+            _tempDir,
+            model,
+            Scale,
+            PaddedWidth,
+            PaddedHeight,
+            9604L
+        );
+
+        Assert.Empty(published.Models[DeviceMemoryProfile.ModelKey(model, size)].ObservedTilePeaks);
+        // ...while the measurement itself did reach the file.
+        Assert.Equal(
+            9604L,
+            ReloadFreshStore().ObservedTilePeakFor(model, size, Scale, PaddedWidth, PaddedHeight)
+        );
+    }
+
+    [Fact]
+    public void Clone_IsIndependentOfTheProfileItCameFrom()
+    {
+        (string model, long size) = SeedModelWithMeasurement();
+        _calibrator.RecordObservedTilePeak(
+            0,
+            _tempDir,
+            model,
+            Scale,
+            PaddedWidth,
+            PaddedHeight,
+            9604L
+        );
+
+        DeviceMemoryProfile original = ReloadFreshStore();
+        DeviceMemoryProfile copy = original.Clone();
+
+        string key = DeviceMemoryProfile.ModelKey(model, size);
+        copy.Models[key].ObservedTilePeaks[DeviceMemoryProfile.ObservedShapeKey(4, 128, 128)] = 1;
+        copy.Models["added.onnx|1"] = new ModelMemoryProfile();
+        copy.ActivationScale = 99;
+
+        Assert.Single(original.Models[key].ObservedTilePeaks);
+        Assert.False(original.Models.ContainsKey("added.onnx|1"));
+        Assert.NotEqual(99, original.ActivationScale);
+        // The nested map is copied too, not shared.
+        Assert.NotSame(original.Models[key].ObservedTilePeaks, copy.Models[key].ObservedTilePeaks);
+    }
+
+    [Fact]
     public void CarryObservedPeaksOver_MovesTheMeasuredShapesOntoTheFreshMeasurement()
     {
         // The entry a re-measurement produces replaces the stored one wholesale (the store's own merge

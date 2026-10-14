@@ -1057,6 +1057,13 @@ public static class OnnxTiler
     /// 704 px tile side, while a 2x2 grid covers the same page with fewer, better-fitting tiles.
     /// </para>
     /// <para>
+    /// A tile's cost is the analytic estimate unless this device has already run that exact padded
+    /// shape, in which case what it measured then is used instead (see
+    /// <see cref="PredictTilePeakBytes"/> and <c>DeviceMemoryProfile.ObservedTilePeakFor</c>). The
+    /// estimate extrapolates the calibration's two small benchmark tiles up to the operating shape,
+    /// and where that extrapolation is optimistic the page would pay for it out of the safety margin.
+    /// </para>
+    /// <para>
     /// The whole page as one inference is only planned when its footprint stays below
     /// <see cref="SinglePassSafetyFraction"/> of the budget, because a single-pass overflow cannot
     /// be recovered without restarting the page. There is deliberately no upper cap beyond that:

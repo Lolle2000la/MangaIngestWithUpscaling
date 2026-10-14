@@ -137,6 +137,39 @@ public sealed class DeviceMemoryProfile
     internal const long MaxSessionReservationBytes = 8L * 1024 * 1024 * 1024;
 
     /// <summary>
+    /// A copy this caller may mutate.
+    /// <para>
+    /// <see cref="DeviceMemoryProfileStore.Load"/> hands every caller the same object — the store's
+    /// cached snapshot — so a caller that writes to what it loaded is writing to a dictionary another
+    /// page may be reading at the same time: two pages of one chapter plan (which reads the per-shape
+    /// measurements) while a third records what it measured, and a calibration adds a model entry to
+    /// the same map. A <c>Dictionary</c> read concurrent with a write is undefined behaviour, so every
+    /// mutation goes to a copy of this and the copy is what gets saved; the published object is never
+    /// touched. Arrays are shared deliberately: they are only ever assigned wholesale.
+    /// </para>
+    /// </summary>
+    public DeviceMemoryProfile Clone() =>
+        new()
+        {
+            Fingerprint = Fingerprint,
+            Provider = Provider,
+            DeviceName = DeviceName,
+            TotalDeviceMemoryBytes = TotalDeviceMemoryBytes,
+            ActivationScale = ActivationScale,
+            SessionReservationBytes = SessionReservationBytes,
+            DeviceWideMeasured = DeviceWideMeasured,
+            CalibratedAtUtc = CalibratedAtUtc,
+            CalibratedWithModel = CalibratedWithModel,
+            MeasuredTiles = MeasuredTiles,
+            MeasuredPeakBytes = MeasuredPeakBytes,
+            Models = Models.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value.Clone(),
+                StringComparer.Ordinal
+            ),
+        };
+
+    /// <summary>
     /// The activation scale to plan <paramref name="modelNameOrPath"/> with: its own measurement if
     /// this device has one, the device-wide default if that was measured, otherwise null — "no
     /// measurement", so the caller keeps its built-in rather than a skeleton's 1.0.
@@ -321,4 +354,22 @@ public sealed class ModelMemoryProfile
 
     [JsonPropertyName("calibratedAtUtc")]
     public DateTimeOffset CalibratedAtUtc { get; set; }
+
+    /// <summary>
+    /// A copy this caller may mutate; see <see cref="DeviceMemoryProfile.Clone"/> for why one is
+    /// needed rather than writing to the object the store handed out.
+    /// </summary>
+    public ModelMemoryProfile Clone() =>
+        new()
+        {
+            ActivationScale = ActivationScale,
+            SessionReservationBytes = SessionReservationBytes,
+            MeasuredTiles = MeasuredTiles,
+            MeasuredPeakBytes = MeasuredPeakBytes,
+            ObservedTilePeaks = new Dictionary<string, long>(
+                ObservedTilePeaks,
+                StringComparer.Ordinal
+            ),
+            CalibratedAtUtc = CalibratedAtUtc,
+        };
 }

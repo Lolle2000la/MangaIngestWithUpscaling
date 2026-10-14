@@ -658,9 +658,13 @@ session (and vice versa) just because both happen to run on the same card.
   12716 MB of the 16304 MB card in the child, against 15636 MB when the host measured it itself. The
   child is spawned through the runner seam (`IDeviceMemoryBenchmarkProcessRunner`) with the host's
   resolved configuration as an argument, writes to the same store, and the host adopts the measurement
-  from there. A host that cannot spawn itself — an unusual deployment, a sandbox — measures in process
-  exactly as it did before, and a child that exits without a usable measurement is not a lost
-  calibration: the in-process path runs instead.
+  from there. The command is the host's own `Environment.ProcessPath`, plus the entry assembly in front
+  of it when that executable is the `dotnet` muxer — which is how the production image starts the app
+  (`ENTRYPOINT ["dotnet", "MangaIngestWithUpscaling.dll"]` in `Dockerfile`), and how any
+  framework-dependent invocation starts it. A host that cannot spawn itself — an unusual deployment, a
+  sandbox — measures in process exactly as it did before, and a child that exits without a usable
+  measurement is not a lost calibration: the in-process path runs instead. A child that never exits is
+  killed after five minutes, so a hang cannot hold a page.
 * A model with no measurement of its own falls back to the device-wide default, and then to the
   built-in coefficients.
 * `RecalibrateDeviceMemory = true` forces a re-measure on the next upscale.

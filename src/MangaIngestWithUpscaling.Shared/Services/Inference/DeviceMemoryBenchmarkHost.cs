@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using AutoRegisterInject;
@@ -75,21 +76,31 @@ public sealed class DeviceMemoryBenchmarkProcessRunner(
     {
         // The host's own executable: the child needs exactly the deployment the parent runs, including
         // its native ONNX Runtime and its execution provider, and this is the one binary guaranteed to
-        // be there. A single-file or framework-dependent host both work, because this is the apphost.
+        // be there.
         string? host = Environment.ProcessPath;
         if (string.IsNullOrEmpty(host))
         {
             return false;
         }
 
+        (string fileName, string[] prefix) = ChildCommand(
+            host,
+            Assembly.GetEntryAssembly()?.Location
+        );
+
         try
         {
-            var start = new ProcessStartInfo(host)
+            var start = new ProcessStartInfo(fileName)
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
+            foreach (string argument in prefix)
+            {
+                start.ArgumentList.Add(argument);
+            }
+
             start.ArgumentList.Add(DeviceMemoryBenchmarkHost.CommandName);
             start.ArgumentList.Add(DeviceMemoryBenchmarkHost.EncodeConfig(config));
             start.ArgumentList.Add(modelPath);
@@ -102,25 +113,45 @@ public sealed class DeviceMemoryBenchmarkProcessRunner(
                 return false;
             }
 
-            // Both pipes have to be drained while the child runs: a redirected pipe nobody reads fills
-            // and blocks the child, and the benchmark would then hang instead of failing.
-            Task<string> stdout = child.StandardOutput.ReadToEndAsync(cancellationToken);
-            Task<string> stderr = child.StandardError.ReadToEndAsync(cancellationToken);
-            await child.WaitForExitAsync(cancellationToken);
-            await stdout;
-            string error = await stderr;
+            // A child that hangs must not hang the page behind it. The benchmark takes seconds; this is
+            // a net for a child that never reaches its own exit — a mixed deployment whose binary has
+            // no benchmark mode and would start a server instead, a wedged driver call. On expiry the
+            // child is killed and the caller measures in process, exactly as it does when the spawn
+            // itself fails. (Not unit-tested: it needs a real child process to hang.)
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(ChildTimeout);
 
-            if (child.ExitCode == 0)
+            try
             {
-                return true;
-            }
+                // Both pipes have to be drained while the child runs: a redirected pipe nobody reads
+                // fills and blocks the child, and the benchmark would then hang instead of failing.
+                Task<string> stdout = child.StandardOutput.ReadToEndAsync(timeout.Token);
+                Task<string> stderr = child.StandardError.ReadToEndAsync(timeout.Token);
+                await child.WaitForExitAsync(timeout.Token);
+                await stdout;
+                string error = await stderr;
 
-            logger.LogWarning(
-                "The device memory benchmark child process exited with {ExitCode}: {Error}",
-                child.ExitCode,
-                error.Trim()
-            );
-            return false;
+                if (child.ExitCode == 0)
+                {
+                    return true;
+                }
+
+                logger.LogWarning(
+                    "The device memory benchmark child process exited with {ExitCode}: {Error}",
+                    child.ExitCode,
+                    error.Trim()
+                );
+                return false;
+            }
+            finally
+            {
+                // Covers both the timeout and a cancelled page: neither should leave a benchmark
+                // running behind the host. A child that already exited is left alone.
+                if (!child.HasExited)
+                {
+                    child.Kill(entireProcessTree: true);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -130,6 +161,38 @@ public sealed class DeviceMemoryBenchmarkProcessRunner(
             );
             return false;
         }
+    }
+
+    /// <summary>
+    /// How long a child may take before it is killed and the caller measures in process.
+    /// </summary>
+    internal static readonly TimeSpan ChildTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The command that starts the child: the host's own executable, plus the entry assembly when that
+    /// executable is the <c>dotnet</c> muxer rather than an apphost.
+    /// <para>
+    /// The production container starts the app as <c>dotnet MangaIngestWithUpscaling.dll</c>
+    /// (<c>Dockerfile</c>), and so does any framework-dependent invocation: there
+    /// <c>Environment.ProcessPath</c> is the muxer, which does not know the benchmark option and would
+    /// either refuse it or try to run a file by that name. Handing it the assembly first makes the
+    /// child the same application either way. A single-file publish has no separate assembly, and
+    /// there the process path is the app itself.
+    /// </para>
+    /// </summary>
+    internal static (string FileName, string[] Prefix) ChildCommand(
+        string processPath,
+        string? entryAssemblyPath
+    )
+    {
+        bool muxer = string.Equals(
+            Path.GetFileNameWithoutExtension(processPath),
+            "dotnet",
+            StringComparison.OrdinalIgnoreCase
+        );
+        return muxer && !string.IsNullOrEmpty(entryAssemblyPath)
+            ? (processPath, [entryAssemblyPath])
+            : (processPath, []);
     }
 }
 
@@ -171,6 +234,7 @@ public static class DeviceMemoryBenchmarkHost
             Console.Error.WriteLine(
                 $"usage: {CommandName} <base64 config> <model path> <scale> <device id>"
             );
+            Console.Error.Flush();
             return 2;
         }
 
@@ -224,6 +288,7 @@ public static class DeviceMemoryBenchmarkHost
         catch (Exception ex)
         {
             Console.Error.WriteLine(ex);
+            Console.Error.Flush();
             return 3;
         }
     }
