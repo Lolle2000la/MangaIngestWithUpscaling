@@ -554,6 +554,14 @@ peak(n) = reservation + scale · analytic · n²
 | inference at n₁ and n₂ | `scale` — the per-pixel slope, divided by the analytic one |
 | the two points together | `reservation` — the fixed part, with the weights taken out |
 
+The two sizes are derived from the budget, not fixed: the larger one is as big as a third of it allows
+(`ChooseLargeTile`, clamped to 128–640 px), and the smaller is a third of that rounded to the tensor
+alignment, with 96 px as the floor. Both are multiples of 16, so the tensor the model really runs is
+exactly n×n — the overlap of §2.1 is added by the tiling path, not by the benchmark — and the fit's
+per-pixel term is therefore the same quantity the planner multiplies by the padded tile. On an RX 9070
+XT with the fp16 ESRGAN that works out to 128 and 384 px at a ~10.8 GB budget and to 96 and 192 px at a
+much smaller one; the profile's `measuredTiles` records what was actually used.
+
 `scale` is a property of the model *and* the execution provider together, not of the device, so one
 device-wide factor cannot represent it. The table below is the **coefficient refit**, not a device
 measurement: it compares the prediction of the previous single (fp16-fitted) column with the
@@ -702,11 +710,12 @@ baseline alone is ~1 GB on a desktop), which turned the cache's own reuse into a
 
 ### 6.6 Footprints measured at the operating shape
 
-The calibration of §6.1 fits its slope at two *small* benchmark tiles and extrapolates it to the
-operating tile. That is the right shape of model — the working set is quadratic with no cliff — but the
-extrapolation is an assumption about how the execution provider scales between 192 px and, say, 640 px,
-and the fixed per-inference overheads of the provider weigh relatively more at the small end. The
-estimate is therefore checked against a measurement as soon as one exists.
+The calibration of §6.1 fits its slope at two small benchmark tiles — as large as a third of the budget
+allows, 128–640 px — and extrapolates it to the operating tile. That is the right shape of model (the
+working set is quadratic with no cliff), but the extrapolation is an assumption about how the execution
+provider scales from the benchmark size to the operating one, and the provider's fixed per-inference
+overheads weigh relatively more at the small end. The estimate is therefore checked against a measurement
+as soon as one exists.
 
 Every page the engine builds a fresh tensor shape for measures what that shape cost: the growth of the
 device's usage between the reading taken just before the page's session was acquired and the reading
@@ -738,6 +747,20 @@ same shape (the same idea as the activation factor's accepted range in §6.4); o
 a measurement of this model on this device and the estimate is used instead. And a re-measurement of the
 model's coefficients (a forced recalibration, a `CalibrationVersion` bump) carries the observed shapes
 over, so re-measuring a model does not throw away what its real operating shapes cost.
+
+The figure depends on what the baseline already contained, and that is worth knowing rather than
+rediscovering: a session that the model probe created *before* the page is in the baseline, so the page's
+growth is the new shape's buffers alone — measured on an RX 9070 XT, 8406 MB for the fp16 ESRGAN at
+640x832 in that case, against 9683 MB when the page created the session itself (the session's creation
+costs ~1.2 GB, which is the same cost the probe's verdict cache exists to pay once per device). Both are
+correct measurements of different things; keeping the largest is what settles on the conservative one, and
+a shape that is re-run in a later chapter re-measures it anyway.
+
+Pushing the *larger benchmark tile* further, so that the fit happens closer to the operating shape, is a
+wash rather than an obvious win: the reservation is derived as `growth − slope·n² − weights`, so any error
+in the slope is multiplied by the larger n², and a bigger tile trades a better-fitted slope for a noisier
+reservation. The residual error it would address is the 3.4% above, on the first page at a shape only —
+which is what the per-shape measurement removes anyway.
 
 
 ## 7. Reproducing the numbers

@@ -62,10 +62,32 @@ public sealed class NoDeviceMemoryBenchmarkProcessRunner : IDeviceMemoryBenchmar
 /// Spawns the host's own executable in <see cref="DeviceMemoryBenchmarkHost"/> mode.
 /// </summary>
 [RegisterSingleton]
-public sealed class DeviceMemoryBenchmarkProcessRunner(
-    ILogger<DeviceMemoryBenchmarkProcessRunner> logger
-) : IDeviceMemoryBenchmarkProcessRunner
+public sealed class DeviceMemoryBenchmarkProcessRunner : IDeviceMemoryBenchmarkProcessRunner
 {
+    private readonly ILogger<DeviceMemoryBenchmarkProcessRunner> logger;
+    private readonly string? hostPath;
+    private readonly TimeSpan timeout;
+
+    public DeviceMemoryBenchmarkProcessRunner(ILogger<DeviceMemoryBenchmarkProcessRunner> logger)
+        : this(logger, hostPath: null, timeout: null) { }
+
+    /// <summary>
+    /// The host to spawn and the deadline to give it, both defaulted in production. They are
+    /// parameters so the deadline and the kill can be exercised against a child that really hangs,
+    /// which no test could otherwise reach: the runner spawns the host's own executable, and a test
+    /// host would run the whole test suite instead of a benchmark.
+    /// </summary>
+    internal DeviceMemoryBenchmarkProcessRunner(
+        ILogger<DeviceMemoryBenchmarkProcessRunner> logger,
+        string? hostPath,
+        TimeSpan? timeout
+    )
+    {
+        this.logger = logger;
+        this.hostPath = hostPath;
+        this.timeout = timeout ?? ChildTimeout;
+    }
+
     public async Task<bool> RunAsync(
         UpscalerConfig config,
         string modelPath,
@@ -77,7 +99,7 @@ public sealed class DeviceMemoryBenchmarkProcessRunner(
         // The host's own executable: the child needs exactly the deployment the parent runs, including
         // its native ONNX Runtime and its execution provider, and this is the one binary guaranteed to
         // be there.
-        string? host = Environment.ProcessPath;
+        string? host = hostPath ?? Environment.ProcessPath;
         if (string.IsNullOrEmpty(host))
         {
             return false;
@@ -113,21 +135,19 @@ public sealed class DeviceMemoryBenchmarkProcessRunner(
                 return false;
             }
 
-            // A child that hangs must not hang the page behind it. The benchmark takes seconds; this is
-            // a net for a child that never reaches its own exit — a mixed deployment whose binary has
-            // no benchmark mode and would start a server instead, a wedged driver call. On expiry the
-            // child is killed and the caller measures in process, exactly as it does when the spawn
-            // itself fails. (Not unit-tested: it needs a real child process to hang.)
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(ChildTimeout);
+            // A child that hangs must not hang the page behind it. The benchmark takes seconds; the
+            // deadline is a net for a child that never reaches its own exit — a mixed deployment whose
+            // binary has no benchmark mode and would start a server instead, a wedged driver call.
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(timeout);
 
             try
             {
                 // Both pipes have to be drained while the child runs: a redirected pipe nobody reads
                 // fills and blocks the child, and the benchmark would then hang instead of failing.
-                Task<string> stdout = child.StandardOutput.ReadToEndAsync(timeout.Token);
-                Task<string> stderr = child.StandardError.ReadToEndAsync(timeout.Token);
-                await child.WaitForExitAsync(timeout.Token);
+                Task<string> stdout = child.StandardOutput.ReadToEndAsync(deadline.Token);
+                Task<string> stderr = child.StandardError.ReadToEndAsync(deadline.Token);
+                await child.WaitForExitAsync(deadline.Token);
                 await stdout;
                 string error = await stderr;
 
@@ -143,14 +163,22 @@ public sealed class DeviceMemoryBenchmarkProcessRunner(
                 );
                 return false;
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The deadline, not the caller. A child that never reaches its own exit is a failed
+                // optimisation rather than a failure: measure in this process instead of surfacing a
+                // cancellation the page never asked for.
+                logger.LogWarning(
+                    "The device memory benchmark child process did not exit within {Timeout}; killing it and measuring in this process instead",
+                    timeout
+                );
+                return false;
+            }
             finally
             {
-                // Covers both the timeout and a cancelled page: neither should leave a benchmark
-                // running behind the host. A child that already exited is left alone.
-                if (!child.HasExited)
-                {
-                    child.Kill(entireProcessTree: true);
-                }
+                // Covers both the deadline and a cancelled page: neither should leave a benchmark
+                // running behind the host.
+                TryKill(child);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -167,6 +195,27 @@ public sealed class DeviceMemoryBenchmarkProcessRunner(
     /// How long a child may take before it is killed and the caller measures in process.
     /// </summary>
     internal static readonly TimeSpan ChildTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Ends the child unless it is already gone, and never lets the teardown of an optimisation fail
+    /// anything. <c>Kill</c> on a process that exited between the check and the call throws, and a
+    /// process that was never started throws from <c>HasExited</c>; either would surface as a failed
+    /// page for a benchmark nobody needed.
+    /// </summary>
+    internal void TryKill(Process child)
+    {
+        try
+        {
+            if (!child.HasExited)
+            {
+                child.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not kill the device memory benchmark child process");
+        }
+    }
 
     /// <summary>
     /// The command that starts the child: the host's own executable, plus the entry assembly when that

@@ -148,7 +148,7 @@ public sealed class DeviceMemoryProfile
     /// touched. Arrays are shared deliberately: they are only ever assigned wholesale.
     /// </para>
     /// </summary>
-    public DeviceMemoryProfile Clone() =>
+    internal DeviceMemoryProfile Clone() =>
         new()
         {
             Fingerprint = Fingerprint,
@@ -359,7 +359,7 @@ public sealed class ModelMemoryProfile
     /// A copy this caller may mutate; see <see cref="DeviceMemoryProfile.Clone"/> for why one is
     /// needed rather than writing to the object the store handed out.
     /// </summary>
-    public ModelMemoryProfile Clone() =>
+    internal ModelMemoryProfile Clone() =>
         new()
         {
             ActivationScale = ActivationScale,

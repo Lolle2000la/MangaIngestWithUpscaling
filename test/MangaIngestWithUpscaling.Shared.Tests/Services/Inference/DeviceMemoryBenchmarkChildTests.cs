@@ -62,6 +62,65 @@ public class DeviceMemoryBenchmarkChildTests
     }
 
     [Fact]
+    public async Task RunAsync_WithAChildThatNeverExits_KillsItAndFallsBackInsteadOfCancelling()
+    {
+        // The deadline exists so a child that never reaches its own exit cannot hold the page. It has
+        // to read as "the benchmark failed" — the caller measures in this process — and not as a
+        // cancellation the page never asked for.
+        string script = Path.Combine(Path.GetTempPath(), $"hang_{Guid.NewGuid():N}.sh");
+        await File.WriteAllTextAsync(
+            script,
+            "#!/bin/sh\nsleep 60\n",
+            TestContext.Current.CancellationToken
+        );
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            File.SetUnixFileMode(
+                script,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            );
+        }
+        else
+        {
+            Assert.Skip("the hanging child is a shell script");
+        }
+        try
+        {
+            var runner = new DeviceMemoryBenchmarkProcessRunner(
+                NullLogger<DeviceMemoryBenchmarkProcessRunner>.Instance,
+                script,
+                TimeSpan.FromMilliseconds(250)
+            );
+
+            bool measured = await runner.RunAsync(
+                new UpscalerConfig(),
+                "a.onnx",
+                4,
+                0,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.False(measured);
+        }
+        finally
+        {
+            File.Delete(script);
+        }
+    }
+
+    [Fact]
+    public void TryKill_OnAProcessThatWasNeverStarted_DoesNotThrow()
+    {
+        // The teardown of an optimisation must not fail a page: HasExited throws on a process that was
+        // never started, and Kill throws on one that exited between the check and the call.
+        var runner = new DeviceMemoryBenchmarkProcessRunner(
+            NullLogger<DeviceMemoryBenchmarkProcessRunner>.Instance
+        );
+
+        runner.TryKill(new System.Diagnostics.Process());
+    }
+
+    [Fact]
     public void ChildCommand_HandsTheAssemblyToTheDotnetMuxer()
     {
         // The production container starts the app as `dotnet MangaIngestWithUpscaling.dll`, so
@@ -205,6 +264,12 @@ public class DeviceMemoryBenchmarkChildTests
             Assert.False(
                 published.Models.ContainsKey(DeviceMemoryProfile.ModelKey(model, size)),
                 "the calibration mutated the profile the store had handed out"
+            );
+            // The adopted entry is a copy as well: it comes from the store's object, and this profile is
+            // what the caller writes to next.
+            Assert.NotSame(
+                store.Load(dir, fingerprint)!.Models[DeviceMemoryProfile.ModelKey(model, size)],
+                profile.Models[DeviceMemoryProfile.ModelKey(model, size)]
             );
         }
         finally

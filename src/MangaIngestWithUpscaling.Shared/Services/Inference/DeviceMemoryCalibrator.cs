@@ -422,7 +422,9 @@ public sealed class DeviceMemoryCalibrator(
             )
             {
                 profile.Provider = written.Provider;
-                profile.Models[modelKey] = entry;
+                // The entry belongs to the store's object, so this caller's copy takes a copy of it as
+                // well: everything a profile is handed to may write to it (see DeviceMemoryProfile.Clone).
+                profile.Models[modelKey] = entry.Clone();
                 logger.LogInformation(
                     "Calibrated {Model} on {Device} in a child process ({Provider}): activation scale {Scale:F2}x (measured at {Small}px and {Large}px tiles)",
                     Path.GetFileName(modelPath),
