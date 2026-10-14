@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -28,6 +29,17 @@ using Serilog;
 
 // Configure the HTTP client factory to use HTTP/2 for unencrypted connections
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+// The calibration benchmark runs in a child process of this same executable (see
+// DeviceMemoryBenchmarkProcessRunner), so that the device memory its sessions leave behind dies with
+// that process instead of being resident while the first page is planned. Handled before the host is
+// built: the child pays neither the web server nor the database.
+if (DeviceMemoryBenchmarkHost.IsCommand(args))
+{
+    // Environment.Exit rather than returning the code: a top-level program cannot return from one
+    // branch and run a host in another. Nothing below has run yet, so there is nothing to unwind.
+    Environment.Exit(await DeviceMemoryBenchmarkHost.RunAsync(args));
+}
 
 var builder = WebApplication.CreateBuilder(args);
 

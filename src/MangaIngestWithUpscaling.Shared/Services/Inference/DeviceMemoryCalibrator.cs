@@ -116,9 +116,18 @@ public sealed class DeviceMemoryCalibrator(
     IOnnxSessionFactory sessionFactory,
     IOptions<UpscalerConfig> config,
     DeviceMemoryProfileStore store,
-    ILogger<DeviceMemoryCalibrator> logger
+    ILogger<DeviceMemoryCalibrator> logger,
+    IDeviceMemoryBenchmarkProcessRunner? benchmarkRunner = null
 ) : IDeviceMemoryCalibrator
 {
+    /// <summary>
+    /// The child-process runner, or the no-op when the caller did not supply one. Optional so that a
+    /// caller which only needs the profile reader — the tests, a host that measures in process — keeps
+    /// working unchanged.
+    /// </summary>
+    private readonly IDeviceMemoryBenchmarkProcessRunner runner =
+        benchmarkRunner ?? NoDeviceMemoryBenchmarkProcessRunner.Instance;
+
     /// <summary>
     /// Bumped whenever the built-in coefficients or the measurement method change, so a profile
     /// stored by an older build is re-measured instead of trusted. v3 measures each benchmark tile
@@ -252,7 +261,7 @@ public sealed class DeviceMemoryCalibrator(
             {
                 measured = modelPath is null
                     ? MeasureDeviceDefault(deviceId, modelsDirectory, profile, cancellationToken)
-                    : MeasureModel(
+                    : await MeasureModelAsync(
                         deviceId,
                         modelsDirectory,
                         profile,
@@ -371,6 +380,71 @@ public sealed class DeviceMemoryCalibrator(
             profile.CalibratedWithModel
         );
         return true;
+    }
+
+    /// <summary>
+    /// Measures <paramref name="modelPath"/> on this device and records it on the profile, preferring a
+    /// child process for the benchmark itself.
+    /// <para>
+    /// The benchmark's sessions leave device memory the provider never returns (measured at 3012 MB for
+    /// the fp16 ESRGAN), and a child process takes it with it when it exits. In this process that memory
+    /// is resident while the first page runs, and the plan — which is sized from the budget minus the
+    /// session reservation, not minus this — then spends the safety margin on it. The child writes to
+    /// the same store, so the measurement is adopted from there.
+    /// </para>
+    /// <para>
+    /// A child that cannot run or that comes back without a measurement falls through to measuring here:
+    /// the calibration must not be lost over an optimisation, and a host that cannot spawn itself (an
+    /// unusual deployment, a sandbox) behaves exactly as it did before.
+    /// </para>
+    /// </summary>
+    private async Task<bool> MeasureModelAsync(
+        int deviceId,
+        string modelsDirectory,
+        DeviceMemoryProfile profile,
+        string modelPath,
+        int scale,
+        CancellationToken cancellationToken
+    )
+    {
+        if (await runner.RunAsync(config.Value, modelPath, scale, deviceId, cancellationToken))
+        {
+            string modelKey = DeviceMemoryProfile.ModelKey(modelPath, FileLength(modelPath));
+            DeviceMemoryProfile? written = store.Load(modelsDirectory, profile.Fingerprint);
+            if (
+                written is not null
+                && written.Models.TryGetValue(modelKey, out ModelMemoryProfile? entry)
+                && entry is not null
+            )
+            {
+                profile.Provider = written.Provider;
+                profile.Models[modelKey] = entry;
+                logger.LogInformation(
+                    "Calibrated {Model} on {Device} in a child process ({Provider}): activation scale {Scale:F2}x (measured at {Small}px and {Large}px tiles)",
+                    Path.GetFileName(modelPath),
+                    profile.DeviceName,
+                    profile.Provider,
+                    entry.ActivationScale,
+                    entry.MeasuredTiles.Length > 0 ? entry.MeasuredTiles[0] : 0,
+                    entry.MeasuredTiles.Length > 1 ? entry.MeasuredTiles[1] : 0
+                );
+                return true;
+            }
+
+            logger.LogWarning(
+                "The device memory benchmark child process reported success but left no measurement for {Model}; measuring in this process instead",
+                Path.GetFileName(modelPath)
+            );
+        }
+
+        return MeasureModel(
+            deviceId,
+            modelsDirectory,
+            profile,
+            modelPath,
+            scale,
+            cancellationToken
+        );
     }
 
     /// <summary>

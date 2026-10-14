@@ -270,11 +270,16 @@ Two consequences worth writing down rather than hiding:
   | after the session fetch + metadata read | 3017 MB | 40 MB |
   | after the page | 12668 MB | 9651 MB (the arena) |
 
-  A *forced* recalibration of the same model leaves **3012 MB** resident (the two benchmark sessions of
-  §6.1, whose buffers the provider never returns) and a fresh probe leaves **1239 MB** (§6.1's 256 px
-  tile). Both are remembered afterwards — the profile's factors in the file, the probe's verdict per
+  A *forced* recalibration of the same model leaves **3012 MB** resident in whichever process measured it
+  (the two benchmark sessions of §6.1, whose buffers the provider never returns) and a fresh probe leaves
+  **1239 MB** (§6.1's 256 px tile). The probe cannot move — its session is the one the page runs on — but
+  the benchmark does not have to be paid in the host: it runs in a **child process** of the host's own
+  executable (§6.4), so its 3012 MB dies with that process. Measured on an RX 9070 XT, the same forced
+  recalibration followed by one 1125x1600 page: **15636 MB** peak of the 16304 MB card with the benchmark
+  in the host (96%, the 15 % reserve spent on it) against **12716 MB** with the child (78%, reserve
+  intact). Both are remembered afterwards — the factors in the profile file, the probe's verdict per
   device and model in `model-probe-verdicts.json` — so only the first run of a model on a device pays
-  them, and the budget's own-footprint discount covers them from the second page on.
+  either, and the budget's own-footprint discount covers the probe from the second page on.
 
   This is also the correction to an earlier reading of these numbers. The "12683 MB against a predicted
   10830 MB, so the card runs at ~95%" that stood here was a measurement of the *whole process's growth*
@@ -646,7 +651,16 @@ session (and vice versa) just because both happen to run on the same card.
 ### 6.4 Behaviour and fallbacks
 
 * First use of a model on an unseen device + provider → that model's benchmark runs (logged at
-  `Information`), then the cached measurement is used for the rest of the process lifetime.
+  `Information`), then the cached measurement is used for the rest of the process lifetime. The benchmark
+  itself runs in a **child process** of the host's own executable (`--device-memory-benchmark`), because
+  the two benchmark sessions leave ~3 GB the provider never returns and the only thing that gives it back
+  is the process exiting: measured on an RX 9070 XT, a forced recalibration followed by one page peaked at
+  12716 MB of the 16304 MB card in the child, against 15636 MB when the host measured it itself. The
+  child is spawned through the runner seam (`IDeviceMemoryBenchmarkProcessRunner`) with the host's
+  resolved configuration as an argument, writes to the same store, and the host adopts the measurement
+  from there. A host that cannot spawn itself — an unusual deployment, a sandbox — measures in process
+  exactly as it did before, and a child that exits without a usable measurement is not a lost
+  calibration: the in-process path runs instead.
 * A model with no measurement of its own falls back to the device-wide default, and then to the
   built-in coefficients.
 * `RecalibrateDeviceMemory = true` forces a re-measure on the next upscale.
