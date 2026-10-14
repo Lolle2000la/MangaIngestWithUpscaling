@@ -231,14 +231,16 @@ matter for the grid the planner can reach:
   sysfs. Only a driver that reports no budget at all falls back to a system-wide source (Linux DRM sysfs
   or nvidia-smi), where the caller's own footprint is discounted out of the figure instead.
 * **The caller's own footprint is measured, not only predicted.** The arena's real contribution to the
-  used figure is `vramAfter − vramBefore` across a page, and it is kept at its largest: a page that reuses
-  the session adds nothing, so reassigning it would drop the discount back to the prediction and the
-  budget would wobble. With the driver-derived figure above the two terms cancel to "the other tenants",
-  so the budget is the same on the first page as on the tenth — which is what keeps the tile shape from
-  churning. Measured over four consecutive pages of a 1125x1600 page at fp16 4x: 11086, 11148, 11104,
-  11125 MB — a 0.3% wobble — each planning 2x2 of 563x800 (512 px of context) and reusing the session.
-  Before, the same four pages went 7918 → 10964 → 7855 MB, changed tile shape on each, and spilled 6.5 GB
-  into GTT.
+  used figure is the growth across a page — `vramAfter − vramBefore` from the driver's *per-process*
+  figure where it exists (`OnnxTiler.TryGetProcessMemoryBytes`, §4.1), and from the system-wide reading
+  otherwise, because a system-wide delta includes whatever another tenant did while the page ran — and it
+  is kept at its largest: a page that reuses the session adds nothing, so reassigning it would drop the
+  discount back to the prediction and the budget would wobble. With the driver-derived figure above the
+  two terms cancel to "the other tenants", so the budget is the same on the first page as on the tenth —
+  which is what keeps the tile shape from churning. Measured over four consecutive pages of a 1125x1600
+  page at fp16 4x: 11086, 11148, 11104, 11125 MB — a 0.3% wobble — each planning 2x2 of 563x800 (512 px
+  of context) and reusing the session. Before, the same four pages went 7918 → 10964 → 7855 MB, changed
+  tile shape on each, and spilled 6.5 GB into GTT.
 * **It is read after the first-use benchmark and the model probe, not before them.** Both allocate device
   memory of their own — the benchmark runs two inferences on their own sessions (§6.1) and the probe
   creates a third — and ONNX Runtime's arenas keep their high-water mark, so that memory is resident while
@@ -748,15 +750,14 @@ a measurement of this model on this device and the estimate is used instead. And
 model's coefficients (a forced recalibration, a `CalibrationVersion` bump) carries the observed shapes
 over, so re-measuring a model does not throw away what its real operating shapes cost.
 
-The figure is the growth of the *whole card's* usage across the page, and two things about that are worth
-knowing rather than rediscovering. It can differ between runs for the same padded shape — measured at
-8406 MB once and 9683 MB another time, 1.3 GB apart — because anything else on the card that allocates
-while the page runs is inside the delta; the cause of that particular gap was not pinned down. And it
-therefore does not distinguish this process's own growth from another tenant's. Both are the conservative
-direction (an inflated figure plans a smaller tile, never a larger one) and the 0.25×…4× band bounds how
-far a distorted reading can go, but the per-process figure the driver reports would be the exact source:
-`OnnxTiler.GetGpuVramInfo`'s `Used` is this process's own Vulkan allocations (§4.1), where this path reads
-the system-wide figure because that is what the engine's budget discount already uses.
+The figure is this process's own growth across the page, and the source matters. The driver's
+per-process figure is preferred (`OnnxTiler.TryGetProcessMemoryBytes`, the same `heapUsage` §4.1
+describes), because the system-wide sources count every other tenant: the same padded shape was measured
+at 8406 MB once and 9683 MB another time, 1.3 GB apart, and the lower one reached a plan — anything else
+on the card that allocates or frees while the page runs lands in a system-wide delta. Where the driver
+exposes no per-process figure (no Vulkan, or a driver that does not populate `VK_EXT_memory_budget`) the
+system-wide reading is still the fallback, which is conservative in the common case and bounded by the
+band below.
 
 Pushing the *larger benchmark tile* further, so that the fit happens closer to the operating shape, is a
 wash rather than an obvious win: the reservation is derived as `growth − slope·n² − weights`, so any error

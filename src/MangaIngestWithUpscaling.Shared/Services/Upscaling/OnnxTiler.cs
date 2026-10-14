@@ -1591,6 +1591,40 @@ public static class OnnxTiler
     /// total, which is what its other callers read.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// This process's own device memory as the driver reports it — device-local and host-visible heaps
+    /// together — or null when the driver exposes no per-process figure (no Vulkan, or a driver that
+    /// does not populate <c>VK_EXT_memory_budget</c>).
+    /// <para>
+    /// This is the source a measurement of "what did this page cost *us*" needs.
+    /// <c>VK_EXT_memory_budget</c>'s <c>heapUsage</c> counts only the querying process's allocations —
+    /// measured on an RX 9070 XT at 64 MB against a system-wide 2677 MB with nothing but a desktop on
+    /// the card — while the system-wide sources (<see cref="GetGpuMemoryUsage"/>, and the fallbacks in
+    /// <see cref="GetGpuVramInfo"/>) include every other tenant, so another process allocating or
+    /// freeing while a page runs lands in the measurement.
+    /// </para>
+    /// </summary>
+    public static long? TryGetProcessMemoryBytes(int deviceId = 0)
+    {
+        try
+        {
+            if (!VulkanMemoryProvider.IsAvailable || VulkanMemoryProvider.DeviceCount <= deviceId)
+            {
+                return null;
+            }
+
+            return VulkanMemoryProvider.QueryDevice(deviceId) is VulkanGpuMemory vk
+                ? vk.UsedVramBytes + vk.UsedGttBytes
+                : null;
+        }
+        catch
+        {
+            // A driver that throws on the query is a driver with no per-process figure; the caller
+            // falls back to the system-wide reading.
+            return null;
+        }
+    }
+
     public static (long Total, long Used, long Free) GetGpuVramInfo(int deviceId = 0)
     {
         // 1. Primary: Vulkan VK_EXT_memory_budget

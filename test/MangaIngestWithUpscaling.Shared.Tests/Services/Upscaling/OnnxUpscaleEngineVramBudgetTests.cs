@@ -118,6 +118,38 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task AutomaticBudget_PrefersTheDriversPerProcessFigureForTheDiscount()
+    {
+        // The discount is kept at its largest across the process, so a single page on which another
+        // tenant allocated would inflate the budget for every page after it. The driver's per-process
+        // figure is what makes that impossible; the system-wide one is only the fallback.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var engine = new RecordingBudgetEngine(
+            new CachedSessionFactory(modelPath),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 0L)); // system-wide: +8000
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 0L));
+        // Four per-process reads per page; ours grows by 8500 across the page while the system-wide
+        // figure grows by 8000.
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // page start
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // plan line
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // the recording (nothing of its own)
+        engine.ProcessReadings.Enqueue(9000L * 1024 * 1024); // after the page
+
+        await RunPageAsync(engine, "1.webp");
+        await RunPageAsync(engine, "2.webp");
+
+        Assert.Equal(new long[] { 0, 8_500L * 1024 * 1024 }, engine.OwnSessionBytesSeen);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task AutomaticBudget_IsReadAfterTheFirstUseBenchmark()
     {
         // The benchmark and the model probe allocate device memory of their own and ONNX Runtime's
@@ -192,6 +224,53 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         await RunPageAsync(engine, "2.webp");
 
         Assert.Empty(engine.OwnSessionBytesSeen);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Page_PrefersTheDriversPerProcessFigureForTheFootprintItRecords()
+    {
+        // The system-wide figure counts every other tenant, so another process allocating or freeing
+        // while the page runs lands in the measurement — the same padded shape was measured at 8406 MB
+        // once and 9683 MB another time, and the lower one reached a plan. The driver's per-process
+        // figure cannot do that, so it is the source whenever it exists.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var calibrator = Substitute.For<IDeviceMemoryCalibrator>();
+        var engine = new RecordingBudgetEngine(
+            new CachedSessionFactory(modelPath),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            calibrator,
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+        // System-wide: 1000 -> 7000, a 6000 MB delta...
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
+        // ...and the driver's own figure says the page cost this process 9000 MB, which is what the
+        // next plan has to be sized from.
+        // Four per-process reads per page: around the page and at the plan line, plus the recording's.
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // page start
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // plan line
+        engine.ProcessReadings.Enqueue(9500L * 1024 * 1024); // the recording
+        engine.ProcessReadings.Enqueue(9500L * 1024 * 1024); // after the page
+
+        await RunPageAsync(engine, "1.webp");
+
+        OnnxTiler.TileSplit split = PlannedSplit(modelPath);
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(split);
+        calibrator
+            .Received(1)
+            .RecordObservedTilePeak(
+                0,
+                _tempDir,
+                modelPath,
+                Scale,
+                paddedWidth,
+                paddedHeight,
+                9000L * 1024 * 1024
+            );
     }
 
     [Fact]
@@ -355,6 +434,20 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
 
         /// <summary>Device readings handed out in order, one pair per read.</summary>
         public Queue<(long Vram, long Gtt)> DeviceReadings { get; } = new();
+
+        /// <summary>
+        /// Per-process device readings handed out in order, one per read. An empty queue is "the driver
+        /// reports no per-process figure", which is the case the system-wide fallback exists for.
+        /// </summary>
+        public Queue<long> ProcessReadings { get; } = new();
+
+        protected internal override long? ReadProcessMemoryBytes(int deviceId)
+        {
+            lock (ProcessReadings)
+            {
+                return ProcessReadings.Count > 0 ? ProcessReadings.Dequeue() : null;
+            }
+        }
 
         protected internal override (long VramUsed, long GttUsed) ReadDeviceMemoryUsage(
             int deviceId

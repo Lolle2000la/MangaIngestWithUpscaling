@@ -270,6 +270,9 @@ public class OnnxUpscaleEngine(
                 // benchmark and the model probe allocate device memory of their own, and a budget read
                 // before them plans the page as if that memory were free.
                 var (vramBefore, gttBefore) = ReadDeviceMemoryUsage(deviceId);
+                // This process's own figure, from the same two points, so the discount below is what the
+                // page cost *us* and not what the whole card did.
+                long? processVramBefore = ReadProcessMemoryBytes(deviceId);
 
                 (string model, byte[] upscaledBytes) = await UpscaleWithFirstWorkingModelAsync(
                     inputPath,
@@ -295,17 +298,27 @@ public class OnnxUpscaleEngine(
                 // page. The per-shape growth is handled proactively in UpscaleWithModelAsync; this is
                 // the safety net for anything that still grows.
                 var (vramAfter, gttAfter) = ReadDeviceMemoryUsage(deviceId);
+                long? processVramAfter = ReadProcessMemoryBytes(deviceId);
 
                 // What the device charged this process for the page — the arena, a benchmark's leftover
                 // session, a retry's. The next page's budget discounts it, and the figure is kept at its
                 // largest rather than reassigned: a page that reuses the session adds nothing, so a
                 // reassignment would drop the discount back to the prediction on every reused page and
                 // the budget would wobble again. See _ownSessionMeasuredDeltaBytes.
+                //
+                // The driver's per-process figure is preferred for the same reason the recording prefers
+                // it: the system-wide one includes every other tenant, and this figure is kept at its
+                // largest, so one page on which another process allocated would inflate the budget for
+                // the rest of the process.
                 lock (_sessionShapeGate)
                 {
+                    long delta =
+                        processVramBefore is { } ownBefore && processVramAfter is { } ownAfter
+                            ? ownAfter - ownBefore
+                            : vramAfter - vramBefore;
                     _ownSessionMeasuredDeltaBytes = Math.Max(
                         _ownSessionMeasuredDeltaBytes,
-                        Math.Max(0, vramAfter - vramBefore)
+                        Math.Max(0, delta)
                     );
                 }
 
@@ -1362,6 +1375,9 @@ public class OnnxUpscaleEngine(
                 // see _sessionShape for the measurement behind this.
 
                 var (vramBefore, gttBefore) = ReadDeviceMemoryUsage(deviceId);
+                // This process's own figure, taken at the same point, so the footprint recorded after
+                // the page measures what the page cost *us* rather than the whole card.
+                long? processVramBefore = ReadProcessMemoryBytes(deviceId);
                 logger.LogDebug(
                     "Upscaling {InputPath} ({Width}x{Height}, scale {Scale}) using model {Model} in {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (predicted peak: {PredictedMb} MB, budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
                     Path.GetFileName(inputPath),
@@ -1540,6 +1556,7 @@ public class OnnxUpscaleEngine(
                     scale,
                     attempt,
                     vramBefore,
+                    processVramBefore,
                     shapeBuiltFresh
                 );
 
@@ -1554,22 +1571,28 @@ public class OnnxUpscaleEngine(
     /// shape is sized from a measurement instead of the calibration's extrapolation from two small
     /// benchmark tiles (see <see cref="OnnxTiler.PredictTilePeakBytes"/>).
     /// <para>
-    /// The figure is the growth of the device's usage between the reading taken just before the page's
-    /// session was acquired and the reading taken here, which is that shape's own footprint: the model
-    /// weights if this page uploaded them, the execution provider's buffers for the shape, and its
-    /// arena. Whatever the process already held — the probe's and the benchmark's arenas, a previous
-    /// shape's buffers — is inside the baseline and stays out of it, which is what the plan that
-    /// baseline's budget sized also assumed.
+    /// The figure is this process's own growth across the page, taken from the driver's per-process
+    /// figure when it has one (<see cref="OnnxTiler.TryGetProcessMemoryBytes"/>) and from the
+    /// system-wide reading otherwise. The difference matters: the system-wide figure counts every other
+    /// tenant, so another process allocating or freeing while the page runs lands in the measurement —
+    /// the same padded shape was measured at 8406 MB once and 9683 MB another time, 1.3 GB apart, and
+    /// the lower one reached a plan. The per-process figure cannot do that.
+    /// </para>
+    /// <para>
+    /// What it covers is that shape's own footprint: the model weights if this page uploaded them, the
+    /// execution provider's buffers for the shape, and its arena. Whatever the process already held —
+    /// the probe's and the benchmark's arenas, a previous shape's buffers — is inside the baseline and
+    /// stays out of it, which is what the plan that baseline's budget sized also assumed.
     /// </para>
     /// <para>
     /// Only a page that built its session's tensor shape fresh measures this: a reused shape allocates
     /// nothing of its own, so whatever the device shows it gaining while it ran belongs to something
-    /// else — another tenant, a scratch buffer, GTT churn — and recording that would size the next
-    /// plan from noise. A page that descended through halved shapes is not fresh either: the halving
-    /// path registers the shape it retries at, so the attempt that finally runs finds it already
-    /// registered (see <c>ReleaseAndRegisterSessionShape</c>). Nothing here is allowed to fail the
-    /// page — the measurement is an optimisation for the next plan, and the calibrator logs and
-    /// swallows a store it cannot write.
+    /// else, and recording that would size the next plan from noise. A page that descended through
+    /// halved shapes is not fresh either: the halving path registers the shape it retries at, so the
+    /// attempt that finally runs finds it already registered (see
+    /// <c>ReleaseAndRegisterSessionShape</c>). Nothing here is allowed to fail the page — the
+    /// measurement is an optimisation for the next plan, and the calibrator logs and swallows a store it
+    /// cannot write.
     /// </para>
     /// </summary>
     private void RecordObservedTileFootprint(
@@ -1578,6 +1601,7 @@ public class OnnxUpscaleEngine(
         int scale,
         OnnxTiler.TileSplit split,
         long vramBefore,
+        long? processVramBefore,
         bool shapeBuiltFresh
     )
     {
@@ -1586,7 +1610,10 @@ public class OnnxUpscaleEngine(
             return;
         }
 
-        long growth = ReadDeviceMemoryUsage(deviceId).VramUsed - vramBefore;
+        long growth =
+            processVramBefore is { } ownBefore && ReadProcessMemoryBytes(deviceId) is { } ownAfter
+                ? ownAfter - ownBefore
+                : ReadDeviceMemoryUsage(deviceId).VramUsed - vramBefore;
         if (growth <= 0)
         {
             return;
@@ -1691,6 +1718,15 @@ public class OnnxUpscaleEngine(
     /// </summary>
     protected internal virtual (long VramUsed, long GttUsed) ReadDeviceMemoryUsage(int deviceId) =>
         OnnxTiler.GetGpuMemoryUsage(deviceId);
+
+    /// <summary>
+    /// This process's own device memory as the driver reports it, isolated as a seam so the recording's
+    /// source can be pinned without a device. Null when the driver exposes no per-process figure, in
+    /// which case the recording falls back to the system-wide reading; see
+    /// <see cref="OnnxTiler.TryGetProcessMemoryBytes"/> for why the per-process figure is the right one.
+    /// </summary>
+    protected internal virtual long? ReadProcessMemoryBytes(int deviceId) =>
+        OnnxTiler.TryGetProcessMemoryBytes(deviceId);
 
     /// <summary>
     /// Registers the padded tensor shape the caller is about to run and returns the session to run it
