@@ -2181,17 +2181,23 @@ public class OnnxTilerTests : IDisposable
         runner.Start();
 
         Assert.True(
-            outputs.DisposeStarted.Wait(TimeSpan.FromSeconds(30)),
+            outputs.DisposeStarted.Wait(
+                TimeSpan.FromSeconds(30),
+                TestContext.Current.CancellationToken
+            ),
             "the cancelled path never started releasing the output collection"
         );
         // Parked inside the release: the unwind must be waiting for it, not carrying on.
         Assert.False(
-            finished.Wait(TimeSpan.FromSeconds(2)),
+            finished.Wait(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken),
             "UpscaleRgb unwound while the output collection was still being released"
         );
 
         outputs.DisposeGate.Set();
-        Assert.True(finished.Wait(TimeSpan.FromSeconds(30)), "UpscaleRgb never unwound");
+        Assert.True(
+            finished.Wait(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken),
+            "UpscaleRgb never unwound"
+        );
         Assert.True(runner.Join(TimeSpan.FromSeconds(30)), "the upscaling thread did not finish");
         Assert.IsAssignableFrom<OperationCanceledException>(thrown);
         Assert.True(outputs.DisposeCompleted, "the release did not finish");
