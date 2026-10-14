@@ -70,9 +70,16 @@ dotnet run --project src/MangaIngestWithUpscaling
 
 1. **Build Validation:**
    ```bash
-   dotnet build --no-restore MangaIngestWithUpscaling.sln
+   dotnet build --no-restore -t:Rebuild MangaIngestWithUpscaling.sln /warnaserror
    # Must complete without errors in ~23 seconds
    ```
+   `-t:Rebuild` is what makes this check mean anything. An incremental build skips the projects it
+   considers up to date and does not re-emit their diagnostics, so a warning-as-error that CI catches
+   passes locally. That is not hypothetical: an xUnit analyzer rule (`xUnit1051` — a `Wait`/`Join`
+   overload that accepts a `CancellationToken` and was not given
+   `TestContext.Current.CancellationToken`) passed a local incremental build, passed again in the
+   incremental solution build that followed it, and failed the CI build. A `-t:Rebuild` reports it
+   immediately.
 
 2. **Format Code:**
    ```bash
@@ -359,7 +366,7 @@ The project uses GitHub Actions for continuous integration:
 **Always ensure your changes pass:**
 ```bash
 dotnet restore MangaIngestWithUpscaling.sln
-dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
+dotnet build --no-restore -t:Rebuild MangaIngestWithUpscaling.sln /warnaserror
 # Run tests if relevant changes are made
 dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
 ```
@@ -368,6 +375,18 @@ CI (`.github/workflows/dotnet.yml`) runs **three** test passes: unit tests on SQ
 project against PostgreSQL, and the UI test project against PostgreSQL (the last two via
 Testcontainers, so Docker is required). A change that passes locally on SQLite can still fail CI, so
 run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches data access.
+
+**A test that failed once and passed on a re-run is not automatically flaky, and "flaky" is how a real
+race gets left in.** The last one that looked that way was real: the tiler's cancelled path releases a
+tile's native output collection from a continuation attached with
+`TaskContinuationOptions.ExecuteSynchronously` — a scheduling hint, not a promise — and the unwind path
+waited for the decode task but not for that continuation, so on a loaded runner `UpscaleRgb` could
+return (and the engine, on the exception, immediately invalidate the session that owns those tensors)
+while the collection was still undisposed. Name the interleaving before calling a test flaky, and if
+this machine cannot produce it — an idle many-core box runs a pool continuation inline where a loaded
+four-core runner queues it — reproduce it deliberately: that one was reproduced by running the page on
+a dedicated thread, where the runtime refuses inline execution, and pinned with a test that fails
+without the fix.
 
 ## Key Dependencies
 
