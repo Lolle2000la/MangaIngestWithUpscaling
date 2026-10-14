@@ -259,9 +259,31 @@ Two consequences worth writing down rather than hiding:
   spill risk that comes with it.
 * A page that *does* spill leaves its arena behind and the next page allocates a second one on top, so the
   card stays nearly full for the rest of the process. Preventing the spill is what the points above are
-  for; once it has happened, no budget arithmetic recovers the memory. The remaining slack is the
-  prediction's own accuracy: the arena measured 12683 MB against a predicted 10830 MB, so the card runs at
-  ~95% and the reserve absorbs the difference, not the estimate.
+  for; once it has happened, no budget arithmetic recovers the memory.
+* What the process holds *besides* a page's arena is one-time, and it is now measured rather than
+  guessed. Measured on an RX 9070 XT with the fp16 ESRGAN, 1125x1600 page:
+
+  | phase | card used | delta |
+  |---|---|---|
+  | page start, profile and probe verdict cached (steady state) | 2977 MB | — |
+  | after the calibration (cached: nothing runs) | 2977 MB | 0 |
+  | after the session fetch + metadata read | 3017 MB | 40 MB |
+  | after the page | 12668 MB | 9651 MB (the arena) |
+
+  A *forced* recalibration of the same model leaves **3012 MB** resident (the two benchmark sessions of
+  §6.1, whose buffers the provider never returns) and a fresh probe leaves **1239 MB** (§6.1's 256 px
+  tile). Both are remembered afterwards — the profile's factors in the file, the probe's verdict per
+  device and model in `model-probe-verdicts.json` — so only the first run of a model on a device pays
+  them, and the budget's own-footprint discount covers them from the second page on.
+
+  This is also the correction to an earlier reading of these numbers. The "12683 MB against a predicted
+  10830 MB, so the card runs at ~95%" that stood here was a measurement of the *whole process's growth*
+  over a page, taken while the calibration was running: 3085 MB desktop + 3012 MB calibration + 9604 MB
+  arena. The arena itself was 9604 MB against an estimate of 10830 MB — with the device-wide factors the
+  estimate was 11 % *above* the measurement, and with the model's own entry it is 3.4 % *below* (9327
+  against 9651, §6.6). Either way it is not the estimate that put the card at 95 %: that was the
+  calibration's 3012 MB. In steady state the page peaks at 12668 MB of the 16304 MB card (78 %), touches
+  no GTT, and leaves the 15 % reserve intact.
 
 ---
 
@@ -678,18 +700,20 @@ nothing (it allocated nothing; whatever the device shows it gaining belongs to s
 that descended through halved shapes is not fresh either, because the halving path registers the shape it
 retries at.
 
-Measured on an RX 9070 XT / WebGPU EP, 1125×1600 page, fp16 4× ESRGAN, 2×2 of 563×800 (padded 640×864):
+Measured on an RX 9070 XT / WebGPU EP, 1125×1600 page, fp16 4× ESRGAN, 2×2 of 563×800 (padded 640×832),
+with the model's own profile entry in place:
 
 | figure | value |
 |---|---|
-| analytic estimate (`PredictTilePeakBytes`) | 10830 MB |
-| page growth measured from the pre-session reading | 9604 MB |
+| analytic estimate (`PredictTilePeakBytes`) | 9327 MB |
+| page growth measured from the pre-session reading | 9651 MB |
 
-The estimate was 11 % *above* the measurement there, which is the conservative direction and the reason
-the plan was unchanged. The point of the measurement is the opposite case: a provider whose slope the
-small-tile calibration flattened is under-estimated by the extrapolation, and the first page at a shape
-pays that error out of the safety margin — which is exactly what the margin is not for. After the first
-page at a shape, the estimate is the measurement.
+The estimate was 3.4 % *below* the measurement there — the opposite of the conservative direction, and
+exactly the case the margin was absorbing: the plan fits the budget on paper (9327 MB of 10946 MB) and
+the page really costs 9651 MB of it. With the device-wide factors instead of the model's own entry the
+same page estimated 10830 MB, 11 % above the 9604 MB it measured. The direction therefore depends on
+which factors the profile supplies, which is the point: after the first page at a shape, the estimate is
+the measurement and neither direction has to be guessed.
 
 Two guards keep a wrong number out. The stored value is held to 0.25×…4× the analytic estimate for the
 same shape (the same idea as the activation factor's accepted range in §6.4); outside it, the value is not
