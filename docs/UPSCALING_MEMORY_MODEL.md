@@ -748,13 +748,15 @@ a measurement of this model on this device and the estimate is used instead. And
 model's coefficients (a forced recalibration, a `CalibrationVersion` bump) carries the observed shapes
 over, so re-measuring a model does not throw away what its real operating shapes cost.
 
-The figure depends on what the baseline already contained, and that is worth knowing rather than
-rediscovering: a session that the model probe created *before* the page is in the baseline, so the page's
-growth is the new shape's buffers alone — measured on an RX 9070 XT, 8406 MB for the fp16 ESRGAN at
-640x832 in that case, against 9683 MB when the page created the session itself (the session's creation
-costs ~1.2 GB, which is the same cost the probe's verdict cache exists to pay once per device). Both are
-correct measurements of different things; keeping the largest is what settles on the conservative one, and
-a shape that is re-run in a later chapter re-measures it anyway.
+The figure is the growth of the *whole card's* usage across the page, and two things about that are worth
+knowing rather than rediscovering. It can differ between runs for the same padded shape — measured at
+8406 MB once and 9683 MB another time, 1.3 GB apart — because anything else on the card that allocates
+while the page runs is inside the delta; the cause of that particular gap was not pinned down. And it
+therefore does not distinguish this process's own growth from another tenant's. Both are the conservative
+direction (an inflated figure plans a smaller tile, never a larger one) and the 0.25×…4× band bounds how
+far a distorted reading can go, but the per-process figure the driver reports would be the exact source:
+`OnnxTiler.GetGpuVramInfo`'s `Used` is this process's own Vulkan allocations (§4.1), where this path reads
+the system-wide figure because that is what the engine's budget discount already uses.
 
 Pushing the *larger benchmark tile* further, so that the fit happens closer to the operating shape, is a
 wash rather than an obvious win: the reservation is derived as `growth − slope·n² − weights`, so any error
