@@ -533,6 +533,13 @@ public static class OnnxTiler
     /// plus a display server or a couple of light helpers). Configurable via
     /// <see cref="UpscalerConfig.VramExclusiveThresholdBytes"/>.
     /// </summary>
+    /// <summary>
+    /// NVIDIA's PCI vendor id — the one vendor whose driver has been measured to put a device-wide
+    /// figure into <c>VK_EXT_memory_budget</c>'s <c>heapUsage</c> instead of this process's own. See
+    /// <see cref="VulkanUsageIsDeviceWide"/>.
+    /// </summary>
+    internal const uint NvidiaVendorId = 0x10DE;
+
     public const long DefaultExclusiveThresholdBytes = 350L * 1024 * 1024;
 
     /// <summary>
@@ -1462,7 +1469,8 @@ public static class OnnxTiler
                 vulkanMetrics.BudgetBytes,
                 vulkanMetrics.UsedVramBytes,
                 ownSessionBytes,
-                systemWide.Used
+                systemWide.Used,
+                vulkanMetrics.VendorId
             );
 
             return BudgetFromVulkanMetrics(
@@ -1522,7 +1530,8 @@ public static class OnnxTiler
         long vulkanBudget,
         long vulkanUsed,
         long ownSessionBytes,
-        long systemWideUsed
+        long systemWideUsed,
+        uint vulkanVendorId = 0
     )
     {
         // The driver's own accounting first: heapBudget is what this process may still allocate once
@@ -1532,9 +1541,19 @@ public static class OnnxTiler
         // reuse", which is what the discount then reduces to the other tenants alone: the budget is
         // therefore the same on the first page as on the tenth, which is what keeps the tile shape from
         // churning. It is also the portable branch — the driver reports it on Windows too.
+        // That addition is only right while total − heapBudget excludes our own memory, which is what
+        // makes it "what others hold". A driver whose heapUsage is the device-wide figure already has
+        // our footprint inside that difference, and adding it back counts our own cached session as a
+        // competitor: measured on an RTX 5070 Ti, the budget fell from 11125 MB to 5113 MB as the
+        // engine's own session grew, and the planned tile went 563x800 -> 563x534 -> 375x400 — the last
+        // below the 512 px quality floor — on a card with gigabytes free. See VulkanUsageIsDeviceWide.
         if (vulkanTotal > 0 && vulkanBudget > 0)
         {
-            return Math.Max(0, vulkanTotal - vulkanBudget) + Math.Max(0, ownSessionBytes);
+            long notAvailableToUs = Math.Max(0, vulkanTotal - vulkanBudget);
+
+            return VulkanUsageIsDeviceWide(vulkanTotal, vulkanBudget, vulkanUsed, vulkanVendorId)
+                ? notAvailableToUs
+                : notAvailableToUs + Math.Max(0, ownSessionBytes);
         }
 
         // Without a driver budget there is nothing that separates our own memory from everyone else's,
@@ -1546,6 +1565,48 @@ public static class OnnxTiler
         }
 
         return Math.Max(0, vulkanUsed);
+    }
+
+    /// <summary>
+    /// Whether the driver's <c>heapUsage</c> is the device-wide usage rather than this process's own,
+    /// which decides whether <c>total − heapBudget</c> already contains the caller's footprint.
+    /// <para>
+    /// The specification defines the field as this process's ("the current process estimated heap
+    /// usage"), and RADV implements exactly that: measured on an RX 9070 XT it read 64 MB while a
+    /// desktop held 2677 MB, and 11695 MB mid-chapter against a sysfs 14301 MB. The NVIDIA driver does
+    /// not. Measured on an RTX 5070 Ti with a process holding nothing, it read 2834.8 MB, and across a
+    /// session that grew to 6 GB it tracked nvidia-smi's card-wide figure with a constant 392 MB offset
+    /// between the two. Its <c>heapBudget</c> is derived from that same figure — <c>total − heapBudget</c>
+    /// equalled <c>heapUsage</c> to the byte at every sample (16303 − 13570 = 2733, 16303 − 11656.7 =
+    /// 4646.3) — which is the invariant this looks for.
+    /// </para>
+    /// <para>
+    /// Both halves are required, the vendor and the identity. A driver that changed either one fails
+    /// this test and gets the branch that assumes <c>heapUsage</c> is ours, which counts our own
+    /// footprint as a competitor and therefore sizes a <em>smaller</em> budget. That is the safe
+    /// direction — a tile that is too small, never one that is too large — so being wrong here costs
+    /// quality and cannot cost the page.
+    /// </para>
+    /// </summary>
+    internal static bool VulkanUsageIsDeviceWide(
+        long vulkanTotal,
+        long vulkanBudget,
+        long vulkanUsed,
+        uint vendorId
+    )
+    {
+        if (vendorId != NvidiaVendorId || vulkanTotal <= 0 || vulkanBudget <= 0)
+        {
+            return false;
+        }
+
+        long notAvailableToUs = Math.Max(0, vulkanTotal - vulkanBudget);
+
+        // A percent, so rounding in the driver's byte figures cannot flip the answer; the vendor gate
+        // above is what keeps this from matching a coincidence on a driver whose figure really is ours.
+        long tolerance = Math.Max(1L << 20, notAvailableToUs / 100);
+
+        return Math.Abs(vulkanUsed - notAvailableToUs) <= tolerance;
     }
 
     /// <summary>
@@ -1584,53 +1645,63 @@ public static class OnnxTiler
     /// Supports Vulkan VK_EXT_memory_budget (primary), Linux AMD/Intel DRM sysfs, and NVIDIA via nvidia-smi.
     /// Returns (0, 0, 0) if GPU memory cannot be detected.
     /// <para>
-    /// <paramref name="Used"/> is whatever the source reports, and that is <em>not</em> the device-wide
-    /// figure on a Vulkan source: RADV's <c>heapUsage</c> counts only this process's own allocations
-    /// while <c>Free</c> (the driver's <c>heapBudget</c>) is device-wide. Use
-    /// <see cref="ResolveSystemWideUsedVram"/> for the budget arithmetic; this accessor exists for the
-    /// total, which is what its other callers read.
+    /// <paramref name="Used"/> is whatever the source reports, and on a Vulkan source that is not
+    /// necessarily the device-wide figure: RADV's <c>heapUsage</c> counts only this process's own
+    /// allocations, while NVIDIA's counts the whole card (see <see cref="VulkanUsageIsDeviceWide"/>).
+    /// Use <see cref="ResolveSystemWideUsedVram"/> for the budget arithmetic; this accessor exists for
+    /// the total, which is what its other callers read.
     /// </para>
     /// </summary>
     /// <summary>
-    /// This process's own device memory as the driver reports it — device-local and host-visible heaps
-    /// together — or null when the driver exposes no per-process figure (no Vulkan, or a driver that
-    /// does not populate <c>VK_EXT_memory_budget</c>).
+    /// This process's own device memory in bytes, or null when no source can report one. The source is
+    /// the driver's <c>VK_EXT_memory_budget</c> figure where that figure really is per process, and
+    /// nvidia-smi's per-process table where it is not — see <see cref="VulkanUsageIsDeviceWide"/> for
+    /// the measurement that separates the two.
     /// <para>
-    /// This is the source a measurement of "what did this page cost *us*" needs, and the semantics are
-    /// the extension's own rather than a driver quirk: the specification documents
-    /// <c>heapUsage</c> as "the current process estimated heap usage" and <c>heapBudget</c> as how much
-    /// the process may use, and this reads the former. Measured on an RX 9070 XT it is 64 MB against a
-    /// system-wide 2677 MB with nothing but a desktop on the card, while the system-wide sources
-    /// (<see cref="GetGpuMemoryUsage"/>, and the fallbacks in <see cref="GetGpuVramInfo"/>) include
-    /// every other tenant, so another process allocating or freeing while a page runs lands in their
-    /// measurement.
+    /// This is the source a measurement of "what did this page cost <em>us</em>" needs. The system-wide
+    /// sources (<see cref="GetGpuMemoryUsage"/>, and the fallbacks in <see cref="GetGpuVramInfo"/>)
+    /// include every other tenant, so another process allocating or freeing while a page runs lands in
+    /// their measurement: the same padded shape was measured 8406 MB once and 9683 MB another time, 1.3
+    /// GB apart, and the lower one reached a plan.
     /// </para>
     /// <para>
-    /// The values are estimates and explicitly implementation-dependent, and a driver that reports the
-    /// card's usage here instead would make this the system-wide reading — which is what the caller
-    /// used before this existed, so the degradation is to the previous behaviour rather than to
-    /// something worse. What bounds either is the band the caller applies.
+    /// The specification defines <c>heapUsage</c> as this process's ("the current process estimated heap
+    /// usage") and RADV implements exactly that — measured on an RX 9070 XT at 64 MB with a desktop
+    /// holding 2677 MB. The NVIDIA driver does not: measured on an RTX 5070 Ti a process holding nothing
+    /// read 2834.8 MB, tracking nvidia-smi's card-wide figure with a constant 392 MB offset, so on that
+    /// driver the Vulkan figure is skipped in favour of nvidia-smi's own per-process table (measured
+    /// exact there: 0, 222, 362, 1908 and 6006 MB as one session grew). Neither source is free of
+    /// estimates, which is why the caller holds the result to a band.
     /// </para>
     /// </summary>
     public static long? TryGetProcessMemoryBytes(int deviceId = 0)
     {
         try
         {
-            if (!VulkanMemoryProvider.IsAvailable || VulkanMemoryProvider.DeviceCount <= deviceId)
+            if (VulkanMemoryProvider.IsAvailable && VulkanMemoryProvider.DeviceCount > deviceId)
             {
-                return null;
+                VulkanGpuMemory? vk = VulkanMemoryProvider.QueryDevice(deviceId);
+                if (
+                    vk is not null
+                    && !VulkanUsageIsDeviceWide(
+                        vk.TotalVramBytes,
+                        vk.BudgetBytes,
+                        vk.UsedVramBytes,
+                        vk.VendorId
+                    )
+                )
+                {
+                    return vk.UsedVramBytes + vk.UsedGttBytes;
+                }
             }
-
-            return VulkanMemoryProvider.QueryDevice(deviceId) is VulkanGpuMemory vk
-                ? vk.UsedVramBytes + vk.UsedGttBytes
-                : null;
         }
         catch
         {
-            // A driver that throws on the query is a driver with no per-process figure; the caller
-            // falls back to the system-wide reading.
-            return null;
+            // A driver that throws on the query has no figure worth having; the per-process query below
+            // is still worth trying rather than giving up on one source's failure.
         }
+
+        return TryGetNvidiaProcessMemoryBytes(deviceId);
     }
 
     public static (long Total, long Used, long Free) GetGpuVramInfo(int deviceId = 0)
@@ -1862,15 +1933,18 @@ public static class OnnxTiler
     /// </summary>
     private const int NvidiaSmiTimeoutMs = 1000;
 
-    private static (long Total, long Used)? TryGetNvidiaGpuMemory(int deviceId)
+    /// <summary>
+    /// Runs <c>nvidia-smi</c> with <paramref name="arguments"/> and returns its stdout, or null when it
+    /// is not installed, fails, or does not finish inside <see cref="NvidiaSmiTimeoutMs"/>.
+    /// </summary>
+    private static string? RunNvidiaSmi(string arguments)
     {
         try
         {
             var psi = new ProcessStartInfo
             {
                 FileName = "nvidia-smi",
-                Arguments =
-                    $"--id={deviceId} --query-gpu=memory.total,memory.used --format=csv,noheader,nounits",
+                Arguments = arguments,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -1908,31 +1982,85 @@ public static class OnnxTiler
             string output = stdout.GetAwaiter().GetResult();
             stderr.GetAwaiter().GetResult();
 
-            if (process.ExitCode != 0)
-            {
-                return null;
-            }
+            return process.ExitCode == 0 ? output : null;
+        }
+        catch
+        {
+            // nvidia-smi not available or failed
+            return null;
+        }
+    }
 
-            // Output format: "16384, 2560" (values in MiB)
-            var parts = output.Split(
+    private static (long Total, long Used)? TryGetNvidiaGpuMemory(int deviceId)
+    {
+        string? output = RunNvidiaSmi(
+            $"--id={deviceId} --query-gpu=memory.total,memory.used --format=csv,noheader,nounits"
+        );
+        if (output is null)
+        {
+            return null;
+        }
+
+        // Output format: "16384, 2560" (values in MiB)
+        var parts = output.Split(
+            ',',
+            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries
+        );
+        if (
+            parts.Length >= 2
+            && long.TryParse(parts[0], CultureInfo.InvariantCulture, out long totalMib)
+            && long.TryParse(parts[1], CultureInfo.InvariantCulture, out long usedMib)
+        )
+        {
+            return (totalMib * 1024L * 1024L, usedMib * 1024L * 1024L);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// This process's own device memory as nvidia-smi reports it, or null when nvidia-smi could not be
+    /// asked. This is the per-process source for a host whose driver puts a device-wide figure in
+    /// <c>VK_EXT_memory_budget</c> (see <see cref="VulkanUsageIsDeviceWide"/>): there nvidia-smi is the
+    /// only thing that separates this process's allocations from every other tenant's.
+    /// </summary>
+    private static long? TryGetNvidiaProcessMemoryBytes(int deviceId)
+    {
+        string? output = RunNvidiaSmi(
+            $"--id={deviceId} --query-compute-apps=pid,used_memory --format=csv,noheader,nounits"
+        );
+
+        return output is null ? null : ParseNvidiaProcessMemory(output, Environment.ProcessId);
+    }
+
+    /// <summary>
+    /// This process's own bytes out of an <c>nvidia-smi --query-compute-apps=pid,used_memory</c> table,
+    /// or 0 when the table has no row for it. Absent means the process holds nothing, not that the
+    /// figure is unknown: nvidia-smi omits a process with no device allocation, and a caller measuring a
+    /// growth across a page needs that 0 as its baseline — treating it as unknown would send the
+    /// measurement back to the device-wide source this exists to avoid.
+    /// </summary>
+    internal static long ParseNvidiaProcessMemory(string output, int processId)
+    {
+        long total = 0;
+        foreach (string line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split(
                 ',',
                 StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries
             );
             if (
                 parts.Length >= 2
-                && long.TryParse(parts[0], CultureInfo.InvariantCulture, out long totalMib)
+                && int.TryParse(parts[0], CultureInfo.InvariantCulture, out int pid)
+                && pid == processId
                 && long.TryParse(parts[1], CultureInfo.InvariantCulture, out long usedMib)
             )
             {
-                return (totalMib * 1024L * 1024L, usedMib * 1024L * 1024L);
+                total += usedMib * 1024L * 1024L;
             }
         }
-        catch
-        {
-            // nvidia-smi not available or failed
-        }
 
-        return null;
+        return total;
     }
 
     /// <summary>

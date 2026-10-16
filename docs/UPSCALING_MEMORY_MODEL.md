@@ -229,7 +229,12 @@ matter for the grid the planner can reach:
   is what the other tenants hold (the same measurement: 16304 − 13690 = 2614), and that is the figure the
   budget path uses. It is also the portable one: the driver reports it on Windows too, where there is no
   sysfs. Only a driver that reports no budget at all falls back to a system-wide source (Linux DRM sysfs
-  or nvidia-smi), where the caller's own footprint is discounted out of the figure instead.
+  or nvidia-smi), where the caller's own footprint is discounted out of the figure instead. On NVIDIA
+  that same difference already contains our own footprint — the driver derives its budget from its usage
+  figure, `total − heapBudget` equalling `heapUsage` to the byte — so adding the caller's footprint back
+  there counts our own session as a competitor: measured on an RTX 5070 Ti, the budget fell from 11125 to
+  5113 MB and the planned tile from 563x800 to 375x400, below the quality floor, as one session grew.
+  `OnnxTiler.VulkanUsageIsDeviceWide` detects that and leaves the addition out.
 * **The caller's own footprint is measured, not only predicted.** The arena's real contribution to the
   used figure is the growth across a page — `vramAfter − vramBefore` from the driver's *per-process*
   figure where it exists (`OnnxTiler.TryGetProcessMemoryBytes`, §4.1), and from the system-wide reading
@@ -237,10 +242,13 @@ matter for the grid the planner can reach:
   is kept at its largest: a page that reuses the session adds nothing, so reassigning it would drop the
   discount back to the prediction and the budget would wobble. With the driver-derived figure above the
   two terms cancel to "the other tenants", so the budget is the same on the first page as on the tenth —
-  which is what keeps the tile shape from churning. Measured over four consecutive pages of a 1125x1600
-  page at fp16 4x: 11086, 11148, 11104, 11125 MB — a 0.3% wobble — each planning 2x2 of 563x800 (512 px
-  of context) and reusing the session. Before, the same four pages went 7918 → 10964 → 7855 MB, changed
-  tile shape on each, and spilled 6.5 GB into GTT.
+  which is what keeps the tile shape from churning. (On NVIDIA the cancellation is one term short, since
+  the difference already holds our footprint; there the detection above leaves it out and the same
+  stability follows — measured over one session growing to 6 GB, the budget stayed at 10625 MB and the
+  plan at 2x2 of 563x800, where before the detection it fell to 5113 MB and 375x400.) Measured over four
+  consecutive pages of a 1125x1600 page at fp16 4x: 11086, 11148, 11104, 11125 MB — a 0.3% wobble — each
+  planning 2x2 of 563x800 (512 px of context) and reusing the session. Before, the same four pages went
+  7918 → 10964 → 7855 MB, changed tile shape on each, and spilled 6.5 GB into GTT.
 * **It is read after the first-use benchmark and the model probe, not before them.** Both allocate device
   memory of their own — the benchmark runs two inferences on their own sessions (§6.1) and the probe
   creates a third — and ONNX Runtime's arenas keep their high-water mark, so that memory is resident while
@@ -756,17 +764,20 @@ describes), because the system-wide sources count every other tenant: the same p
 at 8406 MB once and 9683 MB another time, 1.3 GB apart, and the lower one reached a plan — anything else
 on the card that allocates or frees while the page runs lands in a system-wide delta.
 
-That the per-process figure really is per-process is the extension's contract, not a driver quirk:
-`VK_EXT_memory_budget` documents `heapUsage` as "the current process estimated heap usage" and
-`heapBudget` as how much the process may use. It is the same source on AMD, NVIDIA and Intel — the
-provider talks to the Vulkan loader (`libvulkan.so.1` / `vulkan-1.dll`) — and the values are estimates
-that the specification calls implementation-dependent, which is what the band below and the margin in
-§2.2 are for. A driver that reported the card's usage there anyway would make this the system-wide
-reading, which is what this path used before the per-process source existed: the degradation is to the
-previous behaviour, never to something worse. Where there is no Vulkan at all (a minimal container, a
-backend that does not expose the extension) the system-wide reading is the fallback, and on a host where
-that too is unavailable (Windows without Vulkan has no sysfs) the recording simply does not happen and
-the budget's own-footprint discount stays 0 — conservative in both cases.
+That the per-process figure really is per-process is the extension's contract: `VK_EXT_memory_budget`
+documents `heapUsage` as "the current process estimated heap usage" and `heapBudget` as how much the
+process may use. RADV implements exactly that — measured on an RX 9070 XT at 64 MB with a desktop
+holding 2677 MB. The NVIDIA driver does not: measured on an RTX 5070 Ti, a process holding nothing read
+2834.8 MB, and across a session that grew to 6 GB the figure tracked nvidia-smi's card-wide number with
+a constant 392 MB offset between them. Its `heapBudget` is derived from that figure — `total − heapBudget`
+equalled `heapUsage` to the byte at every sample — which is the invariant `OnnxTiler.VulkanUsageIsDeviceWide`
+looks for, together with the vendor id. Where it matches, the source is nvidia-smi's per-process table
+(`--query-compute-apps=pid,used_memory`) instead: measured exact there, 0, 222, 362, 1908 and 6006 MB as
+one session grew. Both halves of that test are required, so a driver that changed either one falls back
+to the reading that counts our own footprint as a competitor — a *smaller* budget, which costs quality
+and cannot cost the page. Where there is no Vulkan at all (a minimal container) and no nvidia-smi
+either, the system-wide reading is the fallback and the budget's own-footprint discount is what
+separates our memory from the rest.
 
 Pushing the *larger benchmark tile* further, so that the fit happens closer to the operating shape, is a
 wash rather than an obvious win: the reservation is derived as `growth − slope·n² − weights`, so any error

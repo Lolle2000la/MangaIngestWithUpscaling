@@ -1648,6 +1648,143 @@ public class OnnxTilerTests : IDisposable
     }
 
     [Fact]
+    public void VulkanUsageIsDeviceWide_MatchesWhatTheTwoDriversDo()
+    {
+        // Both profiles are measurements, not constructions.
+        //
+        // RADV (RX 9070 XT): heapUsage 64 MB is this process, total − heapBudget 2614 MB is the
+        // desktop. That is the specification's semantics, implemented.
+        Assert.False(
+            OnnxTiler.VulkanUsageIsDeviceWide(
+                vulkanTotal: 17095983104,
+                vulkanBudget: 17095983104 - (2614L * 1024 * 1024),
+                vulkanUsed: 64L * 1024 * 1024,
+                vendorId: 0x1002
+            )
+        );
+
+        // NVIDIA (RTX 5070 Ti): heapBudget is total minus heapUsage to the byte, and heapUsage is the
+        // card's usage — 2834.8 MB read by a process holding nothing.
+        Assert.True(
+            OnnxTiler.VulkanUsageIsDeviceWide(
+                vulkanTotal: 17094934528,
+                vulkanBudget: 14122483712,
+                vulkanUsed: 2972450816,
+                vendorId: 0x10DE
+            )
+        );
+    }
+
+    [Fact]
+    public void VulkanUsageIsDeviceWide_NeedsTheVendorAndTheIdentityTogether()
+    {
+        // The identity on a driver whose usage figure really is ours: this process would have to hold
+        // exactly what every other tenant holds for it to match, so the vendor gate is what keeps that
+        // coincidence from being read as the NVIDIA behaviour.
+        Assert.False(
+            OnnxTiler.VulkanUsageIsDeviceWide(
+                vulkanTotal: 16L * 1024 * 1024 * 1024,
+                vulkanBudget: 16L * 1024 * 1024 * 1024 - (2614L * 1024 * 1024),
+                vulkanUsed: 2614L * 1024 * 1024,
+                vendorId: 0x1002
+            )
+        );
+
+        // The vendor on a driver that no longer derives its budget from its usage: that is the shape a
+        // fixed driver would have, and it has to fall back to the branch that assumes the figure is
+        // ours — the safe direction, a smaller budget rather than a larger one.
+        Assert.False(
+            OnnxTiler.VulkanUsageIsDeviceWide(
+                vulkanTotal: 16L * 1024 * 1024 * 1024,
+                vulkanBudget: (long)(13.37 * 1024 * 1024 * 1024),
+                vulkanUsed: 64L * 1024 * 1024,
+                vendorId: 0x10DE
+            )
+        );
+    }
+
+    [Fact]
+    public void ResolveSystemWideUsedVram_OnNvidiaLeavesOutTheFootprintTheDriverAlreadyCounts()
+    {
+        // The measured NVIDIA relationship: the driver's usage figure contains our own session, so
+        // total − heapBudget does too, and adding the caller's footprint back would count it as a
+        // competitor. That is the shape that shrank the budget from 11125 MB to 5113 MB and the planned
+        // tile from 563x800 to 375x400 as one session grew.
+        long total = 17094934528;
+        long ours = 6006L * 1024 * 1024;
+        long others = 2440L * 1024 * 1024;
+        long used = others + ours;
+
+        Assert.Equal(
+            used,
+            OnnxTiler.ResolveSystemWideUsedVram(
+                total,
+                total - used,
+                used,
+                ownSessionBytes: ours,
+                systemWideUsed: 8352L * 1024 * 1024,
+                vulkanVendorId: 0x10DE
+            )
+        );
+    }
+
+    [Fact]
+    public void ResolveAvailableVramBudget_OnNvidiaPlansAsIfOurOwnSessionWereNotThere()
+    {
+        // The regression the NVIDIA detection exists for, at the level the planner sees it: the same
+        // card and the same other tenants, with the engine's own session held and without it. A session
+        // the next plan will reuse must not be planned against, and that is exactly what the detection
+        // buys — the two budgets come out identical.
+        long total = 17094934528;
+        long others = 2440L * 1024 * 1024;
+        long ours = 6006L * 1024 * 1024;
+
+        long Budget(long heldByUs, uint vendorId) =>
+            OnnxTiler.ResolveAvailableVramBudget(
+                new VulkanGpuMemory(
+                    DeviceIndex: 0,
+                    DeviceName: "RTX 5070 Ti",
+                    VendorId: vendorId,
+                    TotalVramBytes: total,
+                    BudgetBytes: total - (others + heldByUs),
+                    UsedVramBytes: others + heldByUs
+                ),
+                (total, others + heldByUs, total - (others + heldByUs)),
+                utilizationFraction: null,
+                safetyMarginBytes: null,
+                exclusiveThresholdBytes: null,
+                ownSessionBytes: heldByUs
+            );
+
+        Assert.Equal(Budget(0, 0x10DE), Budget(ours, 0x10DE));
+
+        // Without the detection the same inputs plan against the larger, wrong figure — the budget our
+        // own session's memory was stealing.
+        Assert.True(Budget(ours, 0) < Budget(ours, 0x10DE));
+    }
+
+    [Fact]
+    public void ParseNvidiaProcessMemory_SumsThisProcessAndIgnoresTheRest()
+    {
+        // The measured table shape, in MiB. One process can hold several contexts, so its rows are
+        // summed; another process's rows are not ours to count.
+        const string output = "2245, 259\n662571, 1908\n2672, 128\n662571, 6006\n";
+
+        Assert.Equal(7914L * 1024 * 1024, OnnxTiler.ParseNvidiaProcessMemory(output, 662571));
+    }
+
+    [Fact]
+    public void ParseNvidiaProcessMemory_AbsentProcessIsZeroNotUnknown()
+    {
+        // nvidia-smi omits a process with no device allocation, and the recording needs that zero as a
+        // baseline: the growth across a page is 1908 MB when the table gains a row, and reading the
+        // absence as "unknown" would send the measurement back to the card-wide source instead.
+        Assert.Equal(0, OnnxTiler.ParseNvidiaProcessMemory("2245, 259\n2672, 128\n", 662571));
+        Assert.Equal(0, OnnxTiler.ParseNvidiaProcessMemory(string.Empty, 662571));
+        Assert.Equal(0, OnnxTiler.ParseNvidiaProcessMemory("no header, just text\n", 662571));
+    }
+
+    [Fact]
     public void ResolveAvailableVramBudget_LeavesOutTheOtherTenants_NotTheDriversOwnUsage()
     {
         // The measured relationship on an RX 9070 XT with a desktop: heapBudget = total − (everything
