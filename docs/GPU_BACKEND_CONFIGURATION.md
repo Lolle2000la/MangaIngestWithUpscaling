@@ -11,12 +11,14 @@ Hardware acceleration is achieved through native ONNX **Execution Providers (EP)
 
 ## Docker Image Flavors
 
-| Image Tag | Execution Provider | Target Hardware | Requirements | Pre-configured `PreferredGpuBackend` |
-|---|---|---|---|---|
-| `:latest` / `:latest-dev` | **WebGPU** (Vulkan via Mesa RADV / ANV) + CPU fallback | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback | Host GPU device access (`/dev/dri`) | `WebGPU` *(built-in default)* |
-| `:latest-cuda` / `:latest-dev-cuda` | **CUDA** | NVIDIA GeForce GTX/RTX, Quadro, Tesla | NVIDIA driver + `nvidia-container-toolkit` | `CUDA` *(built-in default)* |
+| Image Tag | Execution Provider | Architectures | Target Hardware | Requirements | Pre-configured `PreferredGpuBackend` |
+|---|---|---|---|---|---|
+| `:latest` / `:latest-dev` | **WebGPU** (Vulkan via Mesa RADV / ANV) + CPU fallback | `linux/amd64`, `linux/arm64` | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback | Host GPU device access (`/dev/dri`) | `WebGPU` *(built-in default)* |
+| `:latest-cuda` / `:latest-dev-cuda` | **CUDA** | `linux/amd64` only | NVIDIA GeForce GTX/RTX, Quadro, Tesla | NVIDIA driver + `nvidia-container-toolkit` | `CUDA` *(built-in default)* |
 
 Both flavor tags are published for both the main web application (`manga-ingest-with-upscaling`) and the standalone remote worker (`manga-ingest-with-upscaling-remote-worker`). Each container image already has `Ingest_Upscaler__PreferredGpuBackend` pre-set to its matching provider, so you do not need to configure it in Docker Compose unless overriding it.
+
+The WebGPU image is published for `linux/amd64` and `linux/arm64`, and the `:latest`/`:latest-dev` manifest carries both, so an arm64 host pulls the right one automatically. The CUDA image is `linux/amd64` only, and that is not an oversight: `Microsoft.ML.OnnxRuntime.Gpu` 1.29.0 ships its native payload for `linux-x64` only, so an arm64 publish of that flavour **succeeds** and then contains neither `libonnxruntime.so` nor a CUDA provider — a failure that surfaces at the first inference rather than at build time. Microsoft does publish an official aarch64 CUDA build, but only as the Python `onnxruntime-gpu` wheel (since 1.29.0), which the .NET package cannot consume. An arm64 host therefore gets the WebGPU image and its CPU fallback; arm64 *with* CUDA means NVIDIA Grace/SBSA hardware, and that case is waiting on the upstream .NET package rather than on anything here.
 
 The `:latest` default changed from CUDA to WebGPU with the ONNX migration, and the CUDA image moved to CUDA 13.4. See [Upgrading to the ONNX engine](UPGRADE_NOTES_ONNX_MIGRATION.md) if you are coming from a PyTorch release.
 

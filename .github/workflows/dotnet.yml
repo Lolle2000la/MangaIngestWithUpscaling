@@ -41,6 +41,10 @@ jobs:
   # rewrote both of them (the app image now also carries the migrator, the worker's copy list and its
   # base stage changed), so the two WebGPU images are built on every PR.
   #
+  # The arm64 WebGPU image is built only by the release workflows, on GitHub's arm64 runner, for the
+  # same reason the CUDA images are not built here: the publish differs from the amd64 one only by
+  # RuntimeIdentifier, and a break in it fails the release job loudly instead of shipping an image.
+  #
   # The CUDA images are deliberately not built (a multi-gigabyte base pull on every PR, and the release
   # workflows build them anyway) but their base tag is resolved: a retired or mistyped nvidia/cuda tag
   # is the failure that would otherwise only surface in a release. Only their build and publish stages

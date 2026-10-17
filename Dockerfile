@@ -1,5 +1,6 @@
 # Release image, built by the release workflows for GHCR. The Dockerfile is multi-arch via
-# TARGETARCH; the workflows currently publish amd64 only (the manifest also carries the CUDA variant).
+# TARGETARCH, and the workflows publish linux/amd64 and linux/arm64; the manifest also carries the CUDA
+# variant, which stays amd64 only (see docs/GPU_BACKEND_CONFIGURATION.md for why).
 # This is the WebGPU variant: the CPU ONNX Runtime plus the WebGPU execution provider, with
 # PreferredGpuBackend=WebGPU below. The flavour is passed explicitly on every restore/build/publish —
 # it is the csproj default, but stating it here keeps this file and cuda.Dockerfile reading the same
