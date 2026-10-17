@@ -87,10 +87,12 @@ environment the reliable route is the IDE's own global MSBuild properties — in
 *Settings → Build, Execution, Deployment → Toolset and Build → MSBuild global properties* — set to
 `OnnxRuntimeFlavor=Cuda`, which then applies to every build of the solution on that machine.
 
-Prefer CUDA on an NVIDIA card rather than relying on WebGPU: the WebGPU EP works there but asks Dawn's
-Vulkan allocator for several times the memory it asks for on RADV — measured on an RTX 5070 Ti at
-~1.32 MiB per resized row against ~0.373 MiB on an RX 9070 XT, where a four-window batch of the split
-detector exhausted a 16 GB card.
+Prefer CUDA on an NVIDIA card rather than relying on WebGPU: the WebGPU EP works there, but the split
+detector's per-window cost is far above the figure the AMD measurement left behind — a 2048-row window
+of the shipped model grew the process by 2724 MiB on WebGPU and 2040 MiB on CUDA on an RTX 5070 Ti,
+against ~0.373 MiB per row from a page pass on an RX 9070 XT. On a 16 GB card a batch of four such
+windows exhausts it, and on WebGPU that failure arrives as a Dawn consequence message rather than as an
+allocation error.
 
 ## Validation
 

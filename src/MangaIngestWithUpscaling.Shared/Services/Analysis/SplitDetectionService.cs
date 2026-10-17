@@ -79,20 +79,22 @@ public class SplitDetectionService(
     /// <summary>
     /// Fixed part of one detector inference's footprint, and the per-row cost of it.
     /// <para>
-    /// The per-row figure is the larger of the two backends the detector has been measured on, because
-    /// one constant has to cover both. On an RX 9070 XT with the WebGPU EP a page pass measured 1513 MiB
-    /// for 4000 resized rows and 5615 MiB for 15000, i.e. ~0.373 MiB per row. On an RTX 5070 Ti with the
-    /// same EP a single 2048-row window measured 2.7 GB, i.e. ~1.32 MiB per row: Dawn's Vulkan allocator
-    /// asks the NVIDIA driver for several times what it asks RADV for, and a batch of four such windows
-    /// exhausted a 16 GB card. Being too high only costs a smaller window, and a page that already fits
-    /// in one pass is unaffected — the figure only binds once a page is taller than the affordable
-    /// window, which is the case it exists for.
+    /// The per-row figure is set above every window-form measurement, because one constant has to cover
+    /// the backends the detector runs on and being too high only costs a smaller window. Measured on one
+    /// 2048x768 window of the shipped model, this process grew by 2040 MiB on CUDA and 2724 MiB on
+    /// WebGPU (RTX 5070 Ti, ORT 1.29) — ~1.00 and ~1.39 MiB per window row. The figure this constant
+    /// carried before, ~0.373 MiB per row, came from a *page pass* on an RX 9070 XT: a different
+    /// measurement form, and one that a single window on this card exceeds by about three. Both
+    /// measurements are kept in view rather than one being read as the correction of the other; what the
+    /// plan needs is that the estimate is not below what a window actually costs.
     /// </para>
     /// <para>
     /// It is not safety-critical either way. A window that still does not fit halves and retries, which
-    /// requires the failure to be recognised as memory pressure at all; on this backend it is a Dawn
-    /// consequence-message rather than an allocation one, which is why
-    /// <c>OnnxTiler.IsMemoryException</c> keys on that wording too.
+    /// requires the failure to be recognised as memory pressure at all: CUDA's
+    /// "Failed to allocate memory" already is, while WebGPU's arrives as a Dawn consequence-message —
+    /// which is why <c>OnnxTiler.IsMemoryException</c> keys on that wording too. Measured end to end:
+    /// after a WebGPU window exhausted the card, dropping the session and retrying on a fresh one ran the
+    /// smaller window.
     /// </para>
     /// </summary>
     private const long DetectorFixedBytes = 32L * 1024 * 1024;

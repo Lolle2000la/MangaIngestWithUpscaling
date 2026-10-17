@@ -898,9 +898,30 @@ public sealed class OnnxSessionFactory(
             // Returning the preference unverified would let the engine identity, the calibration
             // fingerprint and the logs name a backend that is not the one running — the opposite of
             // what EngineIdentity documents. The same append the Auto path probes decides it here.
-            return CanAttach(backend, Math.Max(0, currentConfig.SelectedDeviceIndex - 1))
-                ? backend
-                : GpuBackend.CPU;
+            if (CanAttach(backend, Math.Max(0, currentConfig.SelectedDeviceIndex - 1)))
+            {
+                return backend;
+            }
+
+            // Said out loud, because the alternative is what an operator reported: an NVIDIA host
+            // configured for CUDA ran on the CPU, and nothing above Debug said why. The per-provider
+            // message that explains it ("CUDA execution provider is absent from this ONNX Runtime build
+            // or host") is Debug, and the only visible symptom was that upscaling had become slow. This
+            // runs once per process — GetEffectiveBackend caches the resolution — so it cannot flood.
+            logger.LogInformation(
+                "PreferredGpuBackend is {Preferred}, but this host cannot attach it; running on CPU.",
+                backend
+            );
+            if (backend == GpuBackend.CUDA)
+            {
+                logger.LogInformation(
+                    "CUDA is a build-time ONNX Runtime flavour, not a host setting: if the log above "
+                        + "says the provider is absent from this build, the build is the CPU/WebGPU one. "
+                        + "Build with -p:OnnxRuntimeFlavor=Cuda, or use the :latest-cuda image."
+                );
+            }
+
+            return GpuBackend.CPU;
         }
 
         int deviceId = Math.Max(0, currentConfig.SelectedDeviceIndex - 1);
