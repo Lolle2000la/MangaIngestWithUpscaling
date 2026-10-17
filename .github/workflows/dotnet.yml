@@ -41,9 +41,9 @@ jobs:
   # rewrote both of them (the app image now also carries the migrator, the worker's copy list and its
   # base stage changed), so the two WebGPU images are built on every PR.
   #
-  # The arm64 WebGPU image is built only by the release workflows, on GitHub's arm64 runner, for the
-  # same reason the CUDA images are not built here: the publish differs from the amd64 one only by
-  # RuntimeIdentifier, and a break in it fails the release job loudly instead of shipping an image.
+  # The arm64 application image gets its own job below rather than a line in this one: the arm64
+  # runner is a different machine, and only the application image is published for arm64 — the worker
+  # and Compose images are not.
   #
   # The CUDA images are deliberately not built (a multi-gigabyte base pull on every PR, and the release
   # workflows build them anyway) but their base tag is resolved: a retired or mistyped nvidia/cuda tag
@@ -135,3 +135,57 @@ jobs:
           fi
       - name: Verify the CUDA base tag resolves
         run: docker manifest inspect nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04 > /dev/null
+
+  # The arm64 twin of the application-image half of `containers` above, on GitHub's native arm64 runner
+  # (generally available and free for public repositories). The release workflows publish the WebGPU
+  # image for linux/arm64, so without this the arm64 build would first run when a release is cut — the
+  # failure mode the comment above `containers` exists to prevent. Only the application image is built
+  # here, because it is the only one published for arm64.
+  #
+  # The smoke test is the point of the job, not a bonus. The amd64 run above already proves the image
+  # boots with no GPU — GitHub's runners have none, and RemoteOnly=true keeps startup away from any
+  # model — so what this adds is the architecture itself: the arm64 native payload of every dependency
+  # in a real container, and an entrypoint that reaches /health on it.
+  containers-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build the application image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          # See the same step above: without `load` nothing reaches `docker run`, which the smoke step
+          # below needs.
+          load: true
+          tags: mangaingestwithupscaling:ci-arm64
+      - name: Smoke-test the application image
+        run: |
+          set -euo pipefail
+          docker run -d --name miawu-smoke-arm64 \
+            -p 127.0.0.1:18081:8080 \
+            -e Ingest_Upscaler__RemoteOnly=true \
+            mangaingestwithupscaling:ci-arm64 >/dev/null
+
+          # Always tear the container down, and surface its logs only when it did not come up.
+          trap 'if [ "${healthy:-0}" -ne 1 ]; then echo "::group::container logs"; docker logs miawu-smoke-arm64 2>&1 || true; echo "::endgroup::"; fi; docker rm -f miawu-smoke-arm64 >/dev/null 2>&1 || true' EXIT
+
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:18081/health >/dev/null 2>&1; then
+              healthy=1
+              echo "Application image answered /health on arm64."
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' miawu-smoke-arm64 2>/dev/null || echo false)" != "true" ]; then
+              echo "::error::The arm64 application container exited before /health answered."
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "::error::/health did not answer within 60 s on arm64."
+          exit 1
