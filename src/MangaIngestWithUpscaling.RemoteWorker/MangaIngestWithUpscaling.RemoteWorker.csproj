@@ -4,12 +4,17 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <PublishAot>true</PublishAot>
+    <PublishAot>false</PublishAot>
     <VelopackRelease>false</VelopackRelease>
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
     <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
     <RuntimeIdentifiers>linux-x64;win-x64</RuntimeIdentifiers>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
+    <!-- Local development secrets (WorkerConfig:ApiKey) live in user secrets, not in a tracked
+         appsettings file: they are read automatically in Development and are never deployed. A
+         container has no user secrets, so it is configured through Ingest_WorkerConfig__ApiKey or a
+         mounted appsettings file instead. -->
+    <UserSecretsId>manga-ingest-with-upscaling-remote-worker</UserSecretsId>
   </PropertyGroup>
   <PropertyGroup Condition="'$(VelopackRelease)'=='true'">
     <DefineConstants>$(DefineConstants);VELOPACK_RELEASE</DefineConstants>
@@ -34,17 +39,6 @@
     <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Velopack" Version="1.2.161" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="../../submodules/MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
-      <Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="../MangaIngestWithUpscaling/appstate2.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />

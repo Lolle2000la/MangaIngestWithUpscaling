@@ -747,6 +747,22 @@ public static class DataMigrator
     }
 
     /// <summary>
+    /// The SQL that advances a table's PostgreSQL identity sequence to its current maximum id.
+    /// <c>setval</c> is volatile, so it must be called exactly once: a per-row invocation in the
+    /// target list of a <c>SELECT ... FROM "table"</c> would be evaluated once per source row and
+    /// never at all on an empty table. Here the call has no <c>FROM</c> (a single implicit row) and
+    /// its arguments are scalar subqueries, so the empty-table intent — <c>setval(seq, 1, false)</c>
+    /// (the next generated id is 1) — is actually applied. <paramref name="table" /> is always a
+    /// hard-coded table name, never user input.
+    /// </summary>
+    internal static string BuildSequenceResetSql(string table)
+    {
+        return $"SELECT setval(pg_get_serial_sequence('\"{table}\"', 'Id'), "
+            + $"(SELECT COALESCE(MAX(\"Id\"), 1) FROM \"{table}\"), "
+            + $"EXISTS(SELECT 1 FROM \"{table}\"));";
+    }
+
+    /// <summary>
     /// Advances a PostgreSQL identity sequence to the current maximum id, so rows inserted with
     /// explicit ids (the migrator copies existing ids) do not collide with generated ones.
     /// <paramref name="table" /> is always a hard-coded table name, never user input.
@@ -758,9 +774,7 @@ public static class DataMigrator
     )
     {
         await using NpgsqlCommand command = connection.CreateCommand();
-        command.CommandText =
-            $"SELECT setval(pg_get_serial_sequence('\"{table}\"', 'Id'), "
-            + $"COALESCE(MAX(\"Id\"), 1), MAX(\"Id\") IS NOT NULL) FROM \"{table}\";";
+        command.CommandText = BuildSequenceResetSql(table);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

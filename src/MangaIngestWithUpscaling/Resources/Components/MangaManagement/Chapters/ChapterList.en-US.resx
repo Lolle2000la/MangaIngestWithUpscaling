@@ -100,6 +100,9 @@
   <data name="Tooltip_DeleteUpscaled" xml:space="preserve">
     <value>Delete upscaled version of this chapter.</value>
   </data>
+  <data name="Chip_Split" xml:space="preserve">
+    <value>Split</value>
+  </data>
   <data name="Chip_Pending" xml:space="preserve">
     <value>Pending</value>
   </data>

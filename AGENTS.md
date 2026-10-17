@@ -13,35 +13,29 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 ### Prerequisites
 - .NET 10.0 SDK (REQUIRED - .NET 9/8 will not work)
-- Python 3.12 or newer
-- Git with submodule support
 
 ### Bootstrap, Build, and Test the Repository
 
 **CRITICAL TIMING EXPECTATIONS:**
 - **NEVER CANCEL** any build or dependency installation commands
 - **Build commands may take 30+ seconds** - always set timeout to 120+ seconds
-- **First run may take 2-5 minutes** for Python environment setup
 
 ```bash
-# 1. Install .NET 10.0 SDK (if not installed)
-wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
+# 1. Install .NET 10.0 SDK (if not installed). dotnet-install.sh is tracked in this repository, so
+#    run it from the checkout instead of downloading it again.
 chmod +x dotnet-install.sh
 ./dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet
 export PATH="$HOME/.dotnet:$PATH"
 
-# 2. Initialize git submodules (REQUIRED for build)
-git submodule update --init --recursive
-
-# 3. Restore dependencies (~24 seconds - NEVER CANCEL)
+# 2. Restore dependencies (~24 seconds - NEVER CANCEL)
 dotnet restore MangaIngestWithUpscaling.sln
 # Build takes ~24s. Set timeout to 120+ seconds.
 
-# 4. Build the solution (~23 seconds - NEVER CANCEL)  
+# 3. Build the solution (~23 seconds - NEVER CANCEL)  
 dotnet build --no-restore MangaIngestWithUpscaling.sln
 # Build takes ~23s. Set timeout to 120+ seconds.
 
-# 5. Build Remote Worker separately (~1 second)
+# 4. Build Remote Worker separately (~1 second)
 dotnet build --no-restore src/MangaIngestWithUpscaling.RemoteWorker
 ```
 
@@ -49,7 +43,7 @@ dotnet build --no-restore src/MangaIngestWithUpscaling.RemoteWorker
 
 **Main Web Application (Development Mode):**
 ```bash
-# ALWAYS use RemoteOnly mode for development to skip Python ML setup
+# ALWAYS use RemoteOnly mode for development to run upscaling on the remote worker
 export Ingest_Upscaler__RemoteOnly=true
 dotnet run --project src/MangaIngestWithUpscaling
 # Application starts on: http://localhost:5091 and https://localhost:7211
@@ -62,14 +56,43 @@ dotnet run --project src/MangaIngestWithUpscaling.RemoteWorker
 # Requires configuration in appsettings.json with ApiKey and ApiUrl
 ```
 
-**Alternative Configuration (for full ML functionality):**
+**Alternative Configuration (for local ML functionality):**
 ```bash
-# Only use if you need local upscaling (will download PyTorch, takes 2-5 minutes)
+# Enable local ONNX upscaling
 export Ingest_Upscaler__UseCPU=true
 export Ingest_Upscaler__RemoteOnly=false
 dotnet run --project src/MangaIngestWithUpscaling
-# FIRST RUN WILL TAKE 2-5 MINUTES - NEVER CANCEL
 ```
+
+**NVIDIA GPU (CUDA):**
+
+The ONNX Runtime flavour is a *build-time* property, not a runtime setting. The default build ships the
+CPU runtime plus the WebGPU execution provider and no CUDA provider at all, so an NVIDIA host running it
+falls back to WebGPU and logs `CUDA execution provider is not enabled in this build`. Select CUDA by
+passing the property to the build:
+
+```bash
+dotnet run --project src/MangaIngestWithUpscaling -p:OnnxRuntimeFlavor=Cuda
+```
+
+`OnnxRuntimeFlavor` is an ordinary MSBuild property, so MSBuild's own rules apply: it can also come from
+the environment (`OnnxRuntimeFlavor=Cuda dotnet run …`), and the csproj default only fills it in when
+nothing else has. A **launch profile cannot set it**: `launchSettings.json` has no MSBuild-property
+field, and its `environmentVariables` reach the launched process rather than the build that precedes it
+(measured — a profile set the variable for the app while the build still resolved `Cpu`). The
+`https (CUDA)` and `http (CUDA)` profiles therefore set `PreferredGpuBackend=CUDA` for the app and carry
+`OnnxRuntimeFlavor=Cuda` as the hint for a build environment that already has it; the build itself still
+needs the property from the command line or the environment. In an IDE that builds without that
+environment the reliable route is the IDE's own global MSBuild properties — in Rider that is
+*Settings → Build, Execution, Deployment → Toolset and Build → MSBuild global properties* — set to
+`OnnxRuntimeFlavor=Cuda`, which then applies to every build of the solution on that machine.
+
+Prefer CUDA on an NVIDIA card rather than relying on WebGPU: the WebGPU EP works there, but the split
+detector's per-window cost is far above the figure the AMD measurement left behind — a 2048-row window
+of the shipped model grew the process by 2724 MiB on WebGPU and 2040 MiB on CUDA on an RTX 5070 Ti,
+against ~0.373 MiB per row from a page pass on an RX 9070 XT. On a 16 GB card a batch of four such
+windows exhausts it, and on WebGPU that failure arrives as a Dawn consequence message rather than as an
+allocation error.
 
 ## Validation
 
@@ -77,15 +100,21 @@ dotnet run --project src/MangaIngestWithUpscaling
 
 1. **Build Validation:**
    ```bash
-   dotnet build --no-restore MangaIngestWithUpscaling.sln
+   dotnet build --no-restore -t:Rebuild MangaIngestWithUpscaling.sln /warnaserror
    # Must complete without errors in ~23 seconds
    ```
+   `-t:Rebuild` is what makes this check mean anything. An incremental build skips the projects it
+   considers up to date and does not re-emit their diagnostics, so a warning-as-error that CI catches
+   passes locally. That is not hypothetical: an xUnit analyzer rule (`xUnit1051` — a `Wait`/`Join`
+   overload that accepts a `CancellationToken` and was not given
+   `TestContext.Current.CancellationToken`) passed a local incremental build, passed again in the
+   incremental solution build that followed it, and failed the CI build. A `-t:Rebuild` reports it
+   immediately.
 
 2. **Format Code:**
    ```bash
    dotnet csharpier format src/ test/ tools/ # Or even just the modified files
    # Only ever commit formatted code
-   # Note that the submodule are rightly excluded from the glob pattern above
    ```
 
 3. **Application Startup Test:**
@@ -216,7 +245,6 @@ local and synchronous.
 │   └── MangaIngestWithUpscaling.Tests.UI/ # UI tests
 ├── tools/
 │   └── MangaIngestWithUpscaling.DbMigrator/ # SQLite <-> PostgreSQL data migration CLI
-├── MangaJaNaiConverterGui/            # Git submodule (ML backend files)
 ├── docs/                              # Documentation
 └── .github/workflows/                 # CI/CD pipelines
 ```
@@ -242,8 +270,21 @@ local and synchronous.
 }
 ```
 
+### Local secrets (worker API key)
+
+`WorkerConfig:ApiKey` is a per-developer secret and is deliberately **not** tracked in
+`src/MangaIngestWithUpscaling.RemoteWorker/appsettings.Development.json`. Set it once with:
+
+```bash
+dotnet user-secrets set "WorkerConfig:ApiKey" "<key>" --project src/MangaIngestWithUpscaling.RemoteWorker
+```
+
+User secrets are read in Development only and are never deployed, so a standalone container (the
+main deployment) is configured through `Ingest_WorkerConfig__ApiKey` or a mounted `appsettings.json`
+instead — `Ingest_`-prefixed environment variables are already registered and need no code change.
+
 ### Environment Variables (for development)
-- `Ingest_Upscaler__RemoteOnly=true` - Skip Python/ML setup
+- `Ingest_Upscaler__RemoteOnly=true` - Run the upscaling on the remote worker instead of locally
 - `Ingest_Upscaler__UseCPU=true` - Force CPU backend
 - `Ingest_DatabaseProvider=Postgres` - Select the database backend (`Sqlite` is the default; also accepts `sqlite3`, `postgres`, `postgresql`, `npgsql`; an unknown value fails startup instead of silently falling back)
 - `Ingest_ConnectionStrings__DefaultConnection` - SQLite database path (SQLite only)
@@ -329,20 +370,9 @@ dotnet run --project src/MangaIngestWithUpscaling
 
 ### Common Issues and Solutions
 
-**"Could not find a suitable window platform" error:**
-- This is expected in headless environments
-- Application will fall back to CPU backend automatically
-- Use `RemoteOnly=true` to skip GPU detection entirely
-
-**Python environment setup timeout:**
-- Network issues during PyTorch download
-- Use `RemoteOnly=true` mode for development
-- Allow 2-5 minutes for full ML environment setup
-
 **Build timeout issues:**
 - Always set timeouts to 120+ seconds for builds
 - Never cancel long-running operations
-- Submodule initialization is required before building
 
 **Database migration errors:**
 - Application creates SQLite databases automatically
@@ -354,7 +384,7 @@ dotnet run --project src/MangaIngestWithUpscaling
 - **Build**: ~23 seconds (NEVER CANCEL) 
 - **Remote Worker Build**: ~1 second
 - **Application Startup**: ~10-30 seconds
-- **First Run with ML**: 2-5 minutes (NEVER CANCEL)
+- **First Run with ML**: Models downloaded automatically on first start (~30-60s)
 
 ## CI/CD Information
 
@@ -366,7 +396,7 @@ The project uses GitHub Actions for continuous integration:
 **Always ensure your changes pass:**
 ```bash
 dotnet restore MangaIngestWithUpscaling.sln
-dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
+dotnet build --no-restore -t:Rebuild MangaIngestWithUpscaling.sln /warnaserror
 # Run tests if relevant changes are made
 dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
 ```
@@ -375,6 +405,18 @@ CI (`.github/workflows/dotnet.yml`) runs **three** test passes: unit tests on SQ
 project against PostgreSQL, and the UI test project against PostgreSQL (the last two via
 Testcontainers, so Docker is required). A change that passes locally on SQLite can still fail CI, so
 run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches data access.
+
+**A test that failed once and passed on a re-run is not automatically flaky, and "flaky" is how a real
+race gets left in.** The last one that looked that way was real: the tiler's cancelled path releases a
+tile's native output collection from a continuation attached with
+`TaskContinuationOptions.ExecuteSynchronously` — a scheduling hint, not a promise — and the unwind path
+waited for the decode task but not for that continuation, so on a loaded runner `UpscaleRgb` could
+return (and the engine, on the exception, immediately invalidate the session that owns those tensors)
+while the collection was still undisposed. Name the interleaving before calling a test flaky, and if
+this machine cannot produce it — an idle many-core box runs a pool continuation inline where a loaded
+four-core runner queues it — reproduce it deliberately: that one was reproduced by running the page on
+a dedicated thread, where the runtime refuses inline execution, and pinned with a test that fails
+without the fix.
 
 ## Key Dependencies
 
@@ -385,8 +427,8 @@ run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches 
 - **SQLite / PostgreSQL (Npgsql)** - Supported database engines (SQLite is the default)
 - **Testcontainers** - Spins up PostgreSQL for the dual-provider test passes (Docker required)
 - **gRPC** - Communication protocol
+- **System.CommandLine** - Command-line parsing for the database migrator tool
 - **Serilog** - Logging framework
-- **System.CommandLine** - CLI parsing for the database migrator
-- **Python 3.x + PyTorch** - ML backend (optional with RemoteOnly)
+- **Microsoft.ML.OnnxRuntime** - Pure C# ML inference engine (WebGPU — the `:latest` image default, while the app default is `Auto` — CUDA, DirectML, OpenVINO, MIGraphX, CPU)
 
 Remember: **ALWAYS use RemoteOnly mode for development** unless you specifically need to test ML functionality locally.

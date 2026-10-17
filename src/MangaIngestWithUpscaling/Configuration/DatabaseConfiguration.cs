@@ -9,6 +9,14 @@ namespace MangaIngestWithUpscaling.Configuration;
 /// The database provider and connection strings resolved from configuration at startup, together
 /// with the derived paths and migrations assemblies the rest of the boot sequence needs.
 /// </summary>
+/// <remarks>
+/// <see cref="LoggingConnectionReadOnlyString" /> keeps its historical <c>ReadOnly</c> suffix but is
+/// <em>not</em> opened read-only. It is simply the parsed <c>ConnectionStrings:LoggingConnection</c>
+/// value, and the boot sequence uses that connection to enable WAL journaling and to vacuum the logs
+/// file via the logging context. The application itself only reads log rows through that context
+/// (the Serilog sink writes through its own connection, and the property name is retained because
+/// callers bind to it).
+/// </remarks>
 public sealed record DatabaseConfiguration(
     DatabaseProvider Provider,
     bool IsSqlite,
@@ -65,7 +73,9 @@ public sealed record DatabaseConfiguration(
         // The logs database is only a local SQLite file; on PostgreSQL the logs live in the
         // application database, so this connection string is neither read nor parsed for PostgreSQL
         // (a deployment may repurpose LoggingConnection, and parsing it as SQLite would be
-        // meaningless).
+        // meaningless). The parsed string is not opened read-only despite its property name: the
+        // boot sequence uses this same connection to enable WAL and vacuum the file (see the record
+        // remarks); the application only reads log rows through it.
         string? loggingConnectionReadOnlyString = null;
         var logsDbPath = string.Empty;
         if (isSqlite)

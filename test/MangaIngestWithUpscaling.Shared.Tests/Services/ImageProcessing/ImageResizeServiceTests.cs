@@ -454,8 +454,11 @@ public class ImageResizeServiceTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task PreprocessImageInPlaceAsync_ConvertsAMatchingFormatInPlace()
+    public async Task PreprocessImageInPlaceAsync_ConversionKeepsTheConvertedExtension()
     {
+        // A .png input whose rule targets .jpg must come out as page.jpg and report that path, exactly
+        // as the whole-CBZ path keeps the converted entry name. Renaming the converted bytes back over
+        // page.png would leave the file's name and content disagreeing.
         string directory = Directory.CreateTempSubdirectory("preprocess_page").FullName;
         try
         {
@@ -465,10 +468,11 @@ public class ImageResizeServiceTests
                 image.WriteToFile(path);
             }
 
-            await _service.PreprocessImageInPlaceAsync(
+            string result = await _service.PreprocessImageInPlaceAsync(
                 path,
                 new ImagePreprocessingOptions
                 {
+                    EnableSmartDownscale = false,
                     FormatConversionRules =
                     [
                         new MangaIngestWithUpscaling.Shared.Configuration.ImageFormatConversionRule
@@ -482,12 +486,287 @@ public class ImageResizeServiceTests
                 TestContext.Current.CancellationToken
             );
 
-            // The result replaces the file in place; libvips sniffs the content, and a JPEG starts
-            // with the SOI marker 0xFF 0xD8.
-            Assert.True(File.Exists(path));
-            byte[] bytes = File.ReadAllBytes(path);
+            // The returned path keeps the converted extension and the original file is replaced.
+            Assert.Equal(Path.Combine(directory, "page.jpg"), result);
+            Assert.False(
+                File.Exists(path),
+                "the original .png must be replaced by the converted page"
+            );
+            Assert.True(File.Exists(result));
+
+            // libvips sniffs the content; a JPEG starts with the SOI marker 0xFF 0xD8.
+            byte[] bytes = File.ReadAllBytes(result);
             Assert.Equal(0xFF, bytes[0]);
             Assert.Equal(0xD8, bytes[1]);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_ConversionFromPngToJpgKeepsTheColourUnderTransparency()
+    {
+        // The default conversion rules turn a PNG (or AVIF) page into a JPG. JPEG cannot store an
+        // alpha band, and Jpegsave composites an RGBA image onto black, so a transparent region used
+        // to be black-baked. The reference (and the engine and detector) instead keep the colour
+        // stored under a transparent pixel and discard the band; the left half here is red at
+        // alpha=0, the right half opaque blue, so a black-composite is distinguishable from the
+        // stored colour.
+        string directory = Directory.CreateTempSubdirectory("preprocess_alpha").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "page.png");
+            using (Image image = CreateRedBlueRgba(8, 8))
+            {
+                image.WriteToFile(path);
+            }
+
+            string result = await _service.PreprocessImageInPlaceAsync(
+                path,
+                new ImagePreprocessingOptions
+                {
+                    EnableSmartDownscale = false,
+                    FormatConversionRules =
+                    [
+                        new MangaIngestWithUpscaling.Shared.Configuration.ImageFormatConversionRule
+                        {
+                            FromFormat = ".png",
+                            ToFormat = ".jpg",
+                            Quality = 95,
+                        },
+                    ],
+                },
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(Path.Combine(directory, "page.jpg"), result);
+            using Image jpeg = Image.NewFromFile(result);
+            Assert.Equal(3, jpeg.Bands);
+
+            // The transparent pixel keeps its stored red; a black-composite would have written [0,0,0].
+            byte[] transparent = ReadPixel(jpeg, 0, 0);
+            Assert.True(
+                transparent[0] > 220,
+                $"the colour under the transparent pixel must survive as red, but was [{transparent[0]},{transparent[1]},{transparent[2]}]"
+            );
+            Assert.True(
+                transparent[1] < 40 && transparent[2] < 40,
+                $"the transparent pixel must not be black-composited, but was [{transparent[0]},{transparent[1]},{transparent[2]}]"
+            );
+
+            // The opaque half is untouched.
+            byte[] opaque = ReadPixel(jpeg, 4, 0);
+            Assert.True(
+                opaque[2] > 220 && opaque[0] < 40,
+                $"the opaque pixel must stay blue, but was [{opaque[0]},{opaque[1]},{opaque[2]}]"
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_ConversionToAlphaCapableFormatPreservesAlpha()
+    {
+        // PNG, WebP, AVIF, TIFF and BMP can all store an alpha band, so the conversion must keep it
+        // rather than dropping it: only a target that cannot carry alpha should discard the band.
+        string directory = Directory.CreateTempSubdirectory("preprocess_alpha_webp").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "page.png");
+            using (Image image = CreateRedBlueRgba(8, 8))
+            {
+                image.WriteToFile(path);
+            }
+
+            string result = await _service.PreprocessImageInPlaceAsync(
+                path,
+                new ImagePreprocessingOptions
+                {
+                    EnableSmartDownscale = false,
+                    FormatConversionRules =
+                    [
+                        new MangaIngestWithUpscaling.Shared.Configuration.ImageFormatConversionRule
+                        {
+                            FromFormat = ".png",
+                            ToFormat = ".webp",
+                            Quality = 95,
+                        },
+                    ],
+                },
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(Path.Combine(directory, "page.webp"), result);
+
+            byte[] bytes = File.ReadAllBytes(result);
+            // RIFF....WEBP is the WebP container signature.
+            Assert.Equal("RIFF", System.Text.Encoding.ASCII.GetString(bytes, 0, 4));
+            Assert.Equal("WEBP", System.Text.Encoding.ASCII.GetString(bytes, 8, 4));
+
+            using Image webp = Image.NewFromFile(result);
+            Assert.SkipWhen(
+                !webp.HasAlpha(),
+                "this libvips build's WebP encoder does not carry an alpha band"
+            );
+
+            Assert.Equal(4, webp.Bands);
+            byte[] transparent = ReadPixel(webp, 0, 0);
+            Assert.Equal(0, transparent[3]);
+            // The stored red is kept too: dropping the band would have discarded both the alpha and,
+            // on a target that keeps it, changed nothing here — the point is the band is still there.
+            Assert.True(
+                transparent[0] > 180,
+                $"the colour under the transparent pixel must be kept, but was [{transparent[0]},{transparent[1]},{transparent[2]}]"
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    /// <summary>
+    /// Reads the raw band bytes of the pixel at (<paramref name="x"/>, <paramref name="y"/>) from an
+    /// interleaved 8-bit image.
+    /// </summary>
+    private static byte[] ReadPixel(Image image, int x, int y)
+    {
+        byte[] bytes = image.WriteToMemory<byte>();
+        int bands = image.Bands;
+        int offset = (y * image.Width + x) * bands;
+        return bytes[offset..(offset + bands)];
+    }
+
+    /// <summary>
+    /// Builds an 8-bit sRGB image with an alpha band whose left half is fully transparent red and
+    /// whose right half is opaque blue. The transparent half deliberately stores a colour the
+    /// black-composite of <c>Flatten()</c> would destroy, so the two choices are distinguishable.
+    /// </summary>
+    private static Image CreateRedBlueRgba(int width, int height)
+    {
+        byte[] rgb = new byte[width * height * 3];
+        byte[] alpha = new byte[width * height];
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int p = y * width + x;
+            int i = p * 3;
+            if (x < width / 2)
+            {
+                rgb[i] = 255; // red
+                alpha[p] = 0; // transparent
+            }
+            else
+            {
+                rgb[i + 2] = 255; // blue
+                alpha[p] = 255;
+            }
+        }
+
+        using Image rgbImage = Image.NewFromMemory(rgb, width, height, 3, Enums.BandFormat.Uchar);
+        using Image alphaImage = Image.NewFromMemory(
+            alpha,
+            width,
+            height,
+            1,
+            Enums.BandFormat.Uchar
+        );
+        // Bandjoin yields Multiband; make the sRGB interpretation explicit so HasAlpha() is true and
+        // the save path recognises the alpha band, exactly as a decoded PNG/AVIF does.
+        return rgbImage.Bandjoin(alphaImage).Copy(interpretation: Enums.Interpretation.Srgb);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_ResizeKeepsTheOriginalName()
+    {
+        // A resize changes no extension, so the page stays at its original path and the returned path
+        // is the input path.
+        string directory = Directory.CreateTempSubdirectory("preprocess_page_resize").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "page.png");
+            using (Image image = Image.Black(64, 64))
+            {
+                image.WriteToFile(path);
+            }
+
+            string result = await _service.PreprocessImageInPlaceAsync(
+                path,
+                new ImagePreprocessingOptions { EnableSmartDownscale = false, MaxDimension = 32 },
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(path, result);
+            using Image resized = Image.NewFromFile(path);
+            Assert.Equal(32, resized.Width);
+            Assert.Equal(32, resized.Height);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_ResizeOnlyJpeg_SavesAtExplicitQualityNotLibvipsDefault()
+    {
+        // A resize-only pass on a JPEG must re-encode through the explicit-quality save path. Falling
+        // through to WriteToFile lets libvips pick jpegsave's default Q≈75, so the resized page loses
+        // quality before it is upscaled. The saved bytes are compared with an explicit Q95 encode of
+        // the same resize and shown to differ from a default encode, so the assertion pins the
+        // quality rather than merely "some bytes were written".
+        string directory = Directory.CreateTempSubdirectory("preprocess_jpeg_quality").FullName;
+        try
+        {
+            // High-frequency noise makes the Q75/Q95 reference encodes differ substantially.
+            byte[] noise = new byte[128 * 128];
+            new Random(1234).NextBytes(noise);
+
+            byte[] sourceJpeg;
+            using (Image original = Image.NewFromMemory(noise, 128, 128, 1, Enums.BandFormat.Uchar))
+            {
+                sourceJpeg = original.JpegsaveBuffer(q: 95);
+            }
+
+            string path = Path.Combine(directory, "page.jpg");
+            await File.WriteAllBytesAsync(path, sourceJpeg, TestContext.Current.CancellationToken);
+
+            string result = await _service.PreprocessImageInPlaceAsync(
+                path,
+                new ImagePreprocessingOptions { EnableSmartDownscale = false, MaxDimension = 64 },
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(path, result);
+            byte[] actual = await File.ReadAllBytesAsync(
+                result,
+                TestContext.Current.CancellationToken
+            );
+
+            // Reproduce the service's transform (decode -> linear resize to 64 px) and encode the same
+            // resized image both at the explicit Q95 the pipeline uses and at libvips' default.
+            byte[] expectedQ95;
+            byte[] defaultEncoded;
+            using (Image source = Image.NewFromBuffer(sourceJpeg))
+            {
+                double scaleFactor = 64.0 / source.Width;
+                using Image resized = source.Resize(scaleFactor, kernel: Enums.Kernel.Linear);
+                expectedQ95 = resized.WriteToBuffer(".jpg[Q=95]");
+                defaultEncoded = resized.WriteToBuffer(".jpg");
+            }
+
+            // Sanity: the two reference encodes really differ, so the equality below is meaningful.
+            Assert.NotEqual(defaultEncoded.Length, expectedQ95.Length);
+            Assert.Equal(expectedQ95, actual);
         }
         finally
         {
@@ -527,12 +806,14 @@ public class ImageResizeServiceTests
         await File.WriteAllBytesAsync(imagePath, original, TestContext.Current.CancellationToken);
         try
         {
-            await _service.PreprocessImageInPlaceAsync(
+            string result = await _service.PreprocessImageInPlaceAsync(
                 imagePath,
                 new ImagePreprocessingOptions { MaxDimension = 100, FormatConversionRules = [] },
                 TestContext.Current.CancellationToken
             );
 
+            // Nothing was preprocessed, so the original is kept and its path is reported back.
+            Assert.Equal(imagePath, result);
             Assert.Equal(
                 original,
                 await File.ReadAllBytesAsync(imagePath, TestContext.Current.CancellationToken)

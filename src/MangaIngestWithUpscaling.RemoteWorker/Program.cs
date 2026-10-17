@@ -3,7 +3,7 @@ using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.RemoteWorker.Services;
 using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.Python;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -14,6 +14,17 @@ using Velopack.Sources;
 
 // Configure the HTTP client factory to use HTTP/2 for unencrypted connections
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+// The calibration benchmark runs in a child process of this same executable (see
+// DeviceMemoryBenchmarkProcessRunner), so that the device memory its sessions leave behind dies with
+// that process instead of being resident while the first page is planned. Handled before the host is
+// built: the child pays neither the web server nor the database.
+if (DeviceMemoryBenchmarkHost.IsCommand(args))
+{
+    // Environment.Exit rather than returning the code: a top-level program cannot return from one
+    // branch and run a host in another. Nothing below has run yet, so there is nothing to unwind.
+    Environment.Exit(await DeviceMemoryBenchmarkHost.RunAsync(args));
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -121,20 +132,6 @@ builder.Services.RegisterRemoteWorkerServices();
 
 var app = builder.Build();
 
-// Warn users who are running a deprecated backend-specific image variant
-if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
-{
-    var deprecationLogger = app.Services.GetRequiredService<ILogger<Program>>();
-    deprecationLogger.LogWarning(
-        "DEPRECATION WARNING: You are using a backend-specific Docker image variant. "
-            + "These images are deprecated and will be removed in a future release. "
-            + "Please switch to the standard image (ghcr.io/lolle2000la/manga-ingest-with-upscaling-remote-worker:latest-cuda) "
-            + "and configure your GPU backend by setting the Ingest_Upscaler__PreferredGpuBackend "
-            + "environment variable (e.g. CUDA, CUDA_12_8, ROCm, ROCm_GFX120X, XPU). "
-            + "See docs/GPU_BACKEND_CONFIGURATION.md for full migration details."
-    );
-}
-
 // Uncomment if the remote worker should at some point expose an API for configuration or status.
 // // Configure the HTTP request pipeline.
 // app.MapGet("/",
@@ -146,6 +143,27 @@ using (var scope = app.Services.CreateScope())
     var client =
         scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    // Resolve the upscaler configuration before the connection retry loop. `ValidateOnStart` only runs
+    // inside Host.StartAsync (app.Run() below), which this code never reaches until the loop finishes,
+    // so an invalid size string (e.g. "12 Gigabytes") would otherwise be masked by an unbounded
+    // reconnect loop against an unreachable server. Reading `.Value` runs the registered
+    // IValidateOptions<UpscalerConfig> now, and a failure throws OptionsValidationException here.
+    _ = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>().Value;
+
+    // The key is sent on every call, so without TLS it travels in cleartext on the wire. Worth saying
+    // out loud at startup rather than leaving to be discovered: an http:// ApiUrl is a deliberate
+    // choice for a trusted LAN and a mistake everywhere else.
+    if (
+        Uri.TryCreate(apiUrl, UriKind.Absolute, out Uri? apiUri)
+        && apiUri.Scheme != Uri.UriSchemeHttps
+    )
+    {
+        logger.LogWarning(
+            "WorkerConfig:ApiUrl is {ApiUrl}, which is not https. The API key is sent with every request and will travel in cleartext on this connection.",
+            apiUrl
+        );
+    }
 
     CheckConnectionResponse? connection = null;
     while (connection is null)
@@ -161,9 +179,21 @@ using (var scope = app.Services.CreateScope())
                 deadline: DateTime.UtcNow.AddSeconds(5)
             );
         }
-        catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition)
+        catch (RpcException ex)
+            when (ex.StatusCode
+                    is StatusCode.FailedPrecondition
+                        or StatusCode.Unauthenticated
+                        or StatusCode.PermissionDenied
+                        or StatusCode.Unimplemented
+                        or StatusCode.InvalidArgument
+            )
         {
-            // The server rejected our version outright; retrying cannot help.
+            // The server rejected this worker outright: a version or protocol it does not support
+            // (FailedPrecondition, or Unimplemented when the server is too old to have the RPC at
+            // all), an API key it does not accept, or a request it considers malformed
+            // (InvalidArgument). All are deterministic rejections. Retrying cannot help, and
+            // retrying forever would leave the worker in this loop with /health never served — a
+            // wrong key, or a server from before the protocol handshake, would look like a hang.
             logger.LogError("The server rejected this worker: {Detail}", ex.Status.Detail);
             throw;
         }
@@ -210,32 +240,6 @@ using (var scope = app.Services.CreateScope())
     }
 
     logger.LogDebug("Connection test response: {Response}", connection);
-
-    var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
-    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
-    if (!pythonService.IsPythonInstalled())
-    {
-        logger.LogError(
-            "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH."
-        );
-    }
-    else
-    {
-        logger.LogDebug("Python is installed on the system.");
-
-        Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
-
-        PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
-            upscalerConfig.Value.PythonEnvironmentDirectory,
-            upscalerConfig.Value.PreferredGpuBackend,
-            upscalerConfig.Value.ForceAcceptExistingEnvironment
-        );
-        PythonService.Environment = environment;
-
-        logger.LogDebug(
-            $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
-        );
-    }
 
     var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
     await upscaler.DownloadModelsIfNecessary(CancellationToken.None);

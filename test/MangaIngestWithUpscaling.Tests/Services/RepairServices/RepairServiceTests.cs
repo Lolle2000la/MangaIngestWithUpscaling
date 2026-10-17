@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Services.RepairServices;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -58,6 +59,38 @@ public class RepairServiceTests
         // Act & Assert
         var exception = Record.Exception(() => context.Dispose());
         Assert.Null(exception);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void PrepareRepairContext_RestrictsTheWorkDirectoryToTheCurrentUser()
+    {
+        // The repair work directory holds the chapter's private page bytes; it must not be left
+        // world-readable by the process umask.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var service = new RepairService();
+        using RepairContext context = service.PrepareRepairContext(
+            new PageDifferenceResult([], []),
+            originalPath: Path.Combine(
+                Path.GetTempPath(),
+                $"repair-missing-{Guid.NewGuid():N}.cbz"
+            ),
+            upscaledPath: Path.Combine(
+                Path.GetTempPath(),
+                $"repair-missing-{Guid.NewGuid():N}.cbz"
+            ),
+            Substitute.For<ILogger>()
+        );
+
+        Assert.True(Directory.Exists(context.WorkDirectory));
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+            File.GetUnixFileMode(context.WorkDirectory)
+        );
     }
 
     [Fact]

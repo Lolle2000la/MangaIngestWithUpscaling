@@ -110,7 +110,7 @@ dotnet publish tools/MangaIngestWithUpscaling.DbMigrator -c Release -r linux-x64
   --include-logs
 ```
 
-**From inside the application image (standard and all variant images):**
+**From inside the application image (the standard and CUDA images):**
 
 ```bash
 docker compose --profile postgres run --rm --entrypoint dotnet mangaingestwithupscaling \
@@ -123,8 +123,8 @@ docker compose --profile postgres run --rm --entrypoint dotnet mangaingestwithup
 ```
 
 `--entrypoint dotnet` overrides the image's application entrypoint. The tool ships in the standard
-image and every variant image (they are all built `FROM` it) and is version-matched to the app that
-produced them, so no separate download or SDK is needed. Stop the application first (see
+(`:latest`) and CUDA (`:latest-cuda`) images — each publishes it beside the app — and is built from
+the same source as the app, so no separate download or SDK is needed. Stop the application first (see
 [Stopping the application](#1-stop-the-application)); `docker compose run` starts a one-off container
 that mounts the same `/data` volume, so the SQLite files are read in place. The `--profile postgres`
 above is only needed for the bundled Compose server; drop it when the target is an external

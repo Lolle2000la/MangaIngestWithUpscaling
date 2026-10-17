@@ -407,9 +407,13 @@ public class SplitProcessingServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task ProcessDetectionResultsAsync_SetsStatusToFailed_WhenOneResultErrorsAndOtherHasNoSplits()
+    public async Task ProcessDetectionResultsAsync_WhenOneResultErrorsAndOthersHaveNoSplits_IsNotATerminalFailure()
     {
-        // Arrange
+        // One page cannot be detected and every other page legitimately has no page break — the common
+        // shape of a healthy chapter with one unreadable page. It must not be terminal: SetFailedAsync
+        // is reserved for a total detection failure, and DetectSplitCandidatesTask.RetryFor is 1, so the
+        // old condition (fail whenever there were failures and no splits) abandoned the chapter on the
+        // next attempt because of an unrelated page's error.
         var library = new Library
         {
             Name = "Test Library",
@@ -438,26 +442,31 @@ public class SplitProcessingServiceTests : IAsyncDisposable
                 OriginalHeight = 400,
                 OriginalWidth = 800,
             },
-            new() { ImagePath = "page2.png", Error = "Python process crashed" },
+            new() { ImagePath = "page2.png", Error = "detection process crashed" },
         };
 
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _service.ProcessDetectionResultsAsync(
-                chapter.Id,
-                results,
-                1,
-                TestContext.Current.CancellationToken
-            )
+        // Act
+        await _service.ProcessDetectionResultsAsync(
+            chapter.Id,
+            results,
+            1,
+            TestContext.Current.CancellationToken
         );
 
+        // Assert
         var state = await _dbContext.ChapterSplitProcessingStates.FirstAsync(
             s => s.ChapterId == chapter.Id,
             TestContext.Current.CancellationToken
         );
-        Assert.Equal(SplitProcessingStatus.Failed, state.Status);
+        Assert.Equal(SplitProcessingStatus.NoSplitsFound, state.Status);
 
-        // Ensure UpscaleTask was NOT enqueued
+        // Neither the errored page nor the split-free page is saved as a finding.
+        var findings = await _dbContext
+            .StripSplitFindings.Where(f => f.ChapterId == chapter.Id)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Empty(findings);
+
+        // No UpscalerProfile is configured, so proceeding with upscaling enqueues nothing.
         await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
     }
 

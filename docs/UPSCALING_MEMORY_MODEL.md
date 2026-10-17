@@ -1,0 +1,808 @@
+# Upscaling Memory Model & Tile Size Derivation
+
+This document explains how the upscaler decides how large a tile it may run, and where the
+numbers come from. It exists so the tile split is a *derived* quantity instead of an arbitrary
+constant, and so the derivation can be re-checked when the model set changes.
+
+Everything here was measured on the hardware this repository develops against:
+
+| | |
+|---|---|
+| CPU | 32 cores |
+| RAM | 64 GB |
+| GPU | AMD Radeon RX 9070 XT (Navi 48, gfx1201) |
+| VRAM | 16 GB (17095983104 B) |
+| GTT | 32 GB (33664528384 B) |
+| Execution provider | ONNX Runtime 1.29 + WebGPU EP (Dawn/Vulkan, RADV) |
+| Models | fp16 ONNX exports (the `*_fp16` / `*_bf16` files all have `tensor(float16)` I/O) |
+
+Note that the *fp32* ships only as the `..._ONNX.zip` variants, while the local install here holds
+the fp16 set; the fp32 path is still supported by the formula (it just doubles the element size).
+
+---
+
+## 1. What actually costs memory
+
+For one inference of a single tile, device memory consists of three parts:
+
+```
+peak(model, tile) = W                  model weights (initializers)
+                  + A(n)              activation working set of one tile with n pixels
+                  + C                 session/arena reservation of the execution provider
+```
+
+`W` and `C` do not depend on the tile size. `A` does, and it is the only term we can trade tile
+size against. Historically the code *estimated* `A` with per-architecture "multipliers" that were
+never validated, then clamped the result to 512/640/1024 px so that a wrong estimate could not
+blow up. The clamp threw away throughput: a 16 GB GPU never got to run a 4x model with tiles
+larger than 512 px, which is roughly a quarter of the tile area the card can actually host.
+
+### 1.1 The activation working set is quadratic — always
+
+A graph-level liveness sweep over each shipped model (below) shows that the peak of one inference
+is always reached at **output resolution**: in the ESRGAN-family models it is the upsampler
+activations (64 channels at `scale²·n` pixels), in the transformer models (DAT2/HAT/FDAT) it is the
+attention maps and the residual stream at output resolution. Because every one of those tensors
+scales with `n · scale²`, the whole set does too:
+
+```
+A(n, scale) = C_arch · scale² · n · elementSize
+```
+
+There is no term that only scales with `n`, no cliff at some magic tile size, and no plat —
+so the price of a tile is a pure quadratic, and the largest tile that fits a budget is just the
+square root of the budget. That is what makes removing the clamp safe: the estimate is not
+"roughly right up to 512 px and wrong after that", it is right at every size.
+
+`C_arch` is a **live-channel count at output resolution**. The table in §3 gives the measured
+value per architecture, which already folds in the execution-model overhead of the WebGPU EP
+described next.
+
+### 1.2 The execution model adds a constant multiple
+
+The analytic working set is a lower bound. ORT's WebGPU EP runs the graph with extra buffers that
+a pure dataflow sweep does not model:
+
+* the exports contain `Cast` to fp32 around `Resize`, so the upsampler holds **two** copies of the
+  same large tensor (fp16 + fp32);
+* ORT re-packs activations to NCHWc layout (`InsertedPrecisionFreeCast` kernels), which allocates
+  a second buffer per repack;
+* the owners of those buffers do not release them promptly: the ONNX Runtime arenas keep their
+  high-water mark, and on the CUDA provider the BFC arena's default extension strategy doubles each
+  allocation. (`arena_extend_strategy` is set to `kSameAsRequested` on the CUDA provider; the
+  session-level equivalent that used to be set here did nothing, because `AddSessionConfigEntry` does
+  not feed provider options. The shrinkage key is a `RunOptions` key and is only passed where a
+  `RunOptions` already exists — the detector — while the upscaler frees the whole session at the
+  chapter boundary and on a tile-shape change.)
+
+Measured against the analytic sweep, the observed footprint is a stable multiple:
+
+| architecture | analytic `C_arch` (live ch) | measured fp16 | measured fp32 |
+|---|---|---|---|
+| SPAN | 96 | 315 | 158 |
+| ESRGAN | 128 | 598 | 463 |
+| FDAT_M | 90 | 462 | 590 |
+| DAT2 | 203 | 1060 | 1167 |
+| FDAT_XL | 135 | 660 | 882 |
+
+The ratio is constant over three orders of magnitude of tile size, so instead of modelling each
+source separately the code stores the **measured** `C_arch` (§3) and documents the analytic
+sweep as the derivation behind it. There are two columns because the fp16 and fp32 exports of one
+architecture are not related by the element size alone (see §3).
+
+### 1.3 Session reservation `C`
+
+A freshly created session reserves ~380 MB of VRAM on this card before any inference runs (ORT
+WebGPU EP arenas, Dawn/Vulkan driver-side allocations and pipeline caches). It is subtracted from
+the budget once, as `OnnxTiler.SessionReservationBytes` (384 MiB).
+
+### 1.4 One session at a time
+
+`OnnxSessionFactory` caches exactly one model (`MaxCachedSessions = 1`), because a second resident
+model doubles `C` for no gain while consecutive chapters are the common case. The page-break
+detector shares the same factory, so on a worker that runs detection and upscaling at the same time
+the two evict each other's model: every switch pays a reload. That is a throughput cost, not a
+correctness one — `EnterInferenceScope` takes a **read** lock, so the two do run concurrently rather
+than being serialised, and the eviction is made safe by retiring the session and disposing it only
+once every scope has drained (`OnnxSessionFactory.RetireLocked` / `DrainRetired`) — and it is the
+deliberate price of keeping `C` to a single model.
+
+The detector infers one window at a time, sized to the same budget tile sizing uses: the whole page in
+a single pass when it fits, otherwise the largest window that does (a window's context rows are
+re-inferred, so windowing costs time). On the CPU the bounded default window (2048 rows) applies
+instead — a VRAM-shaped budget says nothing about the host RAM the pass lives in there. Its own
+footprint is therefore bounded independently of the page
+height — a whole-page pass would need ~1.5 GiB at 4000 resized rows and ~5.6 GiB at 15000. The window's
+context margin is what makes it exact: it covers the model's 1431-row receptive field (the dilated
+residual stack reaches ±1023 — ten 3x3 blocks with dilations 1, 2, 4, … 512 — the smoothing convolution
+after the sigmoid ±8, and the peak test's MaxPool ±400 for the calibrated `peak_distance` of 800, so
+1023 + 8 + 400 = 1431; an earlier revision of the source comment and of this figure said 1423, and
+both now derive the same 1431 — the 1536-row margin covers the field either way), so the result is
+bit-identical to a whole-page pass at any window size (see the detector section of
+[the migration notes](UPGRADE_NOTES_ONNX_MIGRATION.md#splits-and-detection)).
+
+The chapter and session-cache boundaries also run deliberate full `GC.Collect()` calls
+(`OnnxUpscaleEngine`, `MangaJaNaiWorkerClient.ReleaseGpuCacheAsync`, the calibrator). These are
+stop-the-world collections — a real cost, paid once per chapter/boundary rather than per page — and
+they are deliberate: the memory they free is native (session handles, provider buffer caches) that the
+managed GC does not bound on its own, so the next chapter's budget is not planned against memory this
+one still holds. Without them, freed-but-uncollected sessions kept the measured free VRAM lower than
+the card actually had available.
+
+---
+
+## 2. How the split is derived
+
+A tile *size* is only ever a way of selecting a **grid**: `ceil(width / n)` columns and
+`ceil(height / n)` rows, each then shrinking back to `ceil(width / columns)`. The budget is therefore
+spent on the grid itself, not on a square tile side.
+
+```csharp
+long weights = EstimateModelBytes(modelNameOrPath, modelSizeBytes);
+double bpp   = C_arch · scale² · (isFp16 ? 2 : 4);      // bytes per input pixel
+long budget  = memoryBudgetBytes − sessionReservation;   // the session holds this either way
+
+// the whole page in one inference, only with headroom
+if (weights + bpp · paddedTilePixels(1x1) <= 0.9 · budget) return 1x1;
+
+// otherwise: every grid whose single tile fits the budget ...
+// floor, not ceil, so the last column cannot shrink a tile below the quality floor (see Notes)
+for (columns = 1 .. floor(w / MinimumTileSize))
+for (rows    = 1 .. floor(h / MinimumTileSize))
+{
+    tile = (ceil(w / columns), ceil(h / rows));
+    if (weights + bpp · paddedTilePixels(tile) > budget) continue;
+
+    context = min(min(tile.width, tile.height), QualityTilePixels);  // 512 px = full quality
+    work    = columns · rows · paddedTilePixels(tile);                // overlap + alignment included
+
+    // most context first, then the cheapest grid that delivers it
+    if (context > bestContext || (context == bestContext && work < bestWork))
+        best = (columns, rows);
+}
+return best ?? grid at MinimumTileSize;                    // quality floor when nothing fits
+```
+
+Notes:
+
+* **One tile runs at a time**, so a grid is affordable exactly when a single tile of it is. The whole
+  page as one inference is only planned when its footprint stays below
+  `SinglePassSafetyFraction = 0.9` of the budget, because a single-pass overflow cannot be recovered
+  without restarting the page. The session reservation `C` is subtracted from the budget first, so
+  neither decision can plan past the memory a live session already holds.
+* **The objective is context first, then throughput.** The models need roughly
+  `QualityTilePixels = 512` px on both sides to see their full receptive field; below that a split
+  loses context on screentones, and above it a larger tile has nothing left to look at. The planner
+  therefore gives the smaller side all the context the budget allows, capped at 512, and among the
+  grids that tie on that context takes the one with the fewest total padded pixels. That is what
+  makes the search pick 2x2 (563x800 tiles) at 12 GB and 1x3 (1125x534 tiles) at 13.4 GB and above on
+  a 1125x1600 4x page: both reach the 512 px context target, and 1x3 only becomes affordable at the
+  larger budget. The §5 sweep below works it out row by row.
+* **No upper cap.** On this card (16 GB, ~2 GB used by the desktop, so a ~13.4 GB Vulkan budget) a 4x
+  model plans 1125x534 tiles in a 1x3 grid and a 2x model runs the whole 1125x1600 page in a single
+  pass. The old `maxCap = { ≥4 => 512, 3 => 640, _ => 1024 }` is gone.
+* **`MinimumTileSize = 256`** remains the quality floor (receptive field on screentones), and the grid
+  never gets finer than it. When even that grid does not fit the budget, the engine's existing
+  `OnnxTiler.IsMemoryException` path halves it further — down to **`EmergencyTileFloor = 128`**, and no
+  further. Below that a tile is not a cheaper version of the same inference but a different, much
+  worse one, so reaching the floor fails the page (as a memory failure, which the worker requeues)
+  rather than upscaling it in postage stamps. The floor is judged on the tile the halving would
+  actually produce, not on the size asked of it: `TileSplit.For` shrinks tiles to cover the page
+  exactly, so halving a 188 px grid asks for 94 px and stops one step earlier.
+* Tiles are inferred at **one uniform shape per page** (a multiple of 64), which keeps the driver from
+  re-allocating per tile. It is derived from the grid the page actually has, *not* from the budget's
+  tile side: an 800 px wide page inferred as a 1600 px tile computes every tile at twice the pixels
+  the page contains, for identical output.
+* **The enumeration bound is a floor, not a ceiling.** The pseudo-code uses
+  `floor(w / MinimumTileSize)`, matching the implementation: `ceil(w / MinimumTileSize)` columns still
+  allowed the last column to shrink a tile below the floor (1125 px → 5 columns → 225 px), which is
+  exactly the quality `MinimumTileSize` exists to protect. Floor division bounds the column count so
+  `ceil(w / columns) >= MinimumTileSize`, while `columns = 1` stays reachable for the near-single-pass
+  case.
+
+### 2.1 What the padding actually costs
+
+`UniformTileTensorShape` is what a page is *really* inferred at, per tile:
+
+| page | bound | grid | tensor per tile | vs. the page |
+|---|---|---|---|---|
+| 1125x1600 | 1125 | 1x1 | 1216x1664 = 2.02 MP | +12% |
+| 1125x1600 | 800 | 2x2 | 640x832 = 0.53 MP x4 | +18% |
+| 1125x1600 | 704 | 2x3 | 640x576 = 0.37 MP x6 | +23% |
+| 800x5685 | 1536 | 1x4 | 832x1472 = 1.22 MP x4 | +8% |
+| 8000x200 | 286 | 28x1 | 320x256 = 0.08 MP x28 | +40% |
+
+The first two rows are the single-pass and 2x2 case of a normal page; the third is what a square-derived
+704 px tile side used to buy. The 8000x200 row is a stitched webtoon strip, where the 16 px overlap on
+both axes is a large fraction of a 200 px tall tile — unavoidable, and irrelevant because such strips
+are not the common case.
+
+### 2.2 What the budget counts, and when it is read
+
+`memoryBudgetBytes` above is the device's *automatic* budget, and three things about how it is derived
+matter for the grid the planner can reach:
+
+* **It is the memory that is not ours.** VK_EXT_memory_budget's `heapUsage` is not the card's usage on
+  every driver: RADV reports only this process's own allocations — measured on an RX 9070 XT at 64 MB
+  against a sysfs 2677 MB with nothing but a desktop on the card, and 11695 against 14301 mid-chapter,
+  the difference being exactly the desktop's share. `heapBudget` *is* device-wide, so `total − heapBudget`
+  is what the other tenants hold (the same measurement: 16304 − 13690 = 2614), and that is the figure the
+  budget path uses. It is also the portable one: the driver reports it on Windows too, where there is no
+  sysfs. Only a driver that reports no budget at all falls back to a system-wide source (Linux DRM sysfs
+  or nvidia-smi), where the caller's own footprint is discounted out of the figure instead. On NVIDIA
+  that same difference already contains our own footprint — the driver derives its budget from its usage
+  figure, `total − heapBudget` equalling `heapUsage` to the byte — so adding the caller's footprint back
+  there counts our own session as a competitor: measured on an RTX 5070 Ti, the budget fell from 11125 to
+  5113 MB and the planned tile from 563x800 to 375x400, below the quality floor, as one session grew.
+  `OnnxTiler.VulkanUsageIsDeviceWide` detects that and leaves the addition out.
+* **The caller's own footprint is measured, not only predicted.** The arena's real contribution to the
+  used figure is the growth across a page — `vramAfter − vramBefore` from the driver's *per-process*
+  figure where it exists (`OnnxTiler.TryGetProcessMemoryBytes`, §4.1), and from the system-wide reading
+  otherwise, because a system-wide delta includes whatever another tenant did while the page ran — and it
+  is kept at its largest: a page that reuses the session adds nothing, so reassigning it would drop the
+  discount back to the prediction and the budget would wobble. With the driver-derived figure above the
+  two terms cancel to "the other tenants", so the budget is the same on the first page as on the tenth —
+  which is what keeps the tile shape from churning. (On NVIDIA the cancellation is one term short, since
+  the difference already holds our footprint; there the detection above leaves it out and the same
+  stability follows — measured over one session growing to 6 GB, the budget stayed at 10625 MB and the
+  plan at 2x2 of 563x800, where before the detection it fell to 5113 MB and 375x400.) Measured over four
+  consecutive pages of a 1125x1600 page at fp16 4x: 11086, 11148, 11104, 11125 MB — a 0.3% wobble — each
+  planning 2x2 of 563x800 (512 px of context) and reusing the session. Before, the same four pages went
+  7918 → 10964 → 7855 MB, changed tile shape on each, and spilled 6.5 GB into GTT.
+* **It is read after the first-use benchmark and the model probe, not before them.** Both allocate device
+  memory of their own — the benchmark runs two inferences on their own sessions (§6.1) and the probe
+  creates a third — and ONNX Runtime's arenas keep their high-water mark, so that memory is resident while
+  the page runs. Reading the budget before them plans the page as if it were free: the pre-benchmark
+  figure was 13.4 GB and planned 2x2 of 563x800 (predicted 10.5 GB), and the page peaked at 15.2 GB of
+  the 16.3 GB card with 2.4 GB spilled into GTT.
+
+Two consequences worth writing down rather than hiding:
+
+* The benchmark's and the probe's footprint is **not reclaimable**. Measured four ways on an RX 9070 XT:
+  disposing the session and running `GC.Collect()`/`WaitForPendingFinalizers()` returns nothing, the
+  ORT `memory.enable_memory_arena_shrinkage` key returns nothing (it governs ORT's CPU/CUDA arena, and the
+  WebGPU EP allocates through Dawn), and the EP's own `lazyRelease` and `disabled` buffer-cache modes
+  return nothing while raising the peak 3–4x — so the `simple` mode the factory sets is the best of the
+  four, and the memory is only released when the process exits. The *probe's* verdict is therefore
+  remembered per device and model (`model-probe-verdicts.json`), so only the first process on a device
+  pays it. An operator who wants the remaining gigabytes back pins `MemoryBudgetBytes`, accepting the
+  spill risk that comes with it.
+* A page that *does* spill leaves its arena behind and the next page allocates a second one on top, so the
+  card stays nearly full for the rest of the process. Preventing the spill is what the points above are
+  for; once it has happened, no budget arithmetic recovers the memory.
+* What the process holds *besides* a page's arena is one-time, and it is now measured rather than
+  guessed. Measured on an RX 9070 XT with the fp16 ESRGAN, 1125x1600 page:
+
+  | phase | card used | delta |
+  |---|---|---|
+  | page start, profile and probe verdict cached (steady state) | 2977 MB | — |
+  | after the calibration (cached: nothing runs) | 2977 MB | 0 |
+  | after the session fetch + metadata read | 3017 MB | 40 MB |
+  | after the page | 12668 MB | 9651 MB (the arena) |
+
+  A *forced* recalibration of the same model leaves **3012 MB** resident in whichever process measured it
+  (the two benchmark sessions of §6.1, whose buffers the provider never returns) and a fresh probe leaves
+  **1239 MB** (§6.1's 256 px tile). The probe cannot move — its session is the one the page runs on — but
+  the benchmark does not have to be paid in the host: it runs in a **child process** of the host's own
+  executable (§6.4), so its 3012 MB dies with that process. Measured on an RX 9070 XT, the same forced
+  recalibration followed by one 1125x1600 page: **15636 MB** peak of the 16304 MB card with the benchmark
+  in the host (96%, the 15 % reserve spent on it) against **12716 MB** with the child (78%, reserve
+  intact). Both are remembered afterwards — the factors in the profile file, the probe's verdict per
+  device and model in `model-probe-verdicts.json` — so only the first run of a model on a device pays
+  either, and the budget's own-footprint discount covers the probe from the second page on.
+
+  This is also the correction to an earlier reading of these numbers. The "12683 MB against a predicted
+  10830 MB, so the card runs at ~95%" that stood here was a measurement of the *whole process's growth*
+  over a page, taken while the calibration was running: 3085 MB desktop + 3012 MB calibration + 9604 MB
+  arena. The arena itself was 9604 MB against an estimate of 10830 MB — with the device-wide factors the
+  estimate was 11 % *above* the measurement, and with the model's own entry it is 3.4 % *below* (9327
+  against 9651, §6.6). Either way it is not the estimate that put the card at 95 %: that was the
+  calibration's 3012 MB. In steady state the page peaks at 12668 MB of the 16304 MB card (78 %), touches
+  no GTT, and leaves the 15 % reserve intact.
+
+---
+
+## 3. Coefficients (`OnnxTiler.GetOutputLiveChannels`)
+
+Two coefficients per architecture, because the fp16 and fp32 exports of one architecture are not
+related by the element size alone: the fp16 graphs cast to fp32 around the upsampler, so their peak
+is already partly fp32-sized, while an fp32 graph keeps fp32 tensors throughout.
+
+| `ModelArchitecture` | `C_arch` fp16 | `C_arch` fp32 | representative models measured |
+|---|---|---|---|
+| `Span` | **315** | **158** | `2x_IllustrationJaNai_V3{detail,denoise}_SPAN_S_*` |
+| `Esrgan` | **598** | **463** | `2x/4x_MangaJaNai_*_V1_ESRGAN_*`, `*_IllustrationJaNai_V1_ESRGAN_*` |
+| `FdatM` | **462** | **590** | `*_V2standard_FDAT_M_*`, `*_V3{detail,denoise}_FDAT_M_*` |
+| `FdatXl` | **660** | **882** | `*_FDAT_XL_*` |
+| `Dat2` | **1060** | **1167** | `*_DAT2_*` |
+| `HatL` | **1900** | **2055** | `4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16` / `_fp32` |
+| unknown | `310 + 620·sqrt(MB/100)` | same | fallback: parameter-count scaling |
+
+Each is the value at which the predicted footprint matches the measured VRAM peak of a real
+single-tile inference, fitted through the origin over 3-6 tile sizes per model.
+
+The **fp32 column is the one that runs on WebGPU**: the fp16/bf16 transformer exports need bf16 and
+return NaN there, so the engine falls back to their fp32 export (candidate selection orders the fp32
+copy last and the per-tile NaN guard skips the fp16 one). The fp16 column for FDAT_XL, DAT2 and HAT_L
+is the original measurement — those exports cannot be re-measured on this EP, for the same reason
+they are skipped. (The fp16 FDAT_M only produces valid output up to 128 px, which is exactly why the
+device probe runs at 256 px.)
+
+A single fp16-fitted column — the previous table, 310/660/460/660/1060/1900 — under-estimated every
+transformer export that actually runs on WebGPU (FDAT_M by 28%, FDAT_XL by 34%) and over-estimated
+the fp16 conv nets. That is what let a 13.1 GB budget plan a page that reached 16.2 GB of VRAM.
+
+Measured bytes per input pixel, and the coefficient that follows from the fit:
+
+| model | measured B/px | `C_arch` from the fit |
+|---|---|---|
+| `2x_..._SPAN_S_40k_fp16` | 2 524 | 315 |
+| `2x_..._SPAN_S_40k_fp32` | 2 536 | 158 |
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k` (fp16) | 19 140 | 598 |
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k_fp32` | 29 604 | 463 |
+| `4x_..._FDAT_M_40k_fp16` (64 and 128 px only) | 14 788 | 462 |
+| `4x_..._FDAT_M_40k_fp32` | 37 751 | 590 |
+| `4x_..._FDAT_XL_27k_fp32` | 56 452 | 882 |
+| `4x_..._DAT2_28k_fp32` | 74 709 | 1 167 |
+| `4x_..._HAT_L_28k_fp32` | 131 524 | 2 055 |
+
+Predictions sit within a few percent of measurement at every size. The end-to-end table in §4.1 is
+the stronger check for the fp16 conv nets; the fp32 transformers are checked in §6.2.
+
+The unknown-architecture fallback is deliberately elastic: it scales with `sqrt(modelSize)` so a
+model nobody has classified still lands in the right ballpark, and the engine halves the tile on
+allocation failure if it lands low — stopping at `EmergencyTileFloor` (128 px), where the page is
+failed as a memory failure instead of being split further.
+
+---
+
+## 4. Per-model graph analysis
+
+The table below is the full inventory of models the app downloads
+(`MangaJaNaiUpscaler.Fp16ModelPackages` / `Fp32ModelPackages` / `PageBreakDetectorPackage`), with
+the weight size and the activation footprint derived from the graphs.
+
+Methodology for each model:
+
+1. Load the ONNX file, replace the graph input with concrete dims `[1, 3, T, T]`.
+2. Run ONNX shape inference, resolve every value's element count (mask/index subgraphs included),
+   then sweep node order with a liveness set: a value is live from its producing node to its last
+   consumer. The peak of that sweep is the analytic working set.
+3. Do the same for `T ∈ {64,128,192,256,384,512}` and check that `peak(T)` tracks `T²`.
+4. Independently, run one real single-tile inference on the GPU, sampling
+   `/sys/class/drm/card1/device/mem_info_vram_used` and `mem_info_gtt_used` at ~1 ms, and take
+   `peakVRAM − sessionVRAM` as the measured footprint.
+
+Only the peak values that matter are shown; the *architecture* is what drives the formula, and
+all 32 shipped models fall into 6 architectures plus the page-break detector (a short-lived session
+that runs on the resolved backend — the CPU by default when no accelerator is present — and is
+inferred in budget-sized windows rather than tiles).
+
+| model | arch | weights | `4x` Δ VRAM @256 | `2x` Δ VRAM @256 | live set at peak |
+|---|---|---|---|---|---|
+| `4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16` | HAT | 163.9 MB | 3.80 GB | – | attention maps + residual stream |
+| `4x_IllustrationJaNai_V1_DAT2_190k` | DAT2 | 31.9 MB | 2.11 GB | – | QKᵀ map (201 MB @256) + stream |
+| `4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16` | FDAT_XL | 49.1 MB | 1.28 GB | – | `upsampler.1` fp32 cast (94 MB @256) |
+| `4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16` | FDAT_M | 9.1 MB | 0.89 GB | – | `upsampler.1` fp32 cast (63 MB @256) |
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k` | ESRGAN | 33.9 MB | 1.19 GB | – | `model.5/Resize` fp16+fp32 (134 MB each) |
+| `4x_MangaJaNai_1200p…2048p_V1_ESRGAN_*` | ESRGAN | 33.9 MB | same | – | identical graphs, differing only in weights |
+| `2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16` | FDAT_M | 9.2 MB | – | 0.24 GB | `upsampler.1` fp32 cast |
+| `2x_MangaJaNai_*_V1_ESRGAN_*` | ESRGAN | 33.9 MB | – | 0.34 GB | `model.5/Resize` fp16+fp32 |
+| `2x_IllustrationJaNai_V3{detail,denoise}_SPAN_S_*` | SPAN | 0.8 MB | – | 0.16 GB | 96-ch concat at 1× (6.3 MB @256) |
+| `page_break_detector` | – | 2.3 MB | – | – | page-split detector, small; inferred in budget-sized windows, not tiles |
+
+The per-model codebook (`W`, `C_arch`, `scale`) is what `OnnxUpscaleEngine` feeds into
+`OnnxTiler.PlanTileSplit`. Because all models of an architecture share a graph, the per-model
+differences reduce to the weight size, which the formula reads off the file.
+
+### 4.1 Measurement of the real GPU peak vs prediction
+
+`UpscaleProfiler` (`~/mangamem/profiler`) reproduces the engine's exact path —
+`OnnxTiler.UpscaleRgb` with the planned grid — and samples VRAM/GTT around it. 1125×1600 page
+(typical manga page after smart downscale), 12 GB budget, fp16:
+
+```
+model                                           tile  peakVRAM  peakGTT  tiles       ms  verdict
+2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16      0    6905MB    311MB      1      467  single-pass
+2x_MangaJaNai_1600p_V1_ESRGAN_90k                  0   12441MB    311MB      1     1986  single-pass
+2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle     0    9160MB    299MB      1     2886  single-pass
+4x_MangaJaNai_1600p_V1_ESRGAN_70k                704   12855MB    310MB      6    11707  OK
+4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16    832   12971MB    331MB      4    17054  OK
+4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16   704   14064MB    310MB      6    85644  OK
+4x_IllustrationJaNai_V1_DAT2_190k                512   12816MB    296MB     12    52830  OK
+4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16     384   13839MB    279MB     15    69925  OK
+```
+
+(`peakVRAM` is absolute and includes the ~1.5 GB the desktop already had resident; `peakGTT` is
+what would reveal spill into system memory.)
+
+Three things this shows:
+
+1. **No GTT spill.** GTT stays at its ~300 MB baseline for every model. Before the derivation, a
+   512 px 4x tile already pushed 6.5 GB into GTT on this card.
+2. **2x models now run the whole page in one pass** at a 12 GB budget — previously they were
+   tiled at 1024 px regardless of how much memory was free.
+3. **4x models get tiles well past the old 512 px clamp** — 704–832 px for the conv nets, which
+   is 1.9–2.6× the tile area and a corresponding drop in tile count (6 instead of 9).
+
+FDAT_XL overshoots the 12 GB budget by ~4 % (12.56 GB above baseline, no spill). The estimate is
+otherwise within a few percent; the small residual is the arena high-water mark, which the
+formula does not try to model exactly.
+
+---
+
+### 4.2 Sharing the card with a bounded partner
+
+`CalculateVramBudget` decides between a quasi-exclusive and a desktop budget by looking at how much
+VRAM is already used. Below the threshold it keeps only a 256 MB reserve; above it, the driver
+eviction margin of 15% of total VRAM (1.5–3 GiB) kicks in, because drivers start evicting into GTT
+past 85–90% utilisation.
+
+The driver's own `VK_EXT_memory_budget` figure is *not* that number: RADV reports total-minus-used
+with no eviction headroom of its own (16 304 MB card, 3 190 MB used → 13 113 MB "budget", against a
+calculated 10 668 MB). Using it verbatim therefore spends the card to the point where the driver
+starts evicting: measured on this card a page reached 16.2 GB VRAM and 275 MB of GTT against the
+13.1 GB driver budget, and the fp32 FDAT_M plan that fitted in 3x3 tiles did not in 2x3. The driver
+figure is used verbatim only while the card counts as quasi-exclusive (nothing else using it, or a
+bounded partner below `VramExclusiveThresholdBytes`); otherwise it is capped by the calculated
+budget. At the calculated 10.7 GB both models planned a grid that stayed out of GTT.
+
+**Known limitation: the device index is not cross-checked between Vulkan and the execution provider.**
+`VulkanMemoryProvider` resolves `SelectedDeviceIndex` by counting the non-CPU devices *Vulkan*
+enumerates, while WebGPU, DirectML and CUDA each enumerate in their own order. On a single-GPU host
+the two agree by construction; on a mixed-vendor host (or one with an integrated and a discrete GPU
+from different vendors) the VRAM budget, the FP16 capability answer and the calibration fingerprint
+can therefore be read for a different device than the one inferring. The index is not matched by
+LUID/UUID — pin the device with `PreferredGpuBackend` and confirm the logged device name when this
+matters.
+
+The default threshold is 350 MB — driver plus a display server. That is pessimistic for a card that
+*is* shared, but with a partner whose footprint is known and bounded (a video transcoder holding
+700 MB, a second inference server). `VramExclusiveThresholdBytes` moves the boundary:
+
+| setting | 12 GB card, 700 MB used | budget |
+|---|---|---|
+| default (350 MB) | desktop branch | 9.5 GB |
+| `VramExclusiveThresholdBytes = 1073741824` (1 GiB) | exclusive branch | 11.1 GB |
+
+That is ~1.6 GB of VRAM handed back to tile sizing. The comparison is inclusive — usage *equal* to
+the threshold still counts as exclusive — and an explicit `VramSafetyMarginBytes` or
+`VramUtilizationFraction` still takes precedence over both branches. A value of 0 means automatic and
+falls back to the default rather than making every card exclusive; a negative fraction is rejected at
+startup.
+
+### 4.3 Human-readable size strings
+
+Every memory setting accepts either a plain byte count or a size string, so a configuration file no
+longer has to spell out `367001600`:
+
+| Setting | Examples |
+|---|---|
+| `MemoryBudgetBytes` | `4GiB`, `12288MiB`, `4294967296`, unset |
+| `VramSafetyMarginBytes` | `512MiB`, `1.5 GiB`, unset |
+| `VramExclusiveThresholdBytes` | `700MiB`, `1 GiB`, `350MiB`, unset |
+| `MaxSpoolBytesPerTask` | `8 GiB`, `2GiB`, `8589934592` |
+
+Decimal suffixes are powers of 1000, binary ones powers of 1024 — `1GB` is 1000000000 and `1GiB` is
+1073741824. The distinction exists precisely because the arithmetic in this document is binary, so
+pasting the wrong unit cannot silently mean a different number. Bare byte counts keep working, so
+existing configuration files do not have to change.
+
+```yaml
+environment:
+  Ingest_Upscaler__MemoryBudgetBytes: "12 GiB"          # fixed budget, no auto-detection
+  Ingest_Upscaler__VramExclusiveThresholdBytes: "1GiB"  # a transcoder owns the first GiB
+  Ingest_Upscaler__VramSafetyMarginBytes: "512MiB"      # instead of the automatic margin
+```
+
+`ByteSize.ToString()` renders values back with binary units, which is what the logs use.
+
+A value that is *present but unparseable* (`4GiBX`, `12 Gigabytes`) aborts startup with
+`OptionsValidationException` naming the setting and the value, because silently falling back to
+"unset" would drop an explicit override — the very thing the setting exists to express:
+
+```
+Unhandled exception. Microsoft.Extensions.Options.OptionsValidationException:
+Upscaler:MemoryBudgetBytes = "12 Gigabytes": expected a byte count or a size such as 4GiB, 700MiB or 1024
+```
+
+Unset values remain valid (they mean "detect automatically") and a fully unconfigured `Upscaler`
+section still starts, which is what the unmodified container deployment does.
+
+## 5. Why this is better than the old caps
+
+Old behaviour, 4x ESRGAN fp16, 1125×1600 page, real weight size:
+
+* the estimate said a 512 px tile needed 2.9 GB, then the cap forced 512 px anyway — so a 16 GB
+  budget produced 12 tiles and the card sat at roughly a fifth of its usable VRAM.
+
+New behaviour (same page, same models, planned grids — RX 9070 XT, WebGPU). 4x ESRGAN fp16,
+1125×1600, so the enumeration bounds are `maxColumns = floor(1125/256) = 4` and
+`maxRows = floor(1600/256) = 6`:
+
+| budget | old tiles | planned grid | tensor per tile |
+|---|---|---|---|
+| 8 GB | 12 x 512 | 2x3 | 640x576 |
+| 12 GB | 12 x 512 | 2x2 | 640x832 |
+| 13.4 GB | 12 x 512 | 1x3 | 1216x576 |
+| 16 GB | 12 x 512 | 1x3 | 1216x576 |
+
+From 12 GB the page is four tiles where the old cap used twelve, and at 13.4 GB and above it is one
+column of three. (An earlier revision of this table listed 5x7 and 4x3 rows. Five columns was never
+reachable — the column count is bounded by `floor(width / MinimumTileSize)`, which is 4 here — so
+those numbers predated that bound, and the rest predate the per-precision coefficients of §3.)
+
+and the 2x models run the whole page in a single pass from a 12 GB budget upwards — the old cap held
+them at 1024 px no matter how much memory was free.
+
+The planner optimises padded work, which is throughput only where per-pixel efficiency is flat in the
+tile size. It is not for every model, which is worth writing down rather than hiding: `FDAT_XL` is
+measurably slower per pixel on larger tiles (18.6 vs 20.5 ns/px on 640x832 vs 640x576, repeated), so
+at 13.4 GB its 2x2 grid is a few percent slower than the 2x3 the old cap produced, even though it does
+less padded work. ESRGAN, DAT2 and HAT_L all get *faster* per pixel as the tile grows, so for them the
+least-work grid is also the fastest. Per-pixel efficiency is a model property the planner does not
+model, and the difference between the two behaviours is a few percent.
+
+---
+
+## 6. Per-model calibration (per device)
+
+The coefficients above are generic. The two numbers that are *not* derivable from a model graph —
+how many times the analytic working set this particular accelerator actually needs, and how much
+memory a live session holds — are measured and cached **per model and per device**.
+
+### 6.1 What gets measured, and why per model
+
+Two inferences of the model itself give two readings:
+
+```
+peak(n) = reservation + scale · analytic · n²
+```
+
+| measurement | gives |
+|---|---|
+| inference at n₁ and n₂ | `scale` — the per-pixel slope, divided by the analytic one |
+| the two points together | `reservation` — the fixed part, with the weights taken out |
+
+The two sizes are derived from the budget, not fixed: the larger one is as big as a third of it allows
+(`ChooseLargeTile`, clamped to 128–640 px), and the smaller is a third of that rounded to the tensor
+alignment, with 96 px as the floor. Both are multiples of 16, so the tensor the model really runs is
+exactly n×n — the overlap of §2.1 is added by the tiling path, not by the benchmark — and the fit's
+per-pixel term is therefore the same quantity the planner multiplies by the padded tile. On an RX 9070
+XT with the fp16 ESRGAN that works out to 128 and 384 px at a ~10.8 GB budget and to 96 and 192 px at a
+much smaller one; the profile's `measuredTiles` records what was actually used.
+
+`scale` is a property of the model *and* the execution provider together, not of the device, so one
+device-wide factor cannot represent it. The table below is the **coefficient refit**, not a device
+measurement: it compares the prediction of the previous single (fp16-fitted) column with the
+per-precision coefficient §3 now stores, on an RX 9070 XT / WebGPU EP:
+
+| model | old fit B/px | new fit B/px | new ÷ old |
+|---|---|---|---|
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k` (fp16) | 21 120 | 19 140 | **0.90** |
+| `4x_MangaJaNai_1600p_V1_ESRGAN_70k_fp32` | 42 240 | 29 320 | **0.69** |
+| `4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32` | 29 440 | 37 700 | **1.28** |
+
+Both columns are fits to the same card, so a per-model calibration on it divides a measurement by a
+coefficient that already *is* that measurement: these ratios are what the refit changed, not what the
+calibration returns. The spread between the extremes is a factor of 1.9. The previous design fitted a
+single device factor (1.02, from the fp16 ESRGAN) and applied it everywhere, which under-estimated the
+fp32 transformer by ~25% — enough to fill a 16 GB card and push the page into GTT — while
+over-estimating the conv nets.
+
+**Each benchmark tile runs on its own session.** The WebGPU EP caches its buffers per tensor shape
+and exposes no way to release them, so measuring two sizes in one session makes the larger reading
+include the smaller one's cached buffers. On this card that inflated the fitted slope from
+19 140 to 21 465 B/px (+12%), and the tile plan with it.
+
+Each benchmark is two inferences plus two session builds (~1 s). It runs the first time a model is
+used on a device and only when the device, execution provider, ONNX Runtime build or calibration
+version changes.
+
+### 6.2 The result on this machine
+
+The refit lands on this card as:
+
+```
+device : AMD Radeon RX 9070 XT (RADV GFX1201) (WebGpu)
+model  : 4x_MangaJaNai_1600p_V1_ESRGAN_70k            refit 0.90x
+model  : 4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32 refit 1.28x
+```
+
+The 0.90x on the fp16 conv net is the refit's effect on the estimate — how far the per-precision
+coefficient moved from the previous single (fp16-fitted) column — not the per-model calibration this
+section measures. The value of the benchmark is on any *other* device, where the same code would
+report e.g. 0.3x on a CUDA card or 2x on an integrated GPU, and tile sizing would follow.
+
+Verified end-to-end through `OnnxUpscaleEngine` (real manga page, 13 GB budget, fp32 FDAT_M): the
+model's own factor planned a 3x3 grid of 448x576-padded tiles and the page stayed out of GTT, where
+the device-wide factor planned 2x3 of 640x576 and reached 16.2 GB VRAM plus 275 MB of GTT.
+
+### 6.3 Where it is stored
+
+`<models directory>/device-memory-profile.json`, one file holding a **map of device fingerprint to
+profile**, and inside each profile a map of model key to measurement:
+
+```json
+{
+  "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3": {
+    "fingerprint": "webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3",
+    "provider": 2,
+    "deviceName": "AMD Radeon RX 9070 XT (RADV GFX1201)",
+    "totalDeviceMemoryBytes": 17095983104,
+    "activationScale": 0.902,
+    "sessionReservationBytes": 126316544,
+    "deviceWideMeasured": true,
+    "models": {
+      "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx|16761523": {
+        "activationScale": 1.28,
+        "sessionReservationBytes": 9437184,
+        "measuredTiles": [192, 576],
+        "measuredPeakBytes": [2100000000, 13100000000],
+        "observedTilePeaks": { "640x864@4": 10074877952 },
+        "calibratedAtUtc": "2026-10-12T01:20:00Z"
+      }
+    }
+  }
+}
+```
+
+A model key is `file name|size`: the fp16 and fp32 exports of one model differ only in size and
+precision, and a re-exported file can keep its name while its graph changes, so the size is what
+stops a stale measurement from being applied to a new file.
+
+Because every profile is keyed by fingerprint, one file can carry several devices: switching the
+GPU, swapping the execution provider, or pointing the models directory at a shared volume used by
+two hosts, keeps every calibration. A fingerprint is
+
+```
+execution provider | device index | device name | total device memory | ONNX Runtime version | calibration version
+webgpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3
+cpu|0|AMD Radeon RX 9070 XT (RADV GFX1201)|17095983104|1.29.0|v3
+```
+
+The provider is **not** probed independently: it comes from `IOnnxSessionFactory.GetEffectiveBackend()`,
+the same method that configures the session, so it honours `PreferredGpuBackend`, `UseCPU` and
+`SelectedDeviceIndex`. A calibration measured on WebGPU is therefore never applied to a CUDA
+session (and vice versa) just because both happen to run on the same card.
+
+### 6.4 Behaviour and fallbacks
+
+* First use of a model on an unseen device + provider → that model's benchmark runs (logged at
+  `Information`), then the cached measurement is used for the rest of the process lifetime. The benchmark
+  itself runs in a **child process** of the host's own executable (`--device-memory-benchmark`), because
+  the two benchmark sessions leave ~3 GB the provider never returns and the only thing that gives it back
+  is the process exiting: measured on an RX 9070 XT, a forced recalibration followed by one page peaked at
+  12716 MB of the 16304 MB card in the child, against 15636 MB when the host measured it itself. The
+  child is spawned through the runner seam (`IDeviceMemoryBenchmarkProcessRunner`) with the host's
+  resolved configuration as an argument, writes to the same store, and the host adopts the measurement
+  from there. The command is the host's own `Environment.ProcessPath`, plus the entry assembly in front
+  of it when that executable is the `dotnet` muxer — which is how the production image starts the app
+  (`ENTRYPOINT ["dotnet", "MangaIngestWithUpscaling.dll"]` in `Dockerfile`), and how any
+  framework-dependent invocation starts it. A host that cannot spawn itself — an unusual deployment, a
+  sandbox — measures in process exactly as it did before, and a child that exits without a usable
+  measurement is not a lost calibration: the in-process path runs instead. A child that never exits is
+  killed after five minutes, so a hang cannot hold a page.
+* A model with no measurement of its own falls back to the device-wide default, and then to the
+  built-in coefficients.
+* `RecalibrateDeviceMemory = true` forces a re-measure on the next upscale.
+* `UseCPU = true` skips calibration entirely (there is no device budget to fill).
+* A scale outside `0.2…12` is discarded and the built-in coefficients are used — that is what a
+  distorted measurement (another process on the device, driver eviction) looks like.
+* If the models directory is read-only or the benchmark throws, nothing breaks: the built-in
+  coefficients apply, which are the WebGPU/AMD values and therefore conservative.
+* A model whose own benchmark cannot run is not retried for every page: the failure is remembered
+  per model for the process.
+
+### 6.5 The per-shape buffer cache (why a chapter is not one long session)
+
+The WebGPU EP caches its buffers per tensor shape and has no API to release them. A page whose
+padded tile shape differs from the previous page's therefore adds a *second* set to the cache
+instead of reusing the first. Measured on an RX 9070 XT with the fp16 ESRGAN at a 13 GB budget:
+
+| session | page | shape | peak VRAM | GTT spill | page time |
+|---|---|---|---|---|---|
+| fresh | 1 | 640x832 | 12.2 GB | 82 MB | 7.0 s |
+| continued | 2 | 640x576 | 15.8 GB | 3.9 GB | 6.8 s |
+| continued | 3 | 448x576 | 16.1 GB | 9.6 GB | 24.8 s |
+| continued | 4+ | 640x832 | 16.1 GB | 9.6 GB (plateau) | 7.0 s |
+
+Five *same-shape* pages in one session stay at 82-89 MB and 7 s each, so the growth is shape churn,
+not "any second page". The engine therefore releases the cached session when the padded shape
+changes; a rebuild costs ~290 ms, which is far cheaper than the 9.6 GB and 25 s a churned session
+pays. Note, though, that the release is a *session* release: on this driver it does not return the
+buffers to the device (§2.2 measured that neither dispose + GC nor the buffer-cache modes give them
+back), so a chapter that changes shape still accumulates one arena per shape for the lifetime of the
+process. Keeping the shape stable — which is what the budget derivation in §2.2 is for — is what
+avoids that; the release only keeps a *continued* session from adding a second set for a shape it is
+about to run anyway. The absolute `gttAfter > 1 GB` trigger it replaces fired on essentially every page (the GTT
+baseline alone is ~1 GB on a desktop), which turned the cache's own reuse into a rebuild per page.
+
+### 6.6 Footprints measured at the operating shape
+
+The calibration of §6.1 fits its slope at two small benchmark tiles — as large as a third of the budget
+allows, 128–640 px — and extrapolates it to the operating tile. That is the right shape of model (the
+working set is quadratic with no cliff), but the extrapolation is an assumption about how the execution
+provider scales from the benchmark size to the operating one, and the provider's fixed per-inference
+overheads weigh relatively more at the small end. The estimate is therefore checked against a measurement
+as soon as one exists.
+
+Every page the engine builds a fresh tensor shape for measures what that shape cost: the growth of the
+device's usage between the reading taken just before the page's session was acquired and the reading
+taken after the page. That figure — the model weights if the page uploaded them, the provider's buffers
+for the shape, and its arena — is stored per **(device fingerprint, model key, padded shape × scale)** in
+`observedTilePeaks` inside the model's own profile entry, kept at its largest, and the next plan for that
+shape uses it instead of the analytic estimate. A page that reused a shape measures nothing and records
+nothing (it allocated nothing; whatever the device shows it gaining belongs to something else), and a page
+that descended through halved shapes is not fresh either, because the halving path registers the shape it
+retries at.
+
+Measured on an RX 9070 XT / WebGPU EP, 1125×1600 page, fp16 4× ESRGAN, 2×2 of 563×800 (padded 640×832),
+with the model's own profile entry in place:
+
+| figure | value |
+|---|---|
+| analytic estimate (`PredictTilePeakBytes`) | 9327 MB |
+| page growth measured from the pre-session reading | 9651 MB |
+
+The estimate was 3.4 % *below* the measurement there — the opposite of the conservative direction, and
+exactly the case the margin was absorbing: the plan fits the budget on paper (9327 MB of 10946 MB) and
+the page really costs 9651 MB of it. With the device-wide factors instead of the model's own entry the
+same page estimated 10830 MB, 11 % above the 9604 MB it measured. The direction therefore depends on
+which factors the profile supplies, which is the point: after the first page at a shape, the estimate is
+the measurement and neither direction has to be guessed.
+
+Two guards keep a wrong number out. The stored value is held to 0.25×…4× the analytic estimate for the
+same shape (the same idea as the activation factor's accepted range in §6.4); outside it, the value is not
+a measurement of this model on this device and the estimate is used instead. And a re-measurement of the
+model's coefficients (a forced recalibration, a `CalibrationVersion` bump) carries the observed shapes
+over, so re-measuring a model does not throw away what its real operating shapes cost.
+
+The figure is this process's own growth across the page, and the source matters. The driver's
+per-process figure is preferred (`OnnxTiler.TryGetProcessMemoryBytes`, the same `heapUsage` §4.1
+describes), because the system-wide sources count every other tenant: the same padded shape was measured
+at 8406 MB once and 9683 MB another time, 1.3 GB apart, and the lower one reached a plan — anything else
+on the card that allocates or frees while the page runs lands in a system-wide delta.
+
+That the per-process figure really is per-process is the extension's contract: `VK_EXT_memory_budget`
+documents `heapUsage` as "the current process estimated heap usage" and `heapBudget` as how much the
+process may use. RADV implements exactly that — measured on an RX 9070 XT at 64 MB with a desktop
+holding 2677 MB. The NVIDIA driver does not: measured on an RTX 5070 Ti, a process holding nothing read
+2834.8 MB, and across a session that grew to 6 GB the figure tracked nvidia-smi's card-wide number with
+a constant 392 MB offset between them. Its `heapBudget` is derived from that figure — `total − heapBudget`
+equalled `heapUsage` to the byte at every sample — which is the invariant `OnnxTiler.VulkanUsageIsDeviceWide`
+looks for, together with the vendor id. Where it matches, the source is nvidia-smi's per-process table
+(`--query-compute-apps=pid,used_memory`) instead: measured exact there, 0, 222, 362, 1908 and 6006 MB as
+one session grew. Both halves of that test are required, so a driver that changed either one falls back
+to the reading that counts our own footprint as a competitor — a *smaller* budget, which costs quality
+and cannot cost the page. Where there is no Vulkan at all (a minimal container) and no nvidia-smi
+either, the system-wide reading is the fallback and the budget's own-footprint discount is what
+separates our memory from the rest.
+
+Pushing the *larger benchmark tile* further, so that the fit happens closer to the operating shape, is a
+wash rather than an obvious win: the reservation is derived as `growth − slope·n² − weights`, so any error
+in the slope is multiplied by the larger n², and a bigger tile trades a better-fitted slope for a noisier
+reservation. The residual error it would address is the 3.4% above, on the first page at a shape only —
+which is what the per-shape measurement removes anyway.
+
+
+## 7. Reproducing the numbers
+
+The scripts live outside the repository (`~/mangamem/work`) because they need the model files and
+are measurement tools, not part of the app:
+
+| script | purpose |
+|---|---|
+| `shape_peaks.py` | analytic working set per model via shape inference + liveness |
+| `single.sh` + `profiler/Program.cs` | GPU measurement of one inference at a fixed tile size |
+| `join.py` | joins both into the `C_arch` table |
+| `profiler/validate/` | end-to-end check: plan a grid, run a page, verify VRAM/GTT |
+
+To force a re-measurement in the app, set `Ingest_Upscaler__RecalibrateDeviceMemory=true` for one
+upscale and delete `<models>/device-memory-profile.json` (or just leave it — the fingerprint
+decides). Use `ulimit -v` around that Python script — making every intermediate a graph output is
+convenient for shape extraction but allocates tens of gigabytes on the big transformer models.
+
+To re-derive after adding a model: run `shape_peaks.py <model.onnx> 64,128`, then
+`profiler single <model.onnx> <scale> <n>` for a few `n`, then `join.py` and update
+`GetOutputLiveChannels`.

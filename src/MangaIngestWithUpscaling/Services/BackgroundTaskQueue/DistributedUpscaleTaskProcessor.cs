@@ -50,6 +50,24 @@ public class DistributedUpscaleTaskProcessor(
     // Store remote repair state separately from the task itself
     private readonly Dictionary<int, RemoteRepairState> remoteRepairStates = new();
 
+    /// <summary>
+    ///     Consecutive transient preparation failures per repair task. A permanently unreadable source
+    ///     (<c>PageDifferenceResult.ReadFailed</c>) otherwise defers the claimed task without ever
+    ///     consuming a retry budget, so the task can neither complete nor fail. The counter is
+    ///     incremented on each deferral and the task is failed once it reaches the task's
+    ///     <see cref="BaseTask.RetryFor" /> budget; a successful read clears the streak. It is
+    ///     process-local, matching the repair state beside it and the supported single-replica
+    ///     deployment.
+    /// </summary>
+    private readonly Dictionary<int, int> transientPreparationFailures = new();
+
+    /// <summary>
+    ///     Task ids whose page-spool drop failure has already been logged, so a repeated failure for
+    ///     one task does not flood the log. Entries are cleared when a later drop for the same task
+    ///     succeeds, so the set stays bounded by the tasks currently failing to drop.
+    /// </summary>
+    private readonly HashSet<int> warnedSpoolDropFailures = new();
+
     private readonly Dictionary<int, PersistedTask> runningTasks = new();
 
     /// <summary>
@@ -1223,6 +1241,7 @@ public class DistributedUpscaleTaskProcessor(
             PageStreamSession? session = spool.TryGetSession(taskId);
             if (session is null)
             {
+                ClearSpoolDropWarning(taskId);
                 return;
             }
 
@@ -1238,16 +1257,51 @@ public class DistributedUpscaleTaskProcessor(
                     {
                         spool.DeleteDirectory(directory);
                     }
+
+                    ClearSpoolDropWarning(taskId);
                 }
                 catch (Exception ex)
                 {
-                    logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+                    WarnSpoolDropOnce(taskId, ex, logger, null);
                 }
             });
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+            WarnSpoolDropOnce(taskId, ex, logger, null);
+        }
+    }
+
+    /// <summary>
+    ///     Warns once per task that a page spool could not be dropped. A multi-GB spool that fails to
+    ///     delete is actionable (it lingers until the retention sweep), and a failure path can repeat
+    ///     for the same task, so the repeat is suppressed.
+    /// </summary>
+    private void WarnSpoolDropOnce(int taskId, Exception ex, ILogger logger, string? path)
+    {
+        bool first;
+        using (_lock.EnterScope())
+        {
+            first = warnedSpoolDropFailures.Add(taskId);
+        }
+
+        if (first)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to drop the page spool for task {TaskId} at {Path}; its temp bytes may linger until the retention sweep.",
+                taskId,
+                path ?? "(unknown)"
+            );
+        }
+    }
+
+    /// <summary>Allows a later spool-drop failure for the task to be logged again.</summary>
+    private void ClearSpoolDropWarning(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            warnedSpoolDropFailures.Remove(taskId);
         }
     }
 
@@ -1399,6 +1453,7 @@ public class DistributedUpscaleTaskProcessor(
                     upscalerProfile?.Name ?? "Not found",
                     repairTask.UpscalerProfileId
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1410,6 +1465,7 @@ public class DistributedUpscaleTaskProcessor(
                     chapter.Manga?.Library?.Name ?? "Unknown",
                     chapter.Manga?.Library?.Id
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1427,6 +1483,7 @@ public class DistributedUpscaleTaskProcessor(
                     persistedTask.Id,
                     currentStoragePath
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1453,6 +1510,7 @@ public class DistributedUpscaleTaskProcessor(
                     persistedTask.Id,
                     chapter.FileName
                 );
+                ClearTransientPreparationFailures(persistedTask.Id);
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
                 return RepairPreparationOutcome.Terminal;
             }
@@ -1462,14 +1520,36 @@ public class DistributedUpscaleTaskProcessor(
                 // Transient: requeue without consuming the retry budget, matching the worker-cancel
                 // path. Defer the in-memory re-offer: an immediate re-add writes a signal the selection
                 // loop reads straight back, re-dequeues the same still-unreadable task and starves
-                // every other request until the host restarts.
+                // every other request until the host restarts. Bound the retries: a permanently
+                // unreadable source must eventually fail instead of deferring for ever.
+                int consecutiveFailures = IncrementTransientPreparationFailures(persistedTask.Id);
+                int budget = Math.Max(1, repairTask.RetryFor);
+                if (consecutiveFailures >= budget)
+                {
+                    logger.LogError(
+                        "Source archive for repair task {TaskId} stayed unreadable across {Failures} preparations (budget {Budget}); failing it.",
+                        persistedTask.Id,
+                        consecutiveFailures,
+                        budget
+                    );
+                    ClearTransientPreparationFailures(persistedTask.Id);
+                    CleanupRepairFiles(persistedTask.Id, logger);
+                    await PersistFailedAsync(persistedTask, serviceStoppingToken);
+                    return RepairPreparationOutcome.Terminal;
+                }
+
                 logger.LogWarning(
-                    "Could not read a source archive for repair task {TaskId}; requeuing.",
-                    persistedTask.Id
+                    "Could not read a source archive for repair task {TaskId}; requeuing ({Failures}/{Budget}).",
+                    persistedTask.Id,
+                    consecutiveFailures,
+                    budget
                 );
                 await DeferClaimedTaskAsync(persistedTask, logger);
                 return RepairPreparationOutcome.Requeued;
             }
+
+            // The source was readable this time, so any transient-failure streak is broken.
+            ClearTransientPreparationFailures(persistedTask.Id);
 
             if (differences.AreEqual)
             {
@@ -1550,6 +1630,7 @@ public class DistributedUpscaleTaskProcessor(
                 "Preparation of repair task {TaskId} was cancelled by the requesting worker; requeuing.",
                 persistedTask.Id
             );
+            ClearTransientPreparationFailures(persistedTask.Id);
             await RequeueClaimedTaskAsync(persistedTask, serviceStoppingToken);
             return RepairPreparationOutcome.Requeued;
         }
@@ -1560,9 +1641,34 @@ public class DistributedUpscaleTaskProcessor(
                 "Failed to prepare repair task {TaskId} for remote processing",
                 persistedTask.Id
             );
+            ClearTransientPreparationFailures(persistedTask.Id);
             CleanupRepairFiles(persistedTask.Id, logger);
             await PersistFailedAsync(persistedTask, serviceStoppingToken);
             return RepairPreparationOutcome.Terminal;
+        }
+    }
+
+    /// <summary>
+    /// Counts one more consecutive transient preparation failure for a repair task and returns the
+    /// new streak. See <see cref="transientPreparationFailures" /> for why the streak is bounded.
+    /// </summary>
+    private int IncrementTransientPreparationFailures(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            transientPreparationFailures.TryGetValue(taskId, out int count);
+            count++;
+            transientPreparationFailures[taskId] = count;
+            return count;
+        }
+    }
+
+    /// <summary>Clears a repair task's consecutive transient preparation-failure streak.</summary>
+    private void ClearTransientPreparationFailures(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            transientPreparationFailures.Remove(taskId);
         }
     }
 

@@ -126,9 +126,12 @@ public class ImageFilterServiceTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        // Assert
+        // Assert: the filter's content hash does not match the CBZ entry and it carries no
+        // perceptual hash, so nothing is filtered. Asserting a lower bound (>= 0) let an
+        // implementation that filtered the wrong images — or nothing at all — pass.
         Assert.Empty(result.ErrorMessages);
-        Assert.True(result.FilteredCount >= 0);
+        Assert.Equal(0, result.FilteredCount);
+        Assert.Empty(result.FilteredImageNames);
     }
 
     [Fact]
@@ -175,8 +178,14 @@ public class ImageFilterServiceTests : IDisposable
         // Act
         var hash = _service.CalculatePerceptualHash(imageBytes);
 
-        // Assert
-        Assert.True(hash >= 0); // ulong should be non-negative
+        // Assert: a degenerate hash (0, or one value for every image) must fail. The hash of the
+        // fixed test image is non-zero, and the two differently-patterned test images must not
+        // collide.
+        Assert.NotEqual(0UL, hash);
+        var differentHash = _service.CalculatePerceptualHash(
+            CreateTestImageBytes(differentContent: true)
+        );
+        Assert.NotEqual(hash, differentHash);
     }
 
     [Fact]
@@ -219,9 +228,9 @@ public class ImageFilterServiceTests : IDisposable
         // Act
         var similarity = _service.CalculateImageSimilarity(hash1, hash2);
 
-        // Assert
-        Assert.True(similarity >= 0.0);
-        Assert.True(similarity <= 100.0);
+        // Assert: 12345 ^ 54321 has five set bits, so the similarity is (64-5)/64*100. Asserting only
+        // a lower bound (>= 0) was satisfied by a zero result.
+        Assert.Equal(92.1875, similarity);
         Assert.True(similarity < 100.0); // Different hashes should not be 100% similar
     }
 
@@ -250,8 +259,9 @@ public class ImageFilterServiceTests : IDisposable
         // Act
         var distance = _service.CalculateHammingDistance(hash1, hash2);
 
-        // Assert
-        Assert.True(distance >= 0);
+        // Assert: 12345 ^ 54321 has five set bits. The test name promises a positive value, so assert
+        // the exact distance; a lower bound of >= 0 was satisfied by a zero result.
+        Assert.Equal(5, distance);
         Assert.True(distance <= 64); // Max hamming distance for 64-bit value
     }
 

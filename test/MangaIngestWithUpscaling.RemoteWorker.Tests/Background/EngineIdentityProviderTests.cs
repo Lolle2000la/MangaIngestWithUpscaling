@@ -1,6 +1,8 @@
 using MangaIngestWithUpscaling.RemoteWorker.Background;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Options;
+using NSubstitute;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
@@ -26,8 +28,8 @@ public class EngineIdentityProviderTests
         {
             // A broken symlink makes the directory walk throw (FileInfo.Length/File.OpenRead) without
             // relying on a permission change that a root CI would ignore.
-            string model = Path.Combine(directory, "model.pth");
-            File.CreateSymbolicLink(model, Path.Combine(directory, "missing-target.pth"));
+            string model = Path.Combine(directory, "model.onnx");
+            File.CreateSymbolicLink(model, Path.Combine(directory, "missing-target.onnx"));
 
             var provider = new EngineIdentityProvider(
                 Options.Create(new UpscalerConfig { ModelsDirectory = directory })
@@ -52,46 +54,128 @@ public class EngineIdentityProviderTests
     }
 
     /// <summary>
-    /// <see cref="MangaJaNaiWorkerSettings.EnsureSettings"/> re-reads <c>appstate2.json</c> on every
-    /// worker spawn, so an edit made while this process is alive must not be served under the old
-    /// cached identity. Changing the file changes its fingerprint (length) and must force a recompute.
+    /// When PreferredGpuBackend is Auto, two workers on different hardware must produce different
+    /// engine identities according to their resolved backend (e.g. CUDA vs WebGPU) to prevent
+    /// blending pages from different accelerators into a single chapter.
     /// </summary>
     [Fact]
     [Trait("Category", "Unit")]
-    public void Upscaler_RecomputesWhenTheWorkflowConfigFingerprintChanges()
+    public void Upscaler_DifferentiatesResolvedBackends()
     {
-        string configPath = Path.Combine(AppContext.BaseDirectory, "appstate2.json");
-        byte[]? original = File.Exists(configPath) ? File.ReadAllBytes(configPath) : null;
         string directory = Directory.CreateTempSubdirectory("engine_provider_config").FullName;
         try
         {
-            var provider = new EngineIdentityProvider(
-                Options.Create(new UpscalerConfig { ModelsDirectory = directory })
+            var mockFactoryCuda =
+                NSubstitute.Substitute.For<MangaIngestWithUpscaling.Shared.Services.Inference.IOnnxSessionFactory>();
+            mockFactoryCuda.GetEffectiveBackend().Returns(GpuBackend.CUDA);
+
+            var mockFactoryWebGpu =
+                NSubstitute.Substitute.For<MangaIngestWithUpscaling.Shared.Services.Inference.IOnnxSessionFactory>();
+            mockFactoryWebGpu.GetEffectiveBackend().Returns(GpuBackend.WebGPU);
+
+            var options = Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = directory,
+                    PreferredGpuBackend = GpuBackend.Auto,
+                }
             );
 
-            File.WriteAllText(configPath, "{\"workflow\":\"a\"}");
-            string before = provider.Upscaler;
+            var providerCuda = new EngineIdentityProvider(options, mockFactoryCuda);
+            var providerWebGpu = new EngineIdentityProvider(options, mockFactoryWebGpu);
 
-            // Change the content length, so the fingerprint differs even if the filesystem's write
-            // timestamp granularity would not have moved.
-            File.WriteAllText(configPath, "{\"workflow\":\"bb\"}");
-            string after = provider.Upscaler;
+            string identityCuda = providerCuda.Upscaler;
+            string identityWebGpu = providerWebGpu.Upscaler;
 
-            Assert.NotEqual(before, after);
-            // The recomputed identity is cached again for the new fingerprint.
-            Assert.Equal(after, provider.Upscaler);
+            Assert.NotEqual(identityCuda, identityWebGpu);
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
-            if (original is null)
-            {
-                File.Delete(configPath);
-            }
-            else
-            {
-                File.WriteAllBytes(configPath, original);
-            }
+        }
+    }
+
+    /// <summary>
+    /// The identity is recomputed when the resolved backend changes. GetEffectiveBackend is
+    /// deliberately not final — a CPU resolution produced by a transient probe failure is retried
+    /// every 60 s — so memoizing the identity forever let pages run on the recovered GPU under an
+    /// identity that still described CPU: the same-identity/different-pixels seam the identity exists
+    /// to forbid, and it silently defeated the spool reset a genuine backend change must cause.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Upscaler_FollowsAResolvedBackendChange()
+    {
+        string directory = Directory.CreateTempSubdirectory("engine_provider_backend").FullName;
+        try
+        {
+            var factory = Substitute.For<IOnnxSessionFactory>();
+            factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+            var options = Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = directory,
+                    PreferredGpuBackend = GpuBackend.Auto,
+                }
+            );
+            var provider = new EngineIdentityProvider(options, factory);
+
+            string unrecovered = provider.Upscaler;
+
+            // The same backend stays cached, so the directory walk is not repeated per page.
+            Assert.Equal(unrecovered, provider.Upscaler);
+
+            factory.GetEffectiveBackend().Returns(GpuBackend.WebGPU);
+            string recovered = provider.Upscaler;
+
+            Assert.NotEqual(unrecovered, recovered);
+            Assert.Equal(recovered, provider.Upscaler);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The detector identity follows the resolved backend for the same reason the upscaler one does:
+    /// the detector runs on that backend, and the server gates a task's spool on the identity, so two
+    /// workers with the same detector file but a different execution provider must not share one.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Detector_FollowsAResolvedBackendChange()
+    {
+        string directory = Directory.CreateTempSubdirectory("engine_provider_detector").FullName;
+        try
+        {
+            var factory = Substitute.For<IOnnxSessionFactory>();
+            factory.GetEffectiveBackend().Returns(GpuBackend.CPU);
+
+            var options = Options.Create(
+                new UpscalerConfig
+                {
+                    ModelsDirectory = directory,
+                    PreferredGpuBackend = GpuBackend.Auto,
+                }
+            );
+            var provider = new EngineIdentityProvider(options, factory);
+
+            string unrecovered = provider.Detector;
+
+            // The same backend stays cached, so nothing is recomputed per page.
+            Assert.Equal(unrecovered, provider.Detector);
+
+            factory.GetEffectiveBackend().Returns(GpuBackend.WebGPU);
+            string recovered = provider.Detector;
+
+            Assert.NotEqual(unrecovered, recovered);
+            Assert.Equal(recovered, provider.Detector);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
         }
     }
 }
