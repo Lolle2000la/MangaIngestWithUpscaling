@@ -21,7 +21,7 @@ public class DetectorWindowPlanTests
     {
         (int chunkRows, int windowCount) = SplitDetectionService.PlanDetectorWindows(
             pageRows: 7000,
-            budgetBytes: 4 * GiB
+            budgetBytes: 16 * GiB
         );
 
         Assert.Equal(1, windowCount);
@@ -33,23 +33,23 @@ public class DetectorWindowPlanTests
     {
         (int chunkRows, int windowCount) = SplitDetectionService.PlanDetectorWindows(
             pageRows: 15000,
-            budgetBytes: 2 * GiB
+            budgetBytes: 8 * GiB
         );
 
         // Pinned literally, not recomputed from the production constants: these are the documented
-        // measurement (DetectorBytesPerRow = 420000 B/row, DetectorFixedBytes = 32 MiB), so a change
-        // to either shows up here instead of quietly re-deriving a passing expectation. 2 GiB × 0.9
-        // leaves 1899180851 B for a window; minus 32 MiB that is 4521 affordable *window* rows, and
-        // the 1536-row margin on both sides leaves a 1449-row chunk — 11 windows over 15000 rows.
-        Assert.Equal(1449, chunkRows);
-        Assert.Equal(11, windowCount);
+        // measurements (DetectorBytesPerRow = 1600000 B/row, DetectorFixedBytes = 32 MiB), so a change
+        // to either shows up here instead of quietly re-deriving a passing expectation. 8 GiB × 0.9
+        // leaves 7730941132 B for a window; minus 32 MiB that is 4810 affordable *window* rows, and
+        // the 1536-row margin on both sides leaves a 1738-row chunk — 9 windows over 15000 rows.
+        Assert.Equal(1738, chunkRows);
+        Assert.Equal(9, windowCount);
 
         // The window, not the chunk, is what has to fit: chunk plus the margin on each side (clamped
         // to the page, which the first and last window are).
         long windowRows = Math.Min(15000, chunkRows + (2L * Margin));
-        long estimated = (32 * MiB) + (windowRows * 420_000);
+        long estimated = (32 * MiB) + (windowRows * 1_600_000);
         Assert.True(
-            estimated <= (long)(2 * GiB * 0.9),
+            estimated <= (long)(8 * GiB * 0.9),
             $"a window of {windowRows} rows is estimated at {estimated / MiB} MiB, over the budget"
         );
     }

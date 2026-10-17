@@ -2655,6 +2655,21 @@ public static class OnnxTiler
                     "CL_MEM_OBJECT_ALLOCATION_FAILURE",
                     StringComparison.OrdinalIgnoreCase
                 )
+                // Dawn reports the *consequence* of a failed allocation, not the allocation. The
+                // vkAllocateMemory failure goes to ONNX Runtime's log and never into the exception;
+                // what the caller catches is whichever object was created next, and its message ends
+                // "…is invalid due to a previous error". Measured on an RTX 5070 Ti: a four-window
+                // batch of the split detector exhausted the card, the exception read "WebGPU
+                // validation failed. [Invalid Buffer (unlabeled)] is invalid due to a previous error.",
+                // and none of the tokens above matched it — so IsRetryableDetectionFailure said no,
+                // the detector's halve-and-retry never ran, and a page failed on a card with gigabytes
+                // free. The token is deliberately the cascade wording rather than "WebGPU validation
+                // failed": only a consequence carries it, which is exactly the case where a fresh
+                // session and a smaller window are the right answer.
+                || msg.Contains(
+                    "is invalid due to a previous error",
+                    StringComparison.OrdinalIgnoreCase
+                )
                 // Device/driver faults: a lost or reset device, an illegal address from a kernel,
                 // a suspended GPU. Each is produced by a reset/driver event rather than by the
                 // graph, and a fresh session or a retry after the driver recovers runs the same

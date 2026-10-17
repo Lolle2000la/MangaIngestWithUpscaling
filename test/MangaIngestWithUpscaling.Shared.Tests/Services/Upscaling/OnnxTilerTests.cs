@@ -1231,6 +1231,13 @@ public class OnnxTilerTests : IDisposable
     [InlineData("device reset")]
     [InlineData("gpu reset")]
     [InlineData("The GPU will not respond to more commands")]
+    // A WebGPU out-of-memory as it actually reaches the caller: verbatim the first line of the
+    // exception an RTX 5070 Ti produced when a four-window batch of the split detector exhausted the
+    // card. The vkAllocateMemory failure itself never leaves Dawn's log, so this consequence message is
+    // all a classifier can key on — without it the detector's halve-and-retry recovery never ran.
+    [InlineData(
+        "[ErrorCode:Fail] WebGPU validation failed. [Invalid Buffer (unlabeled)] is invalid due to a previous error."
+    )]
     public void IsMemoryException_AcceptsRecognisedOnnxRuntimeMessages(string message)
     {
         Assert.True(OnnxTiler.IsMemoryException(OnnxRuntimeExceptionWithMessage(message)));

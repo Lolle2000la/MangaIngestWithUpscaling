@@ -77,17 +77,27 @@ public class SplitDetectionService(
     private const int DetectorWindowMargin = 1536;
 
     /// <summary>
-    /// Fixed part of one detector inference's footprint, and the per-row cost of it, measured on the
-    /// shipped model (RX 9070 XT, ORT 1.29, WebGPU) as the working-set growth of a page pass: 1513 MiB
-    /// for 4000 resized rows and 5615 MiB for 15000, i.e. ~0.373 MiB per row plus ~21 MiB. These are
-    /// used to decide whether the whole page fits the memory budget and, when it does not, how large a
-    /// window is affordable. They are deliberately round numbers above the measurement: an estimate
-    /// that is too low would pick a window that does not fit, and the cost of being too high is only a
-    /// smaller window.
+    /// Fixed part of one detector inference's footprint, and the per-row cost of it.
+    /// <para>
+    /// The per-row figure is the larger of the two backends the detector has been measured on, because
+    /// one constant has to cover both. On an RX 9070 XT with the WebGPU EP a page pass measured 1513 MiB
+    /// for 4000 resized rows and 5615 MiB for 15000, i.e. ~0.373 MiB per row. On an RTX 5070 Ti with the
+    /// same EP a single 2048-row window measured 2.7 GB, i.e. ~1.32 MiB per row: Dawn's Vulkan allocator
+    /// asks the NVIDIA driver for several times what it asks RADV for, and a batch of four such windows
+    /// exhausted a 16 GB card. Being too high only costs a smaller window, and a page that already fits
+    /// in one pass is unaffected — the figure only binds once a page is taller than the affordable
+    /// window, which is the case it exists for.
+    /// </para>
+    /// <para>
+    /// It is not safety-critical either way. A window that still does not fit halves and retries, which
+    /// requires the failure to be recognised as memory pressure at all; on this backend it is a Dawn
+    /// consequence-message rather than an allocation one, which is why
+    /// <c>OnnxTiler.IsMemoryException</c> keys on that wording too.
+    /// </para>
     /// </summary>
     private const long DetectorFixedBytes = 32L * 1024 * 1024;
 
-    private const long DetectorBytesPerRow = 420_000;
+    private const long DetectorBytesPerRow = 1_600_000;
 
     /// <summary>
     /// Smallest chunk worth splitting into. Below this the context alone dominates the work — every
