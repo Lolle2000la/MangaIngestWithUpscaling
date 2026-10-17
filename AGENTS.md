@@ -64,6 +64,34 @@ export Ingest_Upscaler__RemoteOnly=false
 dotnet run --project src/MangaIngestWithUpscaling
 ```
 
+**NVIDIA GPU (CUDA):**
+
+The ONNX Runtime flavour is a *build-time* property, not a runtime setting. The default build ships the
+CPU runtime plus the WebGPU execution provider and no CUDA provider at all, so an NVIDIA host running it
+falls back to WebGPU and logs `CUDA execution provider is not enabled in this build`. Select CUDA by
+passing the property to the build:
+
+```bash
+dotnet run --project src/MangaIngestWithUpscaling -p:OnnxRuntimeFlavor=Cuda
+```
+
+`OnnxRuntimeFlavor` is an ordinary MSBuild property, so MSBuild's own rules apply: it can also come from
+the environment (`OnnxRuntimeFlavor=Cuda dotnet run …`), and the csproj default only fills it in when
+nothing else has. A **launch profile cannot set it**: `launchSettings.json` has no MSBuild-property
+field, and its `environmentVariables` reach the launched process rather than the build that precedes it
+(measured — a profile set the variable for the app while the build still resolved `Cpu`). The
+`https (CUDA)` and `http (CUDA)` profiles therefore set `PreferredGpuBackend=CUDA` for the app and carry
+`OnnxRuntimeFlavor=Cuda` as the hint for a build environment that already has it; the build itself still
+needs the property from the command line or the environment. In an IDE that builds without that
+environment the reliable route is the IDE's own global MSBuild properties — in Rider that is
+*Settings → Build, Execution, Deployment → Toolset and Build → MSBuild global properties* — set to
+`OnnxRuntimeFlavor=Cuda`, which then applies to every build of the solution on that machine.
+
+Prefer CUDA on an NVIDIA card rather than relying on WebGPU: the WebGPU EP works there but asks Dawn's
+Vulkan allocator for several times the memory it asks for on RADV — measured on an RTX 5070 Ti at
+~1.32 MiB per resized row against ~0.373 MiB on an RX 9070 XT, where a four-window batch of the split
+detector exhausted a 16 GB card.
+
 ## Validation
 
 ### ALWAYS run through these validation steps after making changes:
