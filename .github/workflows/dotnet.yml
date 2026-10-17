@@ -39,14 +39,14 @@ jobs:
   # The images are only built by the release workflows, which run after the merge — so a Dockerfile
   # that no longer copies, restores or publishes is first noticed when a release is cut. The migration
   # rewrote both of them (the app image now also carries the migrator, the worker's copy list and its
-  # base stage changed), so the two CPU images are built on every PR.
+  # base stage changed), so the two WebGPU images are built on every PR.
   #
   # The CUDA images are deliberately not built (a multi-gigabyte base pull on every PR, and the release
   # workflows build them anyway) but their base tag is resolved: a retired or mistyped nvidia/cuda tag
   # is the failure that would otherwise only surface in a release. Only their build and publish stages
-  # resemble the CPU images'; their runtime stage is a different base (nvidia/cuda with the .NET
+  # resemble the WebGPU images'; their runtime stage is a different base (nvidia/cuda with the .NET
   # runtime copied in and a CUDA-defaulting PreferredGpuBackend), so a break there is not covered by
-  # the CPU builds above.
+  # the WebGPU builds above.
   containers:
     runs-on: ubuntu-latest
     steps:

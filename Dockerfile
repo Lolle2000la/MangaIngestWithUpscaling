@@ -1,5 +1,9 @@
 # Release image, built by the release workflows for GHCR. The Dockerfile is multi-arch via
 # TARGETARCH; the workflows currently publish amd64 only (the manifest also carries the CUDA variant).
+# This is the WebGPU variant: the CPU ONNX Runtime plus the WebGPU execution provider, with
+# PreferredGpuBackend=WebGPU below. The flavour is passed explicitly on every restore/build/publish —
+# it is the csproj default, but stating it here keeps this file and cuda.Dockerfile reading the same
+# way and stops a change to that default from silently repointing this image.
 # It ships ASPNETCORE_ENVIRONMENT=Production, a healthcheck and the bundled DbMigrator. The
 # local/Compose image is the separate src/MangaIngestWithUpscaling/Dockerfile; the two are
 # intentionally not the same file, so a change here does not reach `docker compose up` and vice versa.
@@ -31,23 +35,23 @@ COPY ["src/MangaIngestWithUpscaling.Data/MangaIngestWithUpscaling.Data.csproj", 
 COPY ["src/MangaIngestWithUpscaling.Data.Sqlite/MangaIngestWithUpscaling.Data.Sqlite.csproj", "src/MangaIngestWithUpscaling.Data.Sqlite/"]
 COPY ["src/MangaIngestWithUpscaling.Data.Postgres/MangaIngestWithUpscaling.Data.Postgres.csproj", "src/MangaIngestWithUpscaling.Data.Postgres/"]
 COPY ["tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj", "tools/MangaIngestWithUpscaling.DbMigrator/"]
-RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj"
-RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj"
+RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj" -p:OnnxRuntimeFlavor=Cpu
+RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -p:OnnxRuntimeFlavor=Cpu
 COPY . .
 WORKDIR "/src/src/MangaIngestWithUpscaling"
-RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -o /app/build -p:OnnxRuntimeFlavor=Cpu
 
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/publish /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cpu
 # SQLite<->PostgreSQL migration CLI. It is framework-dependent (same runtime and shared deps as the
 # app), so publishing it into the same image adds only ~0.2 MB. It was once much larger because the
 # migrator csproj stripped the web app's bundled Python backend; that backend is gone, so the two
 # now overlap almost completely and `cp -rn` only adds the migrator entrypoint. Run it by overriding
 # the entrypoint, e.g.:
 #   docker run --rm --entrypoint dotnet <image> MangaIngestWithUpscaling.DbMigrator.dll <arguments>
-RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/migrator /p:UseAppHost=false
+RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/migrator /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cpu
 RUN cp -rn /app/migrator/. /app/publish/
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
