@@ -56,9 +56,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build the application image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -101,7 +101,7 @@ jobs:
           echo "::error::/health did not answer within 60 s."
           exit 1
       - name: Build the remote worker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: src/MangaIngestWithUpscaling.RemoteWorker/Dockerfile
@@ -111,7 +111,7 @@ jobs:
       # packages, PreferredGpuBackend=WebGPU, the migrator publish that now overlaps the app's
       # dependencies — so `docker compose up` was the first thing to find out whether it still builds.
       - name: Build the Compose image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: src/MangaIngestWithUpscaling/Dockerfile
@@ -151,9 +151,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build the application image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
