@@ -26,7 +26,7 @@ jobs:
           TAG=$(date -u +"%Y%m%d%H%M%S")
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Generated tag: $TAG"
-  build-and-push-x86:
+  build-and-push-webgpu-amd64:
     permissions: 
       contents: read
       packages: write 
@@ -61,7 +61,7 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-amd64
 
-  build-and-push-arm64:
+  build-and-push-webgpu-arm64:
     permissions: 
       contents: read
       packages: write 
@@ -100,7 +100,7 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-arm64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-arm64
 
-  build-and-push-cuda-x86:
+  build-and-push-cuda-amd64:
     permissions: 
       contents: read
       packages: write 
@@ -144,7 +144,7 @@ jobs:
       contents: read
       packages: write 
     runs-on: ubuntu-latest
-    needs: [build-and-push-x86, build-and-push-arm64, build-and-push-cuda-x86, generate-tag]
+    needs: [build-and-push-webgpu-amd64, build-and-push-webgpu-arm64, build-and-push-cuda-amd64, generate-tag]
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
