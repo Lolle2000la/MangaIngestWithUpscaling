@@ -1676,14 +1676,19 @@ public class OnnxUpscaleEngine(
         OnnxTiler.TileSplit split,
         CancellationToken cancellationToken
     ) =>
-        OnnxTiler.UpscaleRgb(
-            rgbBytes,
-            width,
-            height,
-            scale,
-            session,
-            split,
-            cancellationToken: cancellationToken
+        // One thread for every page, not whichever pool thread is free: the CUDA provider allocates a
+        // per-thread context the first time a thread runs a session, and a page per pool thread paid
+        // that 74 MB again (measured; see SingleThreadInferenceExecutor).
+        SingleThreadInferenceExecutor.Run(() =>
+            OnnxTiler.UpscaleRgb(
+                rgbBytes,
+                width,
+                height,
+                scale,
+                session,
+                split,
+                cancellationToken: cancellationToken
+            )
         );
 
     /// <summary>
@@ -2010,14 +2015,18 @@ public class OnnxUpscaleEngine(
                     {
                         InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
 
-                        // The decode is what rejects a broken model, so the probe goes through it.
-                        OnnxTiler.UpscaleTile(
-                            CreateProbeTile(ModelProbeTilePixels),
-                            ModelProbeTilePixels,
-                            ModelProbeTilePixels,
-                            scale,
-                            session,
-                            cancellationToken
+                        // The decode is what rejects a broken model, so the probe goes through it. It
+                        // runs on the pages' thread, so the provider's per-thread context for this
+                        // session is the one the pages then reuse instead of a second one.
+                        _ = SingleThreadInferenceExecutor.Run(() =>
+                            OnnxTiler.UpscaleTile(
+                                CreateProbeTile(ModelProbeTilePixels),
+                                ModelProbeTilePixels,
+                                ModelProbeTilePixels,
+                                scale,
+                                session,
+                                cancellationToken
+                            )
                         );
                     }
 

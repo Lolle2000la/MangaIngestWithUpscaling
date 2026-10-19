@@ -792,6 +792,43 @@ reservation. The residual error it would address is the 3.4% above, on the first
 which is what the per-shape measurement removes anyway.
 
 
+### 6.7 The per-thread context (why a page runs on one thread)
+
+ONNX Runtime's CUDA provider keeps a **per-thread** context — handles plus a workspace — and allocates
+it the first time a thread runs a session. The engine hands each page to `Task.Run`, so the page ran on
+whichever pool thread was free, and every thread the pool rotated in paid that context again. Calling the
+same tiler with the same session and only varying where it runs, on an RTX 5070 Ti with the fp16 ESRGAN
+model at 2x2 of 563x800 and 1125x1600 pages:
+
+| where the tiler runs | pages | process's device footprint |
+|---|---|---|
+| the calling thread | 10 | 7710 MB, constant |
+| one dedicated thread | 10 | 7710 MB, constant |
+| two dedicated threads | 10 | 7710 → 7786 MB (one +74 MB, then constant) |
+| the thread pool, `Task.Run` per page | 10 | +74 MB per page, cumulative |
+
+Through the engine the same effect measured as a drift at a *fixed* plan: 7712 MB on page 2, 8738 MB on
+page 24, 9986 MB later in the chapter — the "own footprint" the budget was discounting was growing while
+the tile grid never changed (§2.2). It is not a leak: `ReleaseCachedSessions()` plus GC returns the
+process to 268 MB. Nor is it the tensors, the codecs or the probe, each ruled out separately — the tiler
+on one thread does not grow at all (with or without the memory pattern, at 2x2 and 2x3), libvips
+decode/encode adds nothing, and the 256 px probe raises the baseline by 436 MB once without growing.
+`cudnn_conv_use_max_workspace=0` and `cudnn_conv_algo_search=HEURISTIC` change nothing, so the ~74 MB is
+not the cuDNN workspace.
+
+`SingleThreadInferenceExecutor` therefore runs the tiler and the model probe on one process-wide thread,
+under the caller's execution context so the loggers' scopes and the tiler's test seam still work. One
+thread bounds the cost at one context, and it costs no throughput: the queue runs one page at a time per
+process, and the tiler's look-ahead for the next tile is CPU work on the pool. Measured through the engine
+over the same 24 pages: the process stayed at 9986 MB and the budget at 9569–9610 MB, where it had drifted
+from 10211 to 9184 MB before §2.2's discount covered the growth.
+
+Deliberately **not** applied to the split detector: it abandons a run it considers stuck
+(`WaitAsync` on a timeout, then `RunOptions.Terminate`), and queueing the next window behind a wedged run on
+one thread would turn that recovery into a stall. Its runs are one per image, and it has not been measured
+as the dominant term.
+
+
 ## 7. Reproducing the numbers
 
 The scripts live outside the repository (`~/mangamem/work`) because they need the model files and

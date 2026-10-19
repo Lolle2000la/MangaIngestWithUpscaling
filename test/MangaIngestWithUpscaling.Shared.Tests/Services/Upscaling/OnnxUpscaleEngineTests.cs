@@ -802,6 +802,72 @@ public class OnnxUpscaleEngineTests : IDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task UpscaleFileAsync_RunsEveryPageOnOneInferenceThreadOfItsOwn()
+    {
+        // ONNX Runtime's CUDA provider allocates a per-thread context the first time a thread runs a
+        // session (~74 MB on an RTX 5070 Ti), and the page used to run on whichever pool thread
+        // Task.Run picked — so a chapter paid that again for every thread it touched, measured as
+        // 7712 -> 8738 MB over 24 pages. The engine now pins the tiler (and the model probe) to the
+        // executor's thread; this pins that the pinning happens at the engine's own seam.
+        const int width = 64;
+        const int height = 90;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(_tempDir, width, height);
+
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }
+        );
+        using var sessionFactory = new OnnxSessionFactory(
+            config,
+            NullLogger<OnnxSessionFactory>.Instance
+        );
+        var engine = new OnnxUpscaleEngine(
+            sessionFactory,
+            config,
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        var runs = new List<(int ThreadId, string? ThreadName)>();
+        OnnxTiler.RunImplOverride.Value = (session, input) =>
+        {
+            lock (runs)
+            {
+                runs.Add((Environment.CurrentManagedThreadId, Thread.CurrentThread.Name));
+            }
+
+            return session.Run([input]);
+        };
+
+        try
+        {
+            for (int page = 0; page < 3; page++)
+            {
+                await engine.UpscaleFileAsync(
+                    inputPath,
+                    Path.Combine(_tempDir, $"thread-{page}.webp"),
+                    scale,
+                    CompressionFormat.Webp,
+                    quality: 80,
+                    CancellationToken.None
+                );
+            }
+        }
+        finally
+        {
+            OnnxTiler.RunImplOverride.Value = null!;
+        }
+
+        // The probe runs on the first page and every page runs its tile; all of it must land on the
+        // executor's thread, including the probe, whose context the pages then reuse.
+        Assert.True(runs.Count >= 3, $"expected at least one run per page, saw {runs.Count}");
+        Assert.Single(runs.Select(run => run.ThreadId).Distinct());
+        Assert.All(runs, run => Assert.Equal("onnx-inference", run.ThreadName));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task UpscaleFileAsync_SuccessfulRunReplacesDestinationAndLeavesNoStagingFile()
     {
         // The encode is staged next to the destination and moved on completion, so the success path
