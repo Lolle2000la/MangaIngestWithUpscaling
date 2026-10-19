@@ -155,7 +155,7 @@ public class OnnxUpscaleEngine(
     /// (<see cref="OnnxTiler.UniformTileTensorShape"/>), so a run of them shares a shape already.
     /// </para>
     /// </summary>
-    private (string Model, int Width, int Height, OnnxTiler.TileSplit Split, long Peak) _stickyPlan;
+    private (string Model, int Width, int Height, OnnxTiler.TileSplit Split) _stickyPlan;
 
     /// <summary>
     /// How far the sticky plan's predicted peak may exceed the current budget before the page is
@@ -1798,22 +1798,38 @@ public class OnnxUpscaleEngine(
                 string.Equals(_stickyPlan.Model, modelPath, StringComparison.Ordinal)
                 && _stickyPlan.Width == width
                 && _stickyPlan.Height == height
-                && _stickyPlan.Peak <= (long)(budget * (1 + StickyPlanBudgetTolerance))
             )
             {
-                logger.LogDebug(
-                    "Keeping the previous page's plan for {Model} at {Width}x{Height}: {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (predicted peak: {PeakMb} MB, budget: {BudgetMb} MB).",
-                    Path.GetFileName(modelPath),
-                    width,
-                    height,
-                    _stickyPlan.Split.Columns,
-                    _stickyPlan.Split.Rows,
-                    _stickyPlan.Split.TileWidth,
-                    _stickyPlan.Split.TileHeight,
-                    _stickyPlan.Peak / (1024 * 1024),
-                    budget / (1024 * 1024)
+                // Predicted now rather than remembered: the shape this plan runs may have been measured
+                // since it was chosen, and PredictTilePeakBytes prefers that measurement to the analytic
+                // estimate. Comparing the remembered figure against the budget would test a plan against
+                // a cost it no longer has — the log showed exactly that, the sticky line reporting the
+                // 3356 MB the plan was chosen with while the page itself reported the 4386 MB the shape
+                // had since been measured at.
+                long peak = OnnxTiler.PredictTilePeakBytes(
+                    _stickyPlan.Split,
+                    scale,
+                    modelPath,
+                    modelSizeBytes,
+                    isFp16,
+                    profile
                 );
-                return _stickyPlan.Split;
+                if (peak <= (long)(budget * (1 + StickyPlanBudgetTolerance)))
+                {
+                    logger.LogDebug(
+                        "Keeping the previous page's plan for {Model} at {Width}x{Height}: {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (predicted peak: {PeakMb} MB, budget: {BudgetMb} MB).",
+                        Path.GetFileName(modelPath),
+                        width,
+                        height,
+                        _stickyPlan.Split.Columns,
+                        _stickyPlan.Split.Rows,
+                        _stickyPlan.Split.TileWidth,
+                        _stickyPlan.Split.TileHeight,
+                        peak / (1024 * 1024),
+                        budget / (1024 * 1024)
+                    );
+                    return _stickyPlan.Split;
+                }
             }
 
             OnnxTiler.TileSplit planned = OnnxTiler.PlanTileSplit(
@@ -1826,20 +1842,7 @@ public class OnnxUpscaleEngine(
                 isFp16,
                 profile
             );
-            _stickyPlan = (
-                modelPath,
-                width,
-                height,
-                planned,
-                OnnxTiler.PredictTilePeakBytes(
-                    planned,
-                    scale,
-                    modelPath,
-                    modelSizeBytes,
-                    isFp16,
-                    profile
-                )
-            );
+            _stickyPlan = (modelPath, width, height, planned);
             return planned;
         }
     }

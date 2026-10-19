@@ -650,6 +650,63 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    public void ReuseOrPlanTileSplit_ReplansWhenTheShapeWasMeasuredToCostMoreThanThePlanAssumed()
+    {
+        // The comparison has to use the *current* prediction rather than the figure the plan was chosen
+        // with. A shape's measured footprint arrives after the first page that ran it, and the log
+        // showed the sticky line reporting the analytic 3356 MB while the page itself reported the
+        // 4386 MB that shape had since been measured at. Here the measurement puts the plan over the
+        // budget, so it has to be re-planned instead of kept on the stale figure.
+        const string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        var engine = new OnnxUpscaleEngine(
+            Substitute.For<IOnnxSessionFactory>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        long budget = 8407L * 1024 * 1024;
+        OnnxTiler.TileSplit first = engine.ReuseOrPlanTileSplit(
+            model,
+            1125,
+            1600,
+            4,
+            budget,
+            0,
+            isFp16: true,
+            profile: null
+        );
+
+        // A measurement 20% above the budget: inside the band the planner accepts as plausible, well
+        // outside the 5% the sticky plan tolerates. The analytic figure the plan was chosen with fits
+        // the budget by construction, so without the fresh prediction this would be kept.
+        (int paddedWidth, int paddedHeight) = OnnxTiler.UniformTileTensorShape(first);
+        var profile = new DeviceMemoryProfile();
+        profile.Models[DeviceMemoryProfile.ModelKey(model, 0)] = new ModelMemoryProfile
+        {
+            ObservedTilePeaks = new Dictionary<string, long>
+            {
+                [DeviceMemoryProfile.ObservedShapeKey(4, paddedWidth, paddedHeight)] =
+                    budget * 6 / 5,
+            },
+        };
+
+        Assert.NotEqual(
+            first,
+            engine.ReuseOrPlanTileSplit(
+                model,
+                1125,
+                1600,
+                4,
+                budget,
+                0,
+                isFp16: true,
+                profile: profile
+            )
+        );
+    }
+
+    [Fact]
     public async Task UpscaleFileAsync_MissingInputFile_ThrowsFileNotFoundException()
     {
         var sessionFactory = Substitute.For<IOnnxSessionFactory>();
