@@ -534,6 +534,122 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    public void ReuseOrPlanTileSplit_KeepsThePlanAcrossABudgetWobble()
+    {
+        // The measured case: consecutive 1125x1600 pages of one model, the second planned against a
+        // budget a hair lower. Without stickiness that flip changes the grid, which changes the padded
+        // tensor shape, which releases and rebuilds the cached session — for a sub-1% budget move.
+        const string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        var engine = new OnnxUpscaleEngine(
+            Substitute.For<IOnnxSessionFactory>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        long budget = 8407L * 1024 * 1024;
+        OnnxTiler.TileSplit first = engine.ReuseOrPlanTileSplit(
+            model,
+            1125,
+            1600,
+            4,
+            budget,
+            0,
+            isFp16: true,
+            profile: null
+        );
+
+        // A budget one byte below the plan's own predicted peak: the planner cannot keep that plan, so
+        // this is exactly the flip the log showed — asserted rather than assumed, because a premise
+        // that quietly stops holding would make this test pass for the wrong reason.
+        long knifeEdge = OnnxTiler.PredictTilePeakBytes(first, 4, model, 0, true, null) - 1;
+        Assert.NotEqual(
+            first,
+            OnnxTiler.PlanTileSplit(1125, 1600, 4, model, knifeEdge, 0, true, null)
+        );
+
+        Assert.Equal(
+            first,
+            engine.ReuseOrPlanTileSplit(
+                model,
+                1125,
+                1600,
+                4,
+                knifeEdge,
+                0,
+                isFp16: true,
+                profile: null
+            )
+        );
+    }
+
+    [Fact]
+    public void ReuseOrPlanTileSplit_ReplansWhenTheBudgetReallyShrinks()
+    {
+        // The tolerance is 5%. A budget that halves is not a wobble, and the memory-pressure descent is
+        // a backstop rather than a substitute for planning against it.
+        const string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        var engine = new OnnxUpscaleEngine(
+            Substitute.For<IOnnxSessionFactory>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        engine.ReuseOrPlanTileSplit(model, 1125, 1600, 4, 8407L * 1024 * 1024, 0, true, null);
+
+        Assert.Equal(
+            OnnxTiler.PlanTileSplit(1125, 1600, 4, model, 2000L * 1024 * 1024, 0, true, null),
+            engine.ReuseOrPlanTileSplit(
+                model,
+                1125,
+                1600,
+                4,
+                2000L * 1024 * 1024,
+                0,
+                isFp16: true,
+                profile: null
+            )
+        );
+    }
+
+    [Fact]
+    public void ReuseOrPlanTileSplit_ReplansForAnotherPageSizeOrModel()
+    {
+        // The stickiness is per model and per page size: a landscape page or the next candidate model
+        // gets its own plan rather than inheriting one that was chosen for a different geometry.
+        const string model = "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx";
+        const string otherModel = "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx";
+        var engine = new OnnxUpscaleEngine(
+            Substitute.For<IOnnxSessionFactory>(),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        long budget = 8407L * 1024 * 1024;
+        engine.ReuseOrPlanTileSplit(model, 1125, 1600, 4, budget, 0, true, null);
+
+        Assert.Equal(
+            OnnxTiler.PlanTileSplit(1347, 960, 4, model, budget, 0, true, null),
+            engine.ReuseOrPlanTileSplit(model, 1347, 960, 4, budget, 0, isFp16: true, profile: null)
+        );
+        Assert.Equal(
+            OnnxTiler.PlanTileSplit(1125, 1600, 4, otherModel, budget, 0, true, null),
+            engine.ReuseOrPlanTileSplit(
+                otherModel,
+                1125,
+                1600,
+                4,
+                budget,
+                0,
+                isFp16: true,
+                profile: null
+            )
+        );
+    }
+
+    [Fact]
     public async Task UpscaleFileAsync_MissingInputFile_ThrowsFileNotFoundException()
     {
         var sessionFactory = Substitute.For<IOnnxSessionFactory>();

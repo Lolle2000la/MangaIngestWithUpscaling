@@ -139,6 +139,32 @@ public class OnnxUpscaleEngine(
     private string? _sessionShapeModel;
     private (int Width, int Height) _sessionShape;
 
+    private readonly Lock _stickyPlanGate = new();
+
+    /// <summary>
+    /// The plan the last page was inferred with, so a run of pages of the same size keeps one plan —
+    /// and therefore one session — instead of re-planning each of them against a budget that moves by a
+    /// few megabytes as the engine's own arena grows.
+    /// <para>
+    /// Measured on an RTX 5070 Ti with CUDA, 1125x1600 pages, fp16 4x ESRGAN: two consecutive pages of
+    /// the same size planned 1x3 of 1125x534 (predicted peak 8342 MB) and then 2x2 of 563x800, because
+    /// the budget had fallen from 8407 MB to 8333 MB — 74 MB, under 1%. That flip changed the padded
+    /// tensor shape, which released the cached session and rebuilt it: about 5 s of a chapter that
+    /// otherwise runs 3.6 s per page, and the falls and climbs in the VRAM plot. Pages that differ by a
+    /// few pixels are not affected either way — the padded shape rounds up to a multiple of 64
+    /// (<see cref="OnnxTiler.UniformTileTensorShape"/>), so a run of them shares a shape already.
+    /// </para>
+    /// </summary>
+    private (string Model, int Width, int Height, OnnxTiler.TileSplit Split, long Peak) _stickyPlan;
+
+    /// <summary>
+    /// How far the sticky plan's predicted peak may exceed the current budget before the page is
+    /// re-planned instead. The wobble this exists for measured under 1%; the bound is what stops a
+    /// genuinely shrinking budget from being ignored, and the memory-pressure descent remains the
+    /// backstop for anything the bound lets through.
+    /// </summary>
+    private const double StickyPlanBudgetTolerance = 0.05;
+
     /// <summary>
     /// Device memory the engine's own cached session holds once it has run a page, as the planner
     /// predicted it for the tile grid that ran.
@@ -1358,11 +1384,11 @@ public class OnnxUpscaleEngine(
                     config.Value.TileSize > 0
                         ? OnnxTiler.TileSplit.For(width, height, config.Value.TileSize)
                     : config.Value.TileSize < 0 ? OnnxTiler.TileSplit.For(width, height, 0)
-                    : OnnxTiler.PlanTileSplit(
+                    : ReuseOrPlanTileSplit(
+                        modelPath,
                         width,
                         height,
                         scale,
-                        modelPath,
                         budget,
                         modelSizeBytes,
                         isFp16,
@@ -1749,6 +1775,75 @@ public class OnnxUpscaleEngine(
     /// buffers now, a reused one allocates nothing (see <c>RecordObservedTileFootprint</c>).
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The sticky plan for <paramref name="modelPath"/> at this page size, or a fresh one when the last
+    /// plan was for a different model or page size, or no longer fits the budget within
+    /// <see cref="StickyPlanBudgetTolerance"/>. Internal so the reuse rule can be exercised without a
+    /// device.
+    /// </summary>
+    internal OnnxTiler.TileSplit ReuseOrPlanTileSplit(
+        string modelPath,
+        int width,
+        int height,
+        int scale,
+        long budget,
+        long modelSizeBytes,
+        bool isFp16,
+        DeviceMemoryProfile? profile
+    )
+    {
+        lock (_stickyPlanGate)
+        {
+            if (
+                string.Equals(_stickyPlan.Model, modelPath, StringComparison.Ordinal)
+                && _stickyPlan.Width == width
+                && _stickyPlan.Height == height
+                && _stickyPlan.Peak <= (long)(budget * (1 + StickyPlanBudgetTolerance))
+            )
+            {
+                logger.LogDebug(
+                    "Keeping the previous page's plan for {Model} at {Width}x{Height}: {Columns}x{Rows} tiles of {TileWidth}x{TileHeight} (predicted peak: {PeakMb} MB, budget: {BudgetMb} MB).",
+                    Path.GetFileName(modelPath),
+                    width,
+                    height,
+                    _stickyPlan.Split.Columns,
+                    _stickyPlan.Split.Rows,
+                    _stickyPlan.Split.TileWidth,
+                    _stickyPlan.Split.TileHeight,
+                    _stickyPlan.Peak / (1024 * 1024),
+                    budget / (1024 * 1024)
+                );
+                return _stickyPlan.Split;
+            }
+
+            OnnxTiler.TileSplit planned = OnnxTiler.PlanTileSplit(
+                width,
+                height,
+                scale,
+                modelPath,
+                budget,
+                modelSizeBytes,
+                isFp16,
+                profile
+            );
+            _stickyPlan = (
+                modelPath,
+                width,
+                height,
+                planned,
+                OnnxTiler.PredictTilePeakBytes(
+                    planned,
+                    scale,
+                    modelPath,
+                    modelSizeBytes,
+                    isFp16,
+                    profile
+                )
+            );
+            return planned;
+        }
+    }
+
     private (IDisposable Scope, InferenceSession Session, bool ShapeChanged) AcquireSessionForShape(
         string modelPath,
         OnnxTiler.TileSplit split
