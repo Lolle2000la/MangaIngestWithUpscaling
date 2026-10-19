@@ -149,6 +149,17 @@ public sealed class OnnxSessionFactory(
                 }
             }
 
+            // Said at Debug rather than Information: with MaxCachedSessions == 1 every model switch
+            // rebuilds a session, and a chapter that cycles through its candidate models does that once
+            // per page. Without this line the only visible symptom is a multi-second pause and a VRAM
+            // plot that falls and climbs again, which is what an operator reported.
+            logger.LogDebug(
+                "Session cache miss for {Model}; building one (capacity {Capacity}, currently cached: {Cached}).",
+                Path.GetFileName(fullPath),
+                MaxCachedSessions,
+                _sessions.Count
+            );
+
             InferenceSession session = CreateSession(fullPath);
             _sessions[fullPath] = session;
             _lruOrder.AddLast(fullPath);
