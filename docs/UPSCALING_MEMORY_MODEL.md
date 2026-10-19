@@ -235,20 +235,26 @@ matter for the grid the planner can reach:
   there counts our own session as a competitor: measured on an RTX 5070 Ti, the budget fell from 11125 to
   5113 MB and the planned tile from 563x800 to 375x400, below the quality floor, as one session grew.
   `OnnxTiler.VulkanUsageIsDeviceWide` detects that and leaves the addition out.
-* **The caller's own footprint is measured, not only predicted.** The arena's real contribution to the
-  used figure is the growth across a page — `vramAfter − vramBefore` from the driver's *per-process*
-  figure where it exists (`OnnxTiler.TryGetProcessMemoryBytes`, §4.1), and from the system-wide reading
-  otherwise, because a system-wide delta includes whatever another tenant did while the page ran — and it
-  is kept at its largest: a page that reuses the session adds nothing, so reassigning it would drop the
-  discount back to the prediction and the budget would wobble. With the driver-derived figure above the
-  two terms cancel to "the other tenants", so the budget is the same on the first page as on the tenth —
-  which is what keeps the tile shape from churning. (On NVIDIA the cancellation is one term short, since
-  the difference already holds our footprint; there the detection above leaves it out and the same
-  stability follows — measured over one session growing to 6 GB, the budget stayed at 10625 MB and the
-  plan at 2x2 of 563x800, where before the detection it fell to 5113 MB and 375x400.) Measured over four
-  consecutive pages of a 1125x1600 page at fp16 4x: 11086, 11148, 11104, 11125 MB — a 0.3% wobble — each
-  planning 2x2 of 563x800 (512 px of context) and reusing the session. Before, the same four pages went
-  7918 → 10964 → 7855 MB, changed tile shape on each, and spilled 6.5 GB into GTT.
+* **The caller's own footprint is the driver's per-process figure, not the grid's prediction.** The
+  discount is what `nvidia-smi`/the driver says this process holds (`OnnxTiler.TryGetProcessMemoryBytes`,
+  §4.1), read just before the page so it describes the same moment as the used figure it is subtracted
+  from. A prediction describes one tile grid: it freezes while the arena keeps growing, and after a shape
+  change it drops to the new grid's cost while the old grid's arena is still resident. Both happen in
+  practice. Measured on an RTX 5070 Ti, 1125x1600 page at fp16 4x ESRGAN, 2x2 of 563x800: the process held
+  7712 MB on page 2 and 8738 MB on page 24 while the other tenants stayed at ~3.0 GB throughout; the
+  predicted 7416 MB froze, so up to 1.6 GB of the engine's own memory was charged to those tenants and the
+  budget fell from 10211 to 9184 MB over one chapter with nothing else on the card changing. Across a
+  shape change it is the same story with a bigger step: page 4 planned against a figure 2.5 GB below the
+  process's real footprint because the previous grid's arena had not gone away. With the reading, the
+  budget is `total − other tenants − margin` on every page — ~10.8 GB for that card and chapter, flat —
+  and a released session drops the discount with it, so a stale discount cannot inflate the budget.
+  Where the driver has no per-process figure (a Vulkan implementation without the extension's per-process
+  answer, an unavailable nvidia-smi) the prediction is the fallback: the larger of the last grid's cost
+  and the largest per-page growth, kept rather than reassigned so a page that reuses its session does not
+  drop it to zero. Measured over four consecutive pages of a 1125x1600 page at fp16 4x before that
+  fallback existed in its current form: 11086, 11148, 11104, 11125 MB — a 0.3% wobble — each planning 2x2
+  of 563x800 (512 px of context) and reusing the session; before the discount at all, the same four pages
+  went 7918 → 10964 → 7855 MB, changed tile shape on each, and spilled 6.5 GB into GTT.
 * **It is read after the first-use benchmark and the model probe, not before them.** Both allocate device
   memory of their own — the benchmark runs two inferences on their own sessions (§6.1) and the probe
   creates a third — and ONNX Runtime's arenas keep their high-water mark, so that memory is resident while

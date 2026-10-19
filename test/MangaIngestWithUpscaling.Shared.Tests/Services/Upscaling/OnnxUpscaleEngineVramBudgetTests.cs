@@ -135,9 +135,11 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 0L)); // system-wide: +8000
         engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 0L));
         engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 0L));
-        // Four per-process reads per page; ours grows by 8500 across the page while the system-wide
-        // figure grows by 8000.
-        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // page start
+        // Four per-process reads on the page that builds its shape; ours grows by 8500 across the
+        // page while the system-wide figure grows by 8000. The first read is the one the budget
+        // discounts, so the first page already discounts the 500 MiB the process holds (its context
+        // and the model's weights) instead of nothing.
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // page start, discounted
         engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // plan line
         engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // the recording (nothing of its own)
         engine.ProcessReadings.Enqueue(9000L * 1024 * 1024); // after the page
@@ -145,7 +147,51 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         await RunPageAsync(engine, "1.webp");
         await RunPageAsync(engine, "2.webp");
 
-        Assert.Equal(new long[] { 0, 8_500L * 1024 * 1024 }, engine.OwnSessionBytesSeen);
+        Assert.Equal(
+            new long[] { 500L * 1024 * 1024, 8_500L * 1024 * 1024 },
+            engine.OwnSessionBytesSeen
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task AutomaticBudget_DiscountsWhatThisProcessHoldsNotWhatTheGridCosts()
+    {
+        // The prediction describes one tile grid; the process holds the arena of whatever ran last.
+        // Measured on an RTX 5070 Ti (1125x1600, fp16 4x ESRGAN, 2x2 of 563x800) the grid's cost
+        // stayed at 7416 MB while the process grew from 7712 MB to 8738 MB over 24 pages, so the
+        // budget fell by 1 GB over one chapter with nothing else on the card changing. The discount
+        // has to follow the process, or every page of growth is charged to the other tenants.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var engine = new RecordingBudgetEngine(
+            new CachedSessionFactory(modelPath),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+        // Page 1 builds the shape and reads four times (start, plan, recording, after); a page that
+        // reuses the shape reads three (start, plan, after). The first read of a page is the one the
+        // budget discounts, so the discount is the process's figure and follows its growth.
+        engine.ProcessReadings.Enqueue(300L * 1024 * 1024); // page 1 start, discounted
+        engine.ProcessReadings.Enqueue(300L * 1024 * 1024); // page 1 plan
+        engine.ProcessReadings.Enqueue(300L * 1024 * 1024); // page 1 recording
+        engine.ProcessReadings.Enqueue(6000L * 1024 * 1024); // page 1 after
+        engine.ProcessReadings.Enqueue(6000L * 1024 * 1024); // page 2 start, discounted
+        engine.ProcessReadings.Enqueue(6000L * 1024 * 1024); // page 2 plan
+        engine.ProcessReadings.Enqueue(6000L * 1024 * 1024); // page 2 after
+        engine.ProcessReadings.Enqueue(9500L * 1024 * 1024); // page 3 start, discounted
+        engine.ProcessReadings.Enqueue(9500L * 1024 * 1024); // page 3 plan
+        engine.ProcessReadings.Enqueue(9500L * 1024 * 1024); // page 3 after
+
+        await RunPageAsync(engine, "1.webp");
+        await RunPageAsync(engine, "2.webp");
+        await RunPageAsync(engine, "3.webp");
+
+        Assert.Equal(
+            new long[] { 300L * 1024 * 1024, 6000L * 1024 * 1024, 9500L * 1024 * 1024 },
+            engine.OwnSessionBytesSeen
+        );
     }
 
     [Fact]

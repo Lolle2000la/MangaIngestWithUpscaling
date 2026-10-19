@@ -169,27 +169,18 @@ public class OnnxUpscaleEngine(
     /// Device memory the engine's own cached session holds once it has run a page, as the planner
     /// predicted it for the tile grid that ran.
     /// <para>
-    /// ONNX Runtime's arenas keep their high-water mark, so after a page the accelerator still shows
-    /// this much held by this process, and the next page's budget was read against a card that looked
-    /// full. That is what made the plan walk: the grid shrank, the tile shape changed, the session was
-    /// rebuilt, and the tiles fell below <see cref="OnnxTiler.MinimumTileSize"/> on a card with
-    /// gigabytes free. The next page discounts this figure because the session is reused when the tile
-    /// shape is unchanged; see <see cref="ReadAutoVramBudget"/> for the measurement and
-    /// <see cref="_sessionShape"/> for the shape-churn cost the same session is kept for.
-    /// </para>
-    /// <para>
-    /// The prediction rather than a VRAM reading: it is stable across pages (so the discount does not
-    /// feed back into a smaller plan and walk the grid down), it needs no device query, and the
-    /// arena's high-water mark matches it within a few percent.
+    /// This is the fallback discount, used when the driver cannot answer for this process. The
+    /// discount the budget normally takes is the driver's per-process figure (see
+    /// <see cref="OwnSessionFootprintBytes"/>), because a prediction describes one grid: after a
+    /// shape change it drops to the new grid's cost while the previous grid's arena is still
+    /// resident, and it cannot see the arena growing from page to page.
     /// </para>
     /// </summary>
     private long _ownSessionPeakBytes;
 
     /// <summary>
-    /// Device memory this process's own work added, measured across the pages (vramAfter − vramBefore)
-    /// and kept at its largest. The read takes the larger of this and the predicted peak: the measured
-    /// figure is the arena's real contribution to the device's used figure, so subtracting it leaves the
-    /// budget the same on every page of a chapter — which is what stops the tile shape from churning.
+    /// Device memory this process's own work added across a page (vramAfter − vramBefore), kept at
+    /// its largest; the second input to the fallback discount above.
     /// </summary>
     private long _ownSessionMeasuredDeltaBytes;
 
@@ -308,6 +299,7 @@ public class OnnxUpscaleEngine(
                     origHeight,
                     scale,
                     deviceId,
+                    processVramBefore,
                     cancellationToken
                 );
 
@@ -1178,6 +1170,7 @@ public class OnnxUpscaleEngine(
         int height,
         int scale,
         int deviceId,
+        long? processVramBefore,
         CancellationToken cancellationToken
     )
     {
@@ -1212,6 +1205,7 @@ public class OnnxUpscaleEngine(
                     height,
                     scale,
                     deviceId,
+                    processVramBefore,
                     cancellationToken
                 );
                 // A success clears the recurrence counter, so two failures separated by an
@@ -1322,6 +1316,7 @@ public class OnnxUpscaleEngine(
         int height,
         int scale,
         int deviceId,
+        long? processVramBefore,
         CancellationToken cancellationToken
     )
     {
@@ -1344,7 +1339,7 @@ public class OnnxUpscaleEngine(
         // and the page peaked at 15.2 GB of the 16.3 GB card, spilling 2.4 GB into GTT; the GTT safety
         // net answered by flushing the session, the memory did not come back, and the pages after that
         // planned against a nearly full card and fell below the 256 px quality floor.
-        long ownSessionBytes = OwnSessionFootprintBytes();
+        long ownSessionBytes = OwnSessionFootprintBytes(processVramBefore);
         long budget =
             config.Value.ResolvedMemoryBudgetBytes > 0
                 ? config.Value.ResolvedMemoryBudgetBytes
@@ -1696,20 +1691,23 @@ public class OnnxUpscaleEngine(
     /// discounted from it.
     /// <para>
     /// The device figure counts the memory this process already holds: ONNX Runtime's arenas keep
-    /// their high-water mark, so right after a page the card still shows the ~12.5 GB that page's tiles
-    /// peaked at, and the next page's budget was read against a card that looked full. That is what
-    /// made the plan walk — measured on an RX 9070 XT, 1125x1600 page, fp16 4x ESRGAN: page 1 planned
-    /// 2x2 of 563x800 (512 px context, predicted 10.5 GB), page 2's budget was read as the 1.3 GB the
-    /// device had left and planned 5x7 of 225x229 — below the 256 px quality floor — and the pages
-    /// after that oscillated between 512 and 375 px context with a session rebuild each. Discounting
-    /// the session's own footprint leaves every page on the same full-quality grid, and the session is
-    /// then reused instead of rebuilt.
+    /// their high-water mark, so right after a page the card still shows the memory that page's tiles
+    /// peaked at, and the next page's budget would be read against a card that looked full. That is
+    /// what made the plan walk — measured on an RX 9070 XT, 1125x1600 page, fp16 4x ESRGAN: page 1
+    /// planned 2x2 of 563x800 (512 px context, predicted 10.5 GB), page 2's budget was read as the
+    /// 1.3 GB the device had left and planned 5x7 of 225x229 — below the 256 px quality floor — and
+    /// the pages after that oscillated between 512 and 375 px context with a session rebuild each.
     /// </para>
     /// <para>
-    /// The discount is taken only while the factory really caches that session. The page-break detector
-    /// shares the factory, so on a worker the two evict each other's model between pages, and the
-    /// engine's own GTT safety net flushes the cache after a page that grew GTT; in both cases the next
-    /// page allocates a fresh arena, so the memory it cannot reuse must count against it. An explicit
+    /// What is discounted is what the driver reports for this process, not the tile grid's predicted
+    /// cost, so the figure stays right while the arena grows from page to page and while a shape
+    /// change leaves the previous grid's arena behind. Measured on an RTX 5070 Ti with the 1600p
+    /// ESRGAN model at 2x2 of 563x800: the process held 7712 MB on the second page and 8738 MB on the
+    /// twenty-fourth while the other tenants stayed at ~3.0 GB throughout; the grid's predicted cost
+    /// (7416 MB) froze, so up to 1.6 GB of the engine's own memory was charged to those tenants and
+    /// the budget fell from 10211 to 9184 MB over one chapter with nothing else on the card changing.
+    /// The same figure makes the release paths self-correcting: once a session is dropped the
+    /// process's usage drops with it, so a stale discount cannot inflate the budget. An explicit
     /// <c>MemoryBudgetBytes</c> is the operator's own number for the whole session and is never
     /// discounted.
     /// </para>
@@ -1727,11 +1725,30 @@ public class OnnxUpscaleEngine(
         );
 
     /// <summary>
-    /// Device memory the engine's own cached session holds, or 0 when it holds none. Only the session
-    /// the shape gate last registered counts, and only while the factory still caches it.
+    /// The device memory to add back to the budget because this process already holds it: the
+    /// driver's per-process figure, or — where the driver has none — the cost predicted for the grid
+    /// that last ran, whichever of its two sources is larger.
+    /// <para>
+    /// The reading is taken just before the page (see <c>processVramBefore</c> in
+    /// <see cref="UpscaleFileStagedAsync"/>), so it describes the same moment as the device's used
+    /// figure the budget is derived from, and it costs no extra query.
+    /// </para>
     /// </summary>
-    private long OwnSessionFootprintBytes()
+    private long OwnSessionFootprintBytes(long? measuredThisProcess)
     {
+        // The driver's per-process figure is what the device's used figure charges *this* process, so
+        // discounting it leaves exactly the other tenants' share — the quantity the budget is allowed
+        // to ignore. It is also the only source that survives a shape change: the prediction describes
+        // one grid, so after the plan changes it drops immediately while the previous grid's arena is
+        // still resident.
+        if (measuredThisProcess is { } measured && measured > 0)
+        {
+            return measured;
+        }
+
+        // No per-process figure (a Vulkan implementation without the extension's per-process answer,
+        // an unavailable nvidia-smi): the grid's cost is the best available figure, as it always was.
+        // Returning zero instead would shrink the budget rather than merely make it less precise.
         lock (_sessionShapeGate)
         {
             return Math.Max(_ownSessionPeakBytes, _ownSessionMeasuredDeltaBytes);
