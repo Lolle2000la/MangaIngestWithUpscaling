@@ -65,6 +65,23 @@ public interface IOnnxSessionFactory : IDisposable
     Shared.Configuration.GpuBackend GetEffectiveBackend();
 
     /// <summary>
+    /// Abandons <paramref name="failed"/> for the rest of the process and resolves the next backend,
+    /// releasing the sessions built on it. Returns <paramref name="failed"/> itself when there is
+    /// nothing left to fall back to or the provider had already been abandoned, so a caller can tell
+    /// whether a retry on another provider is worth attempting.
+    /// <para>
+    /// This exists for a provider that attaches cleanly, passes the model probe at 256 px, and then
+    /// cannot run the same models on a real page: every candidate then fails structurally, which is
+    /// otherwise a permanently failed chapter (the verdicts are recorded per device fingerprint, so a
+    /// retry in a later process lands on the same provider and the same verdicts). The demotion is
+    /// once per process — nothing here re-enters — and the caller has to drop the model verdicts it
+    /// recorded on the abandoned provider, because those say nothing about the next one.
+    /// </para>
+    /// </summary>
+    Shared.Configuration.GpuBackend DemoteBackend(Shared.Configuration.GpuBackend failed) =>
+        GetEffectiveBackend();
+
+    /// <summary>
     /// Enters a scoped execution block during which active model sessions cannot be disposed by
     /// eviction or session invalidation. Multiple inference scopes may run concurrently.
     /// </summary>

@@ -841,6 +841,13 @@ public sealed class OnnxSessionFactory(
         }
     }
 
+    /// <summary>
+    /// The provider this process has abandoned because it could not run the models. The resolution
+    /// below skips it, so <see cref="DemoteBackend"/> is the only writer and re-resolution cannot
+    /// land on it again.
+    /// </summary>
+    private GpuBackend? _abandonedBackend;
+
     public GpuBackend GetEffectiveBackend()
     {
         // Cached once the answer is final. The probe below builds a SessionOptions and asks the
@@ -882,6 +889,41 @@ public sealed class OnnxSessionFactory(
         }
     }
 
+    public GpuBackend DemoteBackend(GpuBackend failed)
+    {
+        lock (_backendGate)
+        {
+            if (
+                failed == GpuBackend.CPU
+                || _abandonedBackend is not null
+                || _resolvedBackend != failed
+            )
+            {
+                return _resolvedBackend ?? failed;
+            }
+
+            _abandonedBackend = failed;
+            // Clearing the cache is what makes the next resolution treat the abandoned provider as
+            // absent; the other two flags describe a probe that may recover, which is not this case.
+            _resolvedBackend = null;
+            _backendResolutionWasTransient = false;
+            _probeWasTransient = false;
+        }
+
+        // Sessions built on the abandoned provider are useless for the next page and hold the memory
+        // this change is not about; released before the next resolution so nothing is attached twice.
+        ReleaseCachedSessions();
+
+        GpuBackend next = GetEffectiveBackend();
+        logger.LogWarning(
+            "The {Abandoned} execution provider could not run these models on a real page; abandoning "
+                + "it for the rest of the process. The next page runs on {Next}.",
+            failed,
+            next
+        );
+        return next;
+    }
+
     private GpuBackend ResolveEffectiveBackend()
     {
         UpscalerConfig currentConfig = config.Value;
@@ -909,7 +951,10 @@ public sealed class OnnxSessionFactory(
             // Returning the preference unverified would let the engine identity, the calibration
             // fingerprint and the logs name a backend that is not the one running — the opposite of
             // what EngineIdentity documents. The same append the Auto path probes decides it here.
-            if (CanAttach(backend, Math.Max(0, currentConfig.SelectedDeviceIndex - 1)))
+            if (
+                backend != _abandonedBackend
+                && CanAttach(backend, Math.Max(0, currentConfig.SelectedDeviceIndex - 1))
+            )
             {
                 return backend;
             }
@@ -940,11 +985,17 @@ public sealed class OnnxSessionFactory(
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             using var testOptions = new SessionOptions();
-            if (TryConfigureCuda(testOptions, deviceId, "probe"))
+            if (
+                _abandonedBackend != GpuBackend.CUDA
+                && TryConfigureCuda(testOptions, deviceId, "probe")
+            )
             {
                 return GpuBackend.CUDA;
             }
-            if (TryConfigureWebGpu(testOptions, deviceId, "probe"))
+            if (
+                _abandonedBackend != GpuBackend.WebGPU
+                && TryConfigureWebGpu(testOptions, deviceId, "probe")
+            )
             {
                 return GpuBackend.WebGPU;
             }
@@ -954,15 +1005,24 @@ public sealed class OnnxSessionFactory(
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             using var testOptions = new SessionOptions();
-            if (TryConfigureWebGpu(testOptions, deviceId, "probe"))
+            if (
+                _abandonedBackend != GpuBackend.WebGPU
+                && TryConfigureWebGpu(testOptions, deviceId, "probe")
+            )
             {
                 return GpuBackend.WebGPU;
             }
-            if (TryConfigureDirectML(testOptions, deviceId, "probe"))
+            if (
+                _abandonedBackend != GpuBackend.DirectML
+                && TryConfigureDirectML(testOptions, deviceId, "probe")
+            )
             {
                 return GpuBackend.DirectML;
             }
-            if (TryConfigureCuda(testOptions, deviceId, "probe"))
+            if (
+                _abandonedBackend != GpuBackend.CUDA
+                && TryConfigureCuda(testOptions, deviceId, "probe")
+            )
             {
                 return GpuBackend.CUDA;
             }
@@ -972,7 +1032,10 @@ public sealed class OnnxSessionFactory(
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             using var testOptions = new SessionOptions();
-            if (TryConfigureWebGpu(testOptions, deviceId, "probe"))
+            if (
+                _abandonedBackend != GpuBackend.WebGPU
+                && TryConfigureWebGpu(testOptions, deviceId, "probe")
+            )
             {
                 return GpuBackend.WebGPU;
             }

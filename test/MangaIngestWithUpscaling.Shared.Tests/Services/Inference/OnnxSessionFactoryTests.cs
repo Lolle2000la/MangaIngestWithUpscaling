@@ -514,6 +514,35 @@ public class OnnxSessionFactoryTests : IDisposable
             )
         );
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void DemoteBackend_FromCpu_HasNowhereToFallBackTo()
+    {
+        // CPU is the end of the ladder: reporting a different provider here would make the engine
+        // retry the page forever on the same provider.
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        Assert.Equal(GpuBackend.CPU, factory.DemoteBackend(GpuBackend.CPU));
+        Assert.Equal(GpuBackend.CPU, factory.GetEffectiveBackend());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void DemoteBackend_OfAProviderThatIsNotInUse_KeepsTheResolution()
+    {
+        // Only the provider actually in use can be abandoned; a caller that names another one (a
+        // stale resolution, a race) must not cost the process its working backend.
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+        GpuBackend resolved = factory.GetEffectiveBackend();
+        GpuBackend notInUse =
+            resolved == GpuBackend.WebGPU ? GpuBackend.DirectML : GpuBackend.WebGPU;
+
+        Assert.Equal(resolved, factory.DemoteBackend(notInUse));
+        Assert.Equal(resolved, factory.GetEffectiveBackend());
+    }
+
     private static void InvokeDrainRetired(OnnxSessionFactory factory) =>
         (
             typeof(OnnxSessionFactory).GetMethod(

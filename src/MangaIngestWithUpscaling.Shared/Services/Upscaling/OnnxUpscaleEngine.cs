@@ -243,21 +243,27 @@ public class OnnxUpscaleEngine(
                 // A page resolves to a preference list rather than one model: whether the most
                 // preferred model can run at all is a property of the execution provider and
                 // the device, and is only discovered when it returns valid output. The architecture
-                // order inside that list is the configured one.
-                IReadOnlyList<string> candidates = SelectModelCandidates(
-                    ModelsDirectory,
-                    isGrayscale,
-                    origHeight,
-                    scale,
-                    ModelArchitecturePreference.Resolve(config.Value.PreferredModelArchitectures),
-                    // The precision the operator asked for (or the backend's own answer when the
-                    // setting is unset). Which copy runs is decided here, while EngineIdentity records
-                    // that same precision: with fp16 switched off but the fp16 copy ranked first
-                    // anyway, the engine would run fp16 while the identity said fp32 — contradicting
-                    // the setting and letting two workers that agree on the identity disagree on the
-                    // pixels.
-                    config.Value.ResolveUseFp16(sessionFactory.GetEffectiveBackend())
-                );
+                // order inside that list is the configured one. It is a function rather than a value
+                // because a provider demotion changes the answer — the precision comes from the
+                // backend's own probe — and the retry has to rank the models for the provider that
+                // will actually run.
+                IReadOnlyList<string> SelectCandidates() =>
+                    SelectModelCandidates(
+                        ModelsDirectory,
+                        isGrayscale,
+                        origHeight,
+                        scale,
+                        ModelArchitecturePreference.Resolve(
+                            config.Value.PreferredModelArchitectures
+                        ),
+                        // The precision the operator asked for (or the backend's own answer when the
+                        // setting is unset). Which copy runs is decided here, while EngineIdentity
+                        // records that same precision: with fp16 switched off but the fp16 copy ranked
+                        // first anyway, the engine would run fp16 while the identity said fp32 —
+                        // contradicting the setting and letting two workers that agree on the
+                        // identity disagree on the pixels.
+                        config.Value.ResolveUseFp16(sessionFactory.GetEffectiveBackend())
+                    );
 
                 // The alpha band is dropped, not composited. This is the same choice the detector
                 // makes (SplitDetectionService) for the same reason: the reference keeps the colour
@@ -293,13 +299,14 @@ public class OnnxUpscaleEngine(
 
                 (string model, byte[] upscaledBytes) = await UpscaleWithFirstWorkingModelAsync(
                     inputPath,
-                    candidates,
+                    SelectCandidates,
                     inputBytes,
                     origWidth,
                     origHeight,
                     scale,
                     deviceId,
                     processVramBefore,
+                    allowProviderDemotion: true,
                     cancellationToken
                 );
 
@@ -1164,34 +1171,41 @@ public class OnnxUpscaleEngine(
     /// </summary>
     private async Task<(string Model, byte[] Bytes)> UpscaleWithFirstWorkingModelAsync(
         string inputPath,
-        IReadOnlyList<string> candidates,
+        Func<IReadOnlyList<string>> selectCandidates,
         byte[] inputBytes,
         int width,
         int height,
         int scale,
         int deviceId,
         long? processVramBefore,
+        bool allowProviderDemotion,
         CancellationToken cancellationToken
     )
     {
+        IReadOnlyList<string> candidates = selectCandidates();
         var unusable = new List<string>();
         Exception? firstTransientProbeFailure = null;
         int nonFiniteCandidates = 0;
+        // Whether the ladder failed for the provider's reasons (it could not run these models) or for
+        // ours (a tiler config fault, a bug). Only the former justifies abandoning the provider.
+        bool sawProviderFault = false;
+        bool sawNonProviderFault = false;
 
         foreach (string modelPath in candidates)
         {
-            (bool usable, Exception? transientFailure) = await ModelUsableOnThisDeviceAsync(
-                modelPath,
-                scale,
-                deviceId,
-                cancellationToken
-            );
+            (bool usable, Exception? transientFailure, Exception? structuralFailure) =
+                await ModelUsableOnThisDeviceAsync(modelPath, scale, deviceId, cancellationToken);
             if (!usable)
             {
                 // Keep the first transient failure even when a later structural failure follows:
                 // the transient one is the one a retry could get past, and losing its type is what
                 // turns a recoverable resource hiccup into a permanent chapter failure upstream.
                 firstTransientProbeFailure ??= transientFailure;
+                if (structuralFailure is not null)
+                {
+                    sawProviderFault = true;
+                }
+
                 continue;
             }
 
@@ -1245,6 +1259,8 @@ public class OnnxUpscaleEngine(
                 // rethrown so the caller can retry the page.
                 if (IsModelFault(ex))
                 {
+                    sawProviderFault = true;
+
                     // Only a failure that is plausibly the model's is eligible for the permanent
                     // verdict, and even then MarkModelUnusable records it only for a deterministic
                     // fault or a repeated one: a single provider status (a driver reset, a stalled
@@ -1254,6 +1270,12 @@ public class OnnxUpscaleEngine(
                     // working model out of service for the rest of the process on the strength of a
                     // bug in our own code.
                     MarkModelUnusable(modelPath, scale, ex);
+                }
+                else
+                {
+                    // The tiler's own contract (a TileSize it rejects, a blend region wider than a
+                    // tile) — a rebuild or another provider changes nothing about it.
+                    sawNonProviderFault = true;
                 }
 
                 unusable.Add(Path.GetFileName(modelPath));
@@ -1291,6 +1313,49 @@ public class OnnxUpscaleEngine(
                     + "execution provider. This is the provider not being able to run these models, not "
                     + "a property of the page."
             );
+        }
+
+        // Nothing in the ladder could run. Before failing the page — and with it the chapter, because
+        // the verdicts are recorded per device fingerprint and a later process lands on the same
+        // provider — try the next provider once. A broken *model* does not reach here (another
+        // candidate would have worked), so every candidate failing structurally is the provider's
+        // answer rather than the page's.
+        GpuBackend failedOn = sessionFactory.GetEffectiveBackend();
+        if (allowProviderDemotion && sawProviderFault && !sawNonProviderFault)
+        {
+            GpuBackend next = sessionFactory.DemoteBackend(failedOn);
+            if (next != failedOn)
+            {
+                // The verdicts above were recorded on the provider that has just been abandoned; a
+                // model that cannot run there is exactly what the next provider is being tried for.
+                lock (_modelUsable)
+                {
+                    _modelUsable.Clear();
+                    _modelFailureCount.Clear();
+                }
+
+                logger.LogWarning(
+                    "No candidate model could upscale a {Width}x{Height} page at {Scale}x on the {Failed} execution provider; retrying the page on {Next}.",
+                    width,
+                    height,
+                    scale,
+                    failedOn,
+                    next
+                );
+
+                return await UpscaleWithFirstWorkingModelAsync(
+                    inputPath,
+                    selectCandidates,
+                    inputBytes,
+                    width,
+                    height,
+                    scale,
+                    deviceId,
+                    processVramBefore,
+                    allowProviderDemotion: false,
+                    cancellationToken
+                );
+            }
         }
 
         throw new InvalidOperationException(
@@ -1977,7 +2042,11 @@ public class OnnxUpscaleEngine(
     /// the whole page.
     /// </para>
     /// </summary>
-    private async Task<(bool Usable, Exception? TransientFailure)> ModelUsableOnThisDeviceAsync(
+    private async Task<(
+        bool Usable,
+        Exception? TransientFailure,
+        Exception? StructuralFailure
+    )> ModelUsableOnThisDeviceAsync(
         string modelPath,
         int scale,
         int deviceId,
@@ -1990,7 +2059,7 @@ public class OnnxUpscaleEngine(
         {
             if (_modelUsable.TryGetValue(key, out bool known))
             {
-                return (known, null);
+                return (known, null, null);
             }
         }
 
@@ -2018,12 +2087,13 @@ public class OnnxUpscaleEngine(
                 _modelUsable[key] = verdict;
             }
 
-            return (verdict, null);
+            return (verdict, null, null);
         }
 
         bool usable;
         bool cacheVerdict = true;
         Exception? transientFailure = null;
+        Exception? structuralFailure = null;
         try
         {
             usable = await Task.Run(
@@ -2152,6 +2222,9 @@ public class OnnxUpscaleEngine(
 
             usable = false;
             cacheVerdict = permanentVerdict;
+            // Only a failure the provider reports for the model itself is a reason to blame the
+            // provider; this code's own config fault leaves this null and must not demote anything.
+            structuralFailure = IsModelFault(ex) ? ex : null;
         }
 
         if (cacheVerdict)
@@ -2166,7 +2239,7 @@ public class OnnxUpscaleEngine(
             );
         }
 
-        return (usable, transientFailure);
+        return (usable, transientFailure, structuralFailure);
     }
 
     /// <summary>

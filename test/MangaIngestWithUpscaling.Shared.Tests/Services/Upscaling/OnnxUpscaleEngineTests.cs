@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Tests.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.ML.OnnxRuntime;
 using NetVips;
 using NSubstitute;
 using Xunit;
@@ -864,6 +865,80 @@ public class OnnxUpscaleEngineTests : IDisposable
         Assert.True(runs.Count >= 3, $"expected at least one run per page, saw {runs.Count}");
         Assert.Single(runs.Select(run => run.ThreadId).Distinct());
         Assert.All(runs, run => Assert.Equal("onnx-inference", run.ThreadName));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UpscaleFileAsync_RetriesOnTheNextProviderWhenTheWholeLadderFails()
+    {
+        // A provider can attach cleanly, pass the 256 px probe, and still fail on a real page — a
+        // kernel it does not implement for the operating shape, for instance. Every candidate then
+        // fails structurally, and without this the chapter is permanently stuck: the verdicts are
+        // stored per device fingerprint, so a later process lands on the same provider and the same
+        // verdicts. The engine abandons the provider once and retries the page on the next one.
+        const int width = 64;
+        const int height = 90;
+        const int scale = 2;
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, scale);
+        string inputPath = CreateTestJpeg(_tempDir, width, height);
+
+        GpuBackend backend = GpuBackend.CUDA;
+        int demotions = 0;
+        using var session = new InferenceSession(modelPath);
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        factory.GetEffectiveBackend().Returns(_ => backend);
+        factory.GetOrCreateSession(Arg.Any<string>()).Returns(session);
+        factory
+            .DemoteBackend(GpuBackend.CUDA)
+            .Returns(_ =>
+            {
+                demotions++;
+                backend = GpuBackend.WebGPU;
+                return GpuBackend.WebGPU;
+            });
+
+        var engine = new OnnxUpscaleEngine(
+            factory,
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            Substitute.For<IDeviceMemoryCalibrator>(),
+            NullLogger<OnnxUpscaleEngine>.Instance
+        );
+
+        OnnxTiler.RunImplOverride.Value = (runSession, input) =>
+        {
+            if (backend == GpuBackend.CUDA)
+            {
+                throw new ModelContractMismatchException(
+                    "the provider does not implement this graph at this shape"
+                );
+            }
+
+            return runSession.Run([input]);
+        };
+
+        string outputPath = Path.Combine(_tempDir, "demoted.webp");
+        try
+        {
+            await engine.UpscaleFileAsync(
+                inputPath,
+                outputPath,
+                scale,
+                CompressionFormat.Webp,
+                quality: 80,
+                TestContext.Current.CancellationToken
+            );
+        }
+        finally
+        {
+            OnnxTiler.RunImplOverride.Value = null!;
+        }
+
+        Assert.True(
+            File.Exists(outputPath),
+            "the page must complete on the provider it fell back to"
+        );
+        Assert.Equal(1, demotions);
+        Assert.Equal(GpuBackend.WebGPU, backend);
     }
 
     [Fact]

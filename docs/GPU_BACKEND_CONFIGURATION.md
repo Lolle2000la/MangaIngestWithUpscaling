@@ -48,6 +48,16 @@ falls back to CPU (`:latest-cuda` is the build that ships CUDA). `ROCm`, `ROCm_G
 accepted as legacy aliases and are treated as `WebGPU`, and `CUDA_12_8` as `CUDA` — on AMD cards the
 ROCm EP could not compile the transformer models at all, so WebGPU is the path that works.
 
+A provider that attaches cleanly can still be unable to run the models: it passes the 256 px probe and
+fails on a real page — a kernel it does not implement at the operating shape, a driver bug. When every
+candidate model fails that way, the engine abandons the provider **once for the process** and retries the
+page on the next one in the order above, logging which provider it left and which it moved to. Without
+that the chapter would be stuck for good: the per-model verdicts are stored per device fingerprint,
+which includes the provider, so a later run lands on the same provider and the same verdicts. The
+demotion is one-way and only fires when nothing in the ladder could run — a single broken *model* is
+handled by trying the next candidate model instead, and a memory failure is a retryable page failure,
+not a provider verdict.
+
 Environment variable:
 ```bash
 export Ingest_Upscaler__PreferredGpuBackend=Auto
