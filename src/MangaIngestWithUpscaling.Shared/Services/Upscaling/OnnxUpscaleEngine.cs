@@ -1432,6 +1432,11 @@ public class OnnxUpscaleEngine(
                 // before it retries, so the attempt that finally runs finds its shape already
                 // registered (see ReleaseAndRegisterSessionShape).
                 bool shapeBuiltFresh = false;
+                // The baseline the page's footprint is measured from. Normally the pre-page reading;
+                // on a page whose shape changed it is re-read below, because the gate releases the
+                // previous grid's session first (see there).
+                long observedVramBefore = vramBefore;
+                long? observedProcessBefore = processVramBefore;
                 while (true)
                 {
                     try
@@ -1449,6 +1454,21 @@ public class OnnxUpscaleEngine(
                         shapeBuiltFresh = shapeChanged;
                         using (sessionScope)
                         {
+                            if (shapeChanged)
+                            {
+                                // The release above is what makes this page a measurement of its own
+                                // shape: the previous grid's arena is gone, so what the process grows
+                                // by is this grid's cost. A baseline taken before the release measures
+                                // the *difference* between two arenas instead. Measured on an RTX 5070
+                                // Ti, switching from 1216x576 to 1408x512 recorded 250 MB for a shape
+                                // that had cost 8418 MB a quarter of an hour earlier — the arena being
+                                // freed was the larger one — and the same switch was recorded at 1952
+                                // and 2050 MB elsewhere. The band in the planner rejected those, so
+                                // they never reached a plan, but they polluted the store and the log.
+                                (observedVramBefore, _) = ReadDeviceMemoryUsage(deviceId);
+                                observedProcessBefore = ReadProcessMemoryBytes(deviceId);
+                            }
+
                             upscaledBytes = UpscaleViaTiler(
                                 inputBytes,
                                 width,
@@ -1576,8 +1596,8 @@ public class OnnxUpscaleEngine(
                     modelPath,
                     scale,
                     attempt,
-                    vramBefore,
-                    processVramBefore,
+                    observedVramBefore,
+                    observedProcessBefore,
                     shapeBuiltFresh
                 );
 

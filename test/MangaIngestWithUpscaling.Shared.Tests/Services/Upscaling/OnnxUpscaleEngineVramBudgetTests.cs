@@ -105,7 +105,9 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         );
         engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 10L));
         engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L)); // page 1: +8000 MiB
-        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L));
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L)); // after the shape gate
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L)); // the recording
+        engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L)); // after the page
         engine.DeviceReadings.Enqueue((9000L * 1024 * 1024, 10L));
 
         await RunPageAsync(engine, "1.webp");
@@ -141,7 +143,8 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         // and the model's weights) instead of nothing.
         engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // page start, discounted
         engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // plan line
-        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // the recording (nothing of its own)
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // after the shape gate
+        engine.ProcessReadings.Enqueue(9000L * 1024 * 1024); // the recording (nothing of its own)
         engine.ProcessReadings.Enqueue(9000L * 1024 * 1024); // after the page
 
         await RunPageAsync(engine, "1.webp");
@@ -292,13 +295,16 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         // System-wide: 1000 -> 7000, a 6000 MB delta...
         engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
         engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L)); // after the shape gate
         engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
         engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
         // ...and the driver's own figure says the page cost this process 9000 MB, which is what the
         // next plan has to be sized from.
-        // Four per-process reads per page: around the page and at the plan line, plus the recording's.
+        // Five per-process reads on a page that builds its shape: around the page, at the plan line,
+        // after the shape gate, the recording's, and the outer one after the page.
         engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // page start
         engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // plan line
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // after the shape gate
         engine.ProcessReadings.Enqueue(9500L * 1024 * 1024); // the recording
         engine.ProcessReadings.Enqueue(9500L * 1024 * 1024); // after the page
 
@@ -336,19 +342,21 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
             NullLogger<OnnxUpscaleEngine>.Instance,
             FixedBudget
         );
-        // Per page: the outer read before the page, the plan-line read, the read the recording takes,
-        // and the outer read after the page.
+        // On the page that builds its shape: the outer read before the page, the plan-line read, the
+        // read after the shape gate released the previous grid, the read the recording takes, and the
+        // outer read after the page.
         engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
         engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L));
+        engine.DeviceReadings.Enqueue((1000L * 1024 * 1024, 0L)); // after the shape gate
         engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
         engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
         // The second page runs the same shape, which the session already holds: it allocates nothing
-        // of its own, so it measures nothing and must not record. Its readings are deliberately *not*
-        // flat — a page at a reused shape still shows growth from whatever else allocated while it
-        // ran — because that is exactly the figure the shape guard exists to keep out of the store.
+        // of its own, so it measures nothing and must not record — and it takes no gate read, because
+        // the gate did not change. Its readings are deliberately *not* flat — a page at a reused shape
+        // still shows growth from whatever else allocated while it ran — because that is exactly the
+        // figure the shape guard exists to keep out of the store.
         engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
         engine.DeviceReadings.Enqueue((7000L * 1024 * 1024, 0L));
-        engine.DeviceReadings.Enqueue((7500L * 1024 * 1024, 0L));
         engine.DeviceReadings.Enqueue((7500L * 1024 * 1024, 0L));
 
         await RunPageAsync(engine, "1.webp");
@@ -382,6 +390,84 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
             );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Page_MeasuresItsOwnShapeAfterThePreviousGridWasReleased()
+    {
+        // The shape gate releases the previous grid's session before the page runs, so the baseline the
+        // footprint is measured from has to be taken after that release. Measured on an RTX 5070 Ti,
+        // switching from 1216x576 to 1408x512 recorded 250 MB for a shape that had cost 8418 MB minutes
+        // earlier, and the same switch recorded 1952 and 2050 MB elsewhere: the reading spanned both
+        // arenas instead of this one. The planner's band rejected those, but they still reached the
+        // store and the log — and a value inside the band would have sized a plan from it.
+        string modelPath = TinyOnnxModel.WriteNearestUpscaler(_tempDir, Scale);
+        var calibrator = Substitute.For<IDeviceMemoryCalibrator>();
+        var engine = new RecordingBudgetEngine(
+            new CachedSessionFactory(modelPath),
+            Options.Create(new UpscalerConfig { ModelsDirectory = _tempDir, UseCPU = true }),
+            calibrator,
+            NullLogger<OnnxUpscaleEngine>.Instance,
+            FixedBudget
+        );
+
+        // Page 1 builds its shape: 500 MB at the plan line, 500 MB once the gate has run, 3000 MB after
+        // the page — so its shape cost 2500 MB.
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // page start (also the discount)
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // plan line
+        engine.ProcessReadings.Enqueue(500L * 1024 * 1024); // after the shape gate
+        engine.ProcessReadings.Enqueue(3000L * 1024 * 1024); // the recording
+        engine.ProcessReadings.Enqueue(3000L * 1024 * 1024); // after the page
+        // Page 2 runs a wider page, so the gate releases page 1's grid first: 7000 MB before that
+        // release (the old arena is still resident), 1000 MB after it, 2600 MB after the page. Its
+        // shape cost 1600 MB — not 2600 - 7000, which is negative, and not 2600 - 500.
+        engine.ProcessReadings.Enqueue(7000L * 1024 * 1024); // page start (also the discount)
+        engine.ProcessReadings.Enqueue(7000L * 1024 * 1024); // plan line
+        engine.ProcessReadings.Enqueue(1000L * 1024 * 1024); // after the shape gate
+        engine.ProcessReadings.Enqueue(2600L * 1024 * 1024); // the recording
+        engine.ProcessReadings.Enqueue(2600L * 1024 * 1024); // after the page
+        // Both footprints come from the per-process figure, so the system-wide readings are only
+        // consumed: four per page that builds a shape (before, plan line, gate, after).
+        for (int i = 0; i < 8; i++)
+        {
+            engine.DeviceReadings.Enqueue((2000L * 1024 * 1024, 0L));
+        }
+
+        const int WiderWidth = 512;
+        await RunPageAsync(engine, "1.webp", Width, Height);
+        await RunPageAsync(engine, "2.webp", WiderWidth, Height);
+
+        (int firstWidth, int firstHeight) = OnnxTiler.UniformTileTensorShape(
+            PlannedSplit(modelPath, Width, Height)
+        );
+        (int secondWidth, int secondHeight) = OnnxTiler.UniformTileTensorShape(
+            PlannedSplit(modelPath, WiderWidth, Height)
+        );
+        Assert.NotEqual((firstWidth, firstHeight), (secondWidth, secondHeight));
+
+        calibrator
+            .Received(1)
+            .RecordObservedTilePeak(
+                0,
+                _tempDir,
+                modelPath,
+                Scale,
+                firstWidth,
+                firstHeight,
+                2500L * 1024 * 1024
+            );
+        calibrator
+            .Received(1)
+            .RecordObservedTilePeak(
+                0,
+                _tempDir,
+                modelPath,
+                Scale,
+                secondWidth,
+                secondHeight,
+                1600L * 1024 * 1024
+            );
+    }
+
     /// <summary>
     /// The footprint the engine should discount after a page: the planner's predicted peak for the grid
     /// it ran. Recomputed here from the same inputs so the test pins the figure rather than "something
@@ -403,9 +489,12 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
     }
 
     private static OnnxTiler.TileSplit PlannedSplit(string modelPath) =>
+        PlannedSplit(modelPath, Width, Height);
+
+    private static OnnxTiler.TileSplit PlannedSplit(string modelPath, int width, int height) =>
         OnnxTiler.PlanTileSplit(
-            Width,
-            Height,
+            width,
+            height,
             Scale,
             modelPath,
             FixedBudget,
@@ -420,10 +509,18 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
             && meta.ElementType == typeof(Float16);
     }
 
-    private async Task RunPageAsync(OnnxUpscaleEngine engine, string outputName)
+    private async Task RunPageAsync(OnnxUpscaleEngine engine, string outputName) =>
+        await RunPageAsync(engine, outputName, Width, Height);
+
+    private async Task RunPageAsync(
+        OnnxUpscaleEngine engine,
+        string outputName,
+        int width,
+        int height
+    )
     {
         await engine.UpscaleFileAsync(
-            CreateTestJpeg(),
+            CreateTestJpeg(width, height),
             Path.Combine(_tempDir, outputName),
             Scale,
             CompressionFormat.Webp,
@@ -432,21 +529,23 @@ public class OnnxUpscaleEngineVramBudgetTests : IDisposable
         );
     }
 
-    private string CreateTestJpeg()
+    private string CreateTestJpeg() => CreateTestJpeg(Width, Height);
+
+    private string CreateTestJpeg(int width, int height)
     {
-        byte[] rgb = new byte[Width * Height * 3];
-        for (int y = 0; y < Height; y++)
+        byte[] rgb = new byte[width * height * 3];
+        for (int y = 0; y < height; y++)
         {
-            for (int x = 0; x < Width; x++)
+            for (int x = 0; x < width; x++)
             {
-                int i = (y * Width + x) * 3;
+                int i = (y * width + x) * 3;
                 rgb[i] = (byte)(x % 256);
                 rgb[i + 1] = (byte)(y % 256);
                 rgb[i + 2] = (byte)((x + y) % 256);
             }
         }
 
-        using var image = Image.NewFromMemory(rgb, Width, Height, 3, Enums.BandFormat.Uchar);
+        using var image = Image.NewFromMemory(rgb, width, height, 3, Enums.BandFormat.Uchar);
         string path = Path.Combine(_tempDir, $"engine_budget_{Guid.NewGuid():N}.jpg");
         image.WriteToFile(path, new VOption());
         return path;

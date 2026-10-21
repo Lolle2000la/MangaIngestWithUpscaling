@@ -734,8 +734,13 @@ overheads weigh relatively more at the small end. The estimate is therefore chec
 as soon as one exists.
 
 Every page the engine builds a fresh tensor shape for measures what that shape cost: the growth of the
-device's usage between the reading taken just before the page's session was acquired and the reading
-taken after the page. That figure — the model weights if the page uploaded them, the provider's buffers
+device's usage across the page, from a reading taken **after** the shape gate released the previous grid's
+session and acquired this one, to one taken after the page. The "after the release" half matters: a
+baseline read before it spans both arenas, so the figure becomes the *difference* between two grids rather
+than this one's cost. Measured on an RTX 5070 Ti, switching from 1216x576 to 1408x512 recorded 250 MB for a
+shape that had cost 8418 MB minutes earlier, and the same switch recorded 1952 and 2050 MB elsewhere. The
+planner's band below rejected those, so one never reached a plan, but they were stored and logged as if
+they were measurements. That figure — the model weights if the page uploaded them, the provider's buffers
 for the shape, and its arena — is stored per **(device fingerprint, model key, padded shape × scale)** in
 `observedTilePeaks` inside the model's own profile entry, kept at its largest, and the next plan for that
 shape uses it instead of the analytic estimate. A page that reused a shape measures nothing and records
@@ -749,7 +754,7 @@ with the model's own profile entry in place:
 | figure | value |
 |---|---|
 | analytic estimate (`PredictTilePeakBytes`) | 9327 MB |
-| page growth measured from the pre-session reading | 9651 MB |
+| page growth measured across the page | 9651 MB |
 
 The estimate was 3.4 % *below* the measurement there — the opposite of the conservative direction, and
 exactly the case the margin was absorbing: the plan fits the budget on paper (9327 MB of 10946 MB) and
