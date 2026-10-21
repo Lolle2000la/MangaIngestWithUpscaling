@@ -1,0 +1,59 @@
+# Workflow files are code that only runs on GitHub, so nothing in the .NET build touches them: a
+# misspelled job id, a `needs:` edge to a job that was renamed, an expression that evaluates to an
+# empty string, or a `run:` block with a shell bug is only discovered when the workflow runs — which
+# for the release workflows means after the merge. actionlint checks all of it statically, including
+# shellcheck over every `run:` block.
+#
+# Separate from dotnet.yml and path-filtered: a PR that does not touch .github/ has nothing to lint
+# and should not pay for a runner.
+name: Workflow Lint
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/actionlint.yaml"
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actionlint.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned by version and checksum rather than "latest": a linter that changes under the
+      # repository can fail a PR for a rule the author never saw, and the download is the only
+      # third-party code this job runs.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --status
+          tar -xzf "$archive" actionlint
+
+      - name: Check the workflows
+        run: ./actionlint -color
+
+      # shellcheck ships on the runner image; actionlint only uses it when it is on the PATH, and
+      # without it the `run:` blocks are parsed but not linted. Fail loudly rather than silently
+      # checking less than the job claims to.
+      - name: Confirm shellcheck was available to actionlint
+        run: |
+          set -euo pipefail
+          if ! command -v shellcheck > /dev/null; then
+            echo "shellcheck is missing on this runner; actionlint checked less than this job claims." >&2
+            exit 1
+          fi
