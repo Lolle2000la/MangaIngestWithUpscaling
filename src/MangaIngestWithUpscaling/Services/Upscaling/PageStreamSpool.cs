@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 
@@ -58,7 +59,7 @@ public enum ReserveInFlightResult
 /// or profile changed) has its spool discarded so old and new bytes are never mixed.
 ///
 /// The identity covers the source file and the upscaler profile; the worker additionally supplies an
-/// opaque engine identity (its models, resolved backend, build and Python runtime). A manifest whose
+/// opaque engine identity (its models, resolved backend and build). A manifest whose
 /// content or engine identity differs resets the spool, and a page produced by a different engine is
 /// rejected, so pages from different engines are never mixed into one chapter.
 ///
@@ -67,67 +68,32 @@ public enum ReserveInFlightResult
 /// </summary>
 public sealed class PageStreamSpool : IPageSpoolStore
 {
-    /// <summary>Upper bound on the total bytes spooled for one task, so a chapter cannot fill the disk.</summary>
-    public const long MaxTaskBytes = 8L * 1024 * 1024 * 1024;
-
     /// <summary>
-    /// Rejects archive entry names that could escape the output archive on extraction (absolute or
-    /// parent-traversing paths). Shared with the manifest builder so the descriptor set and the
-    /// assembled archive agree.
+    /// Default upper bound on the total bytes spooled for one task, so a chapter cannot fill the
+    /// disk. The effective bound is operator-configurable through
+    /// <c>UpscalerConfig.MaxSpoolBytesPerTask</c>; this is the value used when that is unset or
+    /// unparseable, and it matches the whole-CBZ path's fixed per-archive bound.
     /// </summary>
-    public static bool IsSafeEntryName(string name) =>
-        !string.IsNullOrEmpty(name)
-        && !Path.IsPathRooted(name)
-        // Reject Windows drive/UNC forms independent of the host OS: on Linux Path.IsPathRooted
-        // returns false for "C:\evil.jpg" and "\\server\share\evil.jpg". Only a drive prefix is
-        // rejected, not a colon anywhere: a colon is legal on Linux and rejecting it silently dropped
-        // legitimate pages (the chapter was still reported upscaled). A drive-relative "C:evil.jpg"
-        // or an NTFS alternate-data-stream name is left to third-party Windows extractors, which the
-        // server itself never uses.
-        && !name.StartsWith('/')
-        && !name.StartsWith('\\')
-        && !IsWindowsDriveForm(name)
-        && !name.Split('/', '\\').Any(IsUnsafeSegment);
-
-    /// <summary>
-    ///     True for a Windows absolute drive prefix ("C:\", "C:/"), which must not be interpreted as a
-    ///     drive path even when the host is Linux. A drive-relative "C:evil" and a legal Linux name like
-    ///     "a:b.jpg" are not rejected: dropping them silently lost pages.
-    /// </summary>
-    private static bool IsWindowsDriveForm(string name) =>
-        name.Length >= 3
-        && char.IsAsciiLetter(name[0])
-        && name[1] == ':'
-        && (name[2] == '/' || name[2] == '\\');
-
-    /// <summary>
-    /// True for a path component that is a parent traversal. Windows removes trailing spaces and dots
-    /// from a component, so ".. " normalizes to ".." there. A "." component and an empty component
-    /// (from "a//b") collapse harmlessly and must be preserved: rejecting them silently dropped pages
-    /// while the chapter was still reported upscaled.
-    /// </summary>
-    private static bool IsUnsafeSegment(string segment)
-    {
-        // Anything with a non-dot/space character is an ordinary name.
-        if (segment.TrimEnd(' ', '.').Length > 0)
-        {
-            return false;
-        }
-
-        // Only dots and spaces: a parent traversal when it has at least two dots ("..", ".. ", "...").
-        return segment.Count(c => c == '.') >= 2;
-    }
-
+    public const long MaxTaskBytes = ArchiveSizeLimits.DefaultMaxArchiveBytes;
     private readonly ConcurrentDictionary<int, PageStreamSession> _sessions = new();
     private readonly ILogger<PageStreamSpool> _logger;
     private readonly long _maxTaskBytes;
+
+    /// <summary>
+    ///     Paths whose sweep failure has already been logged, so the periodic sweep does not repeat the
+    ///     same warning every tick. Bounded by the number of un-deletable paths, which is expected to
+    ///     be small and stable.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, byte> _warnedSweepFailures = new(
+        StringComparer.Ordinal
+    );
 
     public PageStreamSpool(ILogger<PageStreamSpool> logger, IOptions<UpscalerConfig> config)
     {
         _logger = logger;
         _maxTaskBytes =
-            config.Value.MaxSpoolBytesPerTask > 0
-                ? config.Value.MaxSpoolBytesPerTask
+            config.Value.ResolvedMaxSpoolBytesPerTask > 0
+                ? config.Value.ResolvedMaxSpoolBytesPerTask
                 : MaxTaskBytes;
 
         // Unique per PageStreamSpool instance (and therefore per process): two app instances, or two
@@ -332,7 +298,11 @@ public sealed class PageStreamSpool : IPageSpoolStore
             // Build the path and open the temp file under the gate: a concurrent Reset/Detach can
             // delete the session directory, which would otherwise turn a clean identity rejection into
             // an unhandled DirectoryNotFoundException.
-            Directory.CreateDirectory(session.Directory);
+            // Owner-only at creation: the root and the session directory both hold private page
+            // bytes, and Directory.CreateDirectory would honour the process umask (typically 022,
+            // i.e. world-readable).
+            DirectoryPermissions.CreateDirectoryRestricted(SpoolRoot, _logger);
+            DirectoryPermissions.CreateDirectoryRestricted(session.Directory, _logger);
             string path = session.PagePath(pageIndex);
             // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
             tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
@@ -646,7 +616,7 @@ public sealed class PageStreamSpool : IPageSpoolStore
     /// <summary>
     /// Builds the final CBZ at <paramref name="destinationPath"/> from the source archive: every
     /// non-image entry is copied unchanged and every image entry is replaced by its spooled page,
-    /// written under the page's output name. Source order is preserved.
+    /// written under the page's output name. The entry order matches the whole-CBZ writer's.
     /// </summary>
     public void Assemble(
         PageStreamSession session,
@@ -715,7 +685,7 @@ public sealed class PageStreamSpool : IPageSpoolStore
             if (
                 !string.IsNullOrEmpty(entry.Name)
                 && ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName))
-                && IsSafeEntryName(entry.FullName)
+                && ArchiveEntryNameGuard.IsSafeEntryName(entry.FullName)
             )
             {
                 archiveImages.Add(entry.FullName);
@@ -736,6 +706,19 @@ public sealed class PageStreamSpool : IPageSpoolStore
         // BuildPageDescriptors and GetPages, so a duplicate is skipped here instead of colliding.
         var handledSources = new HashSet<string>(StringComparer.Ordinal);
         var written = new HashSet<string>(StringComparer.Ordinal);
+
+        // Decompressed bytes already written to the output archive: the spooled pages' committed
+        // total (which the upload path already bounds by the same per-task budget) plus the
+        // pass-through entries copied below. Counting both against one ceiling matches the local
+        // whole-CBZ path, which bounds the archive it writes as a single total.
+        long archiveBytes = session.TotalBytes;
+
+        // Non-page entries first (ComicInfo.xml and friends) in the source's own order, then the pages
+        // in page-index order — exactly what the whole-CBZ writer does, because the two paths must
+        // agree on the archive they produce. The page order is the one the manifest assigned
+        // (natural-sorted): iterating the source archive for the pages instead would give a source
+        // whose zip order is 10.png before 2.png a different physical page order from the other path,
+        // and a reader uses the archive's physical order, so that is content, not bookkeeping.
         foreach (ZipArchiveEntry entry in source.Entries)
         {
             // Skip directory entries (zip stores them with an empty name).
@@ -749,43 +732,67 @@ public sealed class PageStreamSpool : IPageSpoolStore
                 continue;
             }
 
-            // Do not propagate a parent-traversing name into the output archive.
-            if (!IsSafeEntryName(entry.FullName))
+            // A page; it is written below, in index order.
+            if (bySource.ContainsKey(entry.FullName))
             {
                 continue;
             }
 
-            if (bySource.TryGetValue(entry.FullName, out SpoolPageDescriptor? page))
+            // Do not propagate a parent-traversing name into the output archive.
+            if (!ArchiveEntryNameGuard.IsSafeEntryName(entry.FullName))
             {
-                string pagePath = session.PagePath(page.Index);
-                if (!File.Exists(pagePath))
-                {
-                    throw new PageStreamRestartException(
-                        $"Spooled page {page.Index} for task {session.TaskId} is missing."
-                    );
-                }
-
-                // BuildPageDescriptors disambiguates distinct sources, so this only fires if that
-                // invariant is ever broken; fail loudly rather than silently dropping a page.
-                if (!written.Add(page.OutputName))
-                {
-                    throw new InvalidOperationException(
-                        $"Two pages of task {session.TaskId} resolve to the same output name '{page.OutputName}'."
-                    );
-                }
-
-                ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
-                using Stream input = File.OpenRead(pagePath);
-                using Stream target = outputEntry.Open();
-                input.CopyTo(target);
+                continue;
             }
-            else
+
+            ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
+            using Stream input = entry.Open();
+            using Stream target = outputEntry.Open();
+            // Bounded per entry and per archive: a crafted non-image entry must not fill the disk or
+            // blow up memory while the archive is assembled. The per-archive ceiling reuses the
+            // per-task spool budget, so the existing MaxSpoolBytesPerTask setting also bounds the
+            // pass-through bytes.
+            archiveBytes += ArchiveEntryCopier.CopyWithLimits(
+                input,
+                target,
+                ArchiveSizeLimits.MaxEntryBytes,
+                _maxTaskBytes,
+                archiveBytes,
+                entry.FullName
+            );
+        }
+
+        foreach (
+            (string sourceName, SpoolPageDescriptor page) in bySource.OrderBy(kv => kv.Value.Index)
+        )
+        {
+            // A page whose source name could escape the archive is not carried into the output; the
+            // pass-through loop above applies the same guard.
+            if (!ArchiveEntryNameGuard.IsSafeEntryName(sourceName))
             {
-                ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
-                using Stream input = entry.Open();
-                using Stream target = outputEntry.Open();
-                input.CopyTo(target);
+                continue;
             }
+
+            string pagePath = session.PagePath(page.Index);
+            if (!File.Exists(pagePath))
+            {
+                throw new PageStreamRestartException(
+                    $"Spooled page {page.Index} for task {session.TaskId} is missing."
+                );
+            }
+
+            // BuildPageDescriptors disambiguates distinct sources, so this only fires if that
+            // invariant is ever broken; fail loudly rather than silently dropping a page.
+            if (!written.Add(page.OutputName))
+            {
+                throw new InvalidOperationException(
+                    $"Two pages of task {session.TaskId} resolve to the same output name '{page.OutputName}'."
+                );
+            }
+
+            ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
+            using Stream input = File.OpenRead(pagePath);
+            using Stream target = outputEntry.Open();
+            input.CopyTo(target);
         }
     }
 
@@ -977,10 +984,10 @@ public sealed class PageStreamSpool : IPageSpoolStore
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogDebug(
+                        WarnSweepFailureOnce(
+                            directory,
                             ex,
-                            "Failed to sweep page spool root {Directory}.",
-                            directory
+                            "Failed to sweep page spool root {Path}."
                         );
                     }
                 }
@@ -988,7 +995,20 @@ public sealed class PageStreamSpool : IPageSpoolStore
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to sweep the page spool parent {Parent}.", SpoolParent);
+            WarnSweepFailureOnce(SpoolParent, ex, "Failed to sweep the page spool parent {Path}.");
+        }
+    }
+
+    /// <summary>
+    ///     Warns once per path that a periodic spool sweep could not delete it. The sweep runs on a
+    ///     timer, so a directory that cannot be deleted would otherwise repeat the same warning every
+    ///     tick; a multi-GB spool left behind is still actionable, so it is logged at Warning.
+    /// </summary>
+    private void WarnSweepFailureOnce(string path, Exception ex, string messageTemplate)
+    {
+        if (_warnedSweepFailures.TryAdd(path, 0))
+        {
+            _logger.LogWarning(ex, messageTemplate, path);
         }
     }
 

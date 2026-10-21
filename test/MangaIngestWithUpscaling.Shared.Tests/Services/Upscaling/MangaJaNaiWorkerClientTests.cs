@@ -1,187 +1,237 @@
-using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
+using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
+/// <summary>
+/// The streamed-chapter page pipeline's handling of engine exceptions that are not the page's
+/// fault: these must leave the client unconverted, because converting them into a per-page error
+/// escalates as a permanent chapter failure that drops the spool of already-upscaled pages — the
+/// exact outcome <c>RemoteTaskProcessor.ClassifyStreamingFailure</c>'s Transient branch exists to
+/// prevent.
+/// </summary>
 public class MangaJaNaiWorkerClientTests
 {
+    public static TheoryData<Func<Exception>, Type> RecoverableEngineFailures =>
+        new()
+        {
+            // The engine's own comment for the all-NaN case relies on the transient classification
+            // holding here ("a driver reset can produce it"), which it did not until the exception
+            // was let out of the per-page catch.
+            { () => new NonFiniteModelOutputException(), typeof(NonFiniteModelOutputException) },
+            // A session/eviction race racing the page: the same class on the shutdown side.
+            { () => new ObjectDisposedException("session"), typeof(ObjectDisposedException) },
+        };
+
     [Theory]
     [Trait("Category", "Unit")]
-    [InlineData(CompressionFormat.Webp, "webp")]
-    [InlineData(CompressionFormat.Png, "png")]
-    [InlineData(CompressionFormat.Jpg, "jpeg")]
-    [InlineData(CompressionFormat.Avif, "avif")]
-    public void ToFormatString_MapsCompressionFormatToWorkerFormat(
-        CompressionFormat format,
-        string expected
+    [MemberData(nameof(RecoverableEngineFailures))]
+    public async Task RunChapterAsync_RecoversableEngineFailure_PropagatesInsteadOfFailingThePage(
+        Func<Exception> failure,
+        Type expectedType
     )
     {
-        Assert.Equal(expected, MangaJaNaiWorkerClient.ToFormatString(format));
-    }
+        // The engine throws these for a mis-executing provider or a shutdown race, both of which
+        // a freshly built session or a restart can change. Recorded as a per-page error they
+        // ended the chapter permanently and dropped the already-upscaled pages' spool; left
+        // unconverted they reach the worker's streaming classifier, which requeues the task with
+        // the spool intact (bounded by the soft-failure cap).
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        engine
+            .UpscaleFileStagedAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CompressionFormat>(),
+                Arg.Any<int?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ => Task.FromException<Task>(failure()));
 
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void BuildJobLine_ProducesWellFormedJobRequest()
-    {
-        var request = new UpscaleJobRequest
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            Substitute.For<IOnnxSessionFactory>(),
+            NullLogger<MangaJaNaiWorkerClient>.Instance
+        );
+
+        string outputDir = Directory.CreateTempSubdirectory("worker_client").FullName;
+        try
         {
-            Id = "job-1",
-            InputPath = "/data/ch1.cbz",
-            OutputFolder = "/out",
-            OutputFilename = "chapter-1",
-            Format = CompressionFormat.Webp,
-            Scale = ScaleFactor.TwoX,
-            Overwrite = true,
-        };
+            var request = new ChapterJobRequest
+            {
+                Id = "job",
+                OutputFolder = outputDir,
+                Format = CompressionFormat.Webp,
+                Scale = ScaleFactor.TwoX,
+                TotalPages = 1,
+            };
 
-        string line = MangaJaNaiWorkerClient.BuildJobLine(request);
+            var reported = new List<UpscaleJobFile>();
 
-        using JsonDocument doc = JsonDocument.Parse(line);
-        JsonElement root = doc.RootElement;
+            Exception thrown = await Assert.ThrowsAnyAsync<Exception>(() =>
+                client.RunChapterAsync(
+                    request,
+                    OnePage(),
+                    progress: null,
+                    onPageDone: reported.Add,
+                    cancellationToken: CancellationToken.None,
+                    timeout: null
+                )
+            );
+            Assert.IsType(expectedType, thrown);
 
-        Assert.Equal("job", root.GetProperty("type").GetString());
-        Assert.Equal("job-1", root.GetProperty("id").GetString());
-        Assert.Equal("/data/ch1.cbz", root.GetProperty("input").GetProperty("path").GetString());
-
-        JsonElement output = root.GetProperty("output");
-        Assert.Equal("/out", output.GetProperty("folder").GetString());
-        Assert.Equal("chapter-1", output.GetProperty("filename").GetString());
-        Assert.Equal("webp", output.GetProperty("format").GetString());
-        Assert.True(output.GetProperty("overwrite").GetBoolean());
-
-        JsonElement options = root.GetProperty("options");
-        Assert.Equal(2, options.GetProperty("scale").GetInt32());
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void WorkerCommand_SerializesWithSnakeCaseAndOmitsNullId()
-    {
-        // Pins the source-generated naming policy and null-omission, so the control messages
-        // stay AOT-serializable and wire-compatible with worker.py.
-        string shutdown = JsonSerializer.Serialize(
-            new WorkerCommand("shutdown"),
-            WorkerJson.Options
-        );
-        Assert.Equal("""{"type":"shutdown"}""", shutdown);
-
-        string cancel = JsonSerializer.Serialize(
-            new WorkerCommand("cancel", "job-9"),
-            WorkerJson.Options
-        );
-        Assert.Equal("""{"type":"cancel","id":"job-9"}""", cancel);
-
-        string release = JsonSerializer.Serialize(
-            new WorkerCommand("release_cache"),
-            WorkerJson.Options
-        );
-        Assert.Equal("""{"type":"release_cache"}""", release);
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void WorkerEvent_DeserializesCacheReleasedEvent()
-    {
-        WorkerEvent? evt = JsonSerializer.Deserialize<WorkerEvent>(
-            """{"type":"cache_released","status":"busy"}""",
-            WorkerJson.Options
-        );
-
-        WorkerCacheReleasedEvent released = Assert.IsType<WorkerCacheReleasedEvent>(evt);
-        Assert.Equal("busy", released.Status);
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void BuildChapterLine_ProducesOpenChapterRequest()
-    {
-        var request = new ChapterJobRequest
+            // No per-page error was recorded: the exception left the pipeline as itself, which
+            // is what the classifier needs to see.
+            Assert.Empty(reported);
+        }
+        finally
         {
-            Id = "chap-1",
-            OutputFolder = "/out",
-            Format = CompressionFormat.Webp,
-            Scale = ScaleFactor.TwoX,
-            Quality = 93,
-            TotalPages = 42,
-        };
-
-        string line = MangaJaNaiWorkerClient.BuildChapterLine(request);
-
-        using JsonDocument doc = JsonDocument.Parse(line);
-        Assert.Equal("open_chapter", doc.RootElement.GetProperty("type").GetString());
-        Assert.Equal("chap-1", doc.RootElement.GetProperty("id").GetString());
-        Assert.Equal(
-            "/out",
-            doc.RootElement.GetProperty("output").GetProperty("folder").GetString()
-        );
-        Assert.Equal(
-            "webp",
-            doc.RootElement.GetProperty("output").GetProperty("format").GetString()
-        );
-        Assert.Equal(93, doc.RootElement.GetProperty("output").GetProperty("quality").GetInt32());
-        Assert.Equal(2, doc.RootElement.GetProperty("options").GetProperty("scale").GetInt32());
-        Assert.Equal(42, doc.RootElement.GetProperty("total_pages").GetInt32());
+            Directory.Delete(outputDir, true);
+        }
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void BuildChapterLine_OmitsQualityWhenUnset()
+    public async Task RunChapterAsync_AggregateWithAPermanentFirstAndIoSecond_PropagatesAsInfrastructure()
     {
-        var request = new ChapterJobRequest
+        // The classifier's own doc names "an IOException inside an AggregateException" as the
+        // retryable case it must see. When the walk followed only InnerException, the first sibling
+        // (the permanent one) hid the IO failure, so the page was recorded as a per-page error instead
+        // of the task being requeued with its spool.
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        engine
+            .UpscaleFileStagedAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CompressionFormat>(),
+                Arg.Any<int?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+                Task.FromException<Task>(
+                    new AggregateException(
+                        new InvalidOperationException("permanent"),
+                        new IOException("disk gone")
+                    )
+                )
+            );
+
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            Substitute.For<IOnnxSessionFactory>(),
+            NullLogger<MangaJaNaiWorkerClient>.Instance
+        );
+
+        string outputDir = Directory.CreateTempSubdirectory("worker_client_aggregate").FullName;
+        try
         {
-            Id = "chap-1",
-            OutputFolder = "/out",
-            Format = CompressionFormat.Webp,
-            Scale = ScaleFactor.TwoX,
-        };
+            var request = new ChapterJobRequest
+            {
+                Id = "job",
+                OutputFolder = outputDir,
+                Format = CompressionFormat.Webp,
+                Scale = ScaleFactor.TwoX,
+                TotalPages = 1,
+            };
 
-        using JsonDocument doc = JsonDocument.Parse(
-            MangaJaNaiWorkerClient.BuildChapterLine(request)
-        );
-        Assert.False(doc.RootElement.GetProperty("output").TryGetProperty("quality", out _));
+            var reported = new List<UpscaleJobFile>();
+
+            await Assert.ThrowsAsync<AggregateException>(() =>
+                client.RunChapterAsync(
+                    request,
+                    OnePage(),
+                    progress: null,
+                    onPageDone: reported.Add,
+                    cancellationToken: CancellationToken.None,
+                    timeout: null
+                )
+            );
+
+            Assert.Empty(reported);
+        }
+        finally
+        {
+            Directory.Delete(outputDir, true);
+        }
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void BuildPageLine_ProducesPageRequest()
+    public async Task RunChapterAsync_WhenTheEngineStalls_SurfacesTheInactivityTimeout()
     {
-        string line = MangaJaNaiWorkerClient.BuildPageLine(
-            "chap-1",
-            new ChapterPage(3, "004.jpg", "/tmp/004.jpg")
+        // The engine's staged write task never completes on its own but observes the linked
+        // cancellation token, the way the real engine's encoder does. The client's inactivity clock
+        // (timeoutCts.CancelAfter) must fire and its OperationCanceledException catch must turn the
+        // cancellation into a TimeoutException — the transient signal the streaming classifier
+        // requeues. Without either the chapter would hang (the WaitAsync bound catches that) or the
+        // raw OCE would escape as a permanent failure.
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        engine
+            .UpscaleFileStagedAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CompressionFormat>(),
+                Arg.Any<int?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(ci => Task.FromResult(NeverCompletingWrite(ci.Arg<CancellationToken>())));
+
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            Substitute.For<IOnnxSessionFactory>(),
+            NullLogger<MangaJaNaiWorkerClient>.Instance
         );
 
-        using JsonDocument doc = JsonDocument.Parse(line);
-        Assert.Equal("page", doc.RootElement.GetProperty("type").GetString());
-        Assert.Equal("chap-1", doc.RootElement.GetProperty("id").GetString());
-        Assert.Equal(3, doc.RootElement.GetProperty("index").GetInt32());
-        Assert.Equal("004.jpg", doc.RootElement.GetProperty("name").GetString());
-        Assert.Equal("/tmp/004.jpg", doc.RootElement.GetProperty("path").GetString());
+        string outputDir = Directory.CreateTempSubdirectory("worker_client_timeout").FullName;
+        try
+        {
+            var request = new ChapterJobRequest
+            {
+                Id = "stalled",
+                OutputFolder = outputDir,
+                Format = CompressionFormat.Webp,
+                Scale = ScaleFactor.TwoX,
+                TotalPages = 1,
+            };
+
+            var reported = new List<UpscaleJobFile>();
+
+            TimeoutException error = await Assert
+                .ThrowsAsync<TimeoutException>(() =>
+                    client.RunChapterAsync(
+                        request,
+                        OnePage(),
+                        progress: null,
+                        onPageDone: reported.Add,
+                        cancellationToken: CancellationToken.None,
+                        timeout: TimeSpan.FromMilliseconds(200)
+                    )
+                )
+                .WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+
+            Assert.Contains("inactivity", error.Message, StringComparison.Ordinal);
+            Assert.Empty(reported);
+        }
+        finally
+        {
+            Directory.Delete(outputDir, true);
+        }
     }
 
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void BuildCloseChapterLine_ProducesCloseChapterRequest()
+    private static async Task NeverCompletingWrite(CancellationToken cancellationToken)
     {
-        string line = MangaJaNaiWorkerClient.BuildCloseChapterLine("chap-1");
-
-        Assert.Equal("""{"type":"close_chapter","id":"chap-1"}""", line);
+        await Task.Delay(Timeout.Infinite, cancellationToken);
     }
 
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void WorkerEvent_DeserializesPageDoneEvent()
+    private static async IAsyncEnumerable<ChapterPage> OnePage()
     {
-        WorkerEvent? evt = JsonSerializer.Deserialize<WorkerEvent>(
-            """{"type":"page_done","id":"chap-1","index":3,"input":"004.jpg","output":"/out/004.webp","status":"upscaled"}""",
-            WorkerJson.Options
-        );
-
-        WorkerPageDoneEvent pageDone = Assert.IsType<WorkerPageDoneEvent>(evt);
-        Assert.Equal("chap-1", pageDone.Id);
-        Assert.Equal(3, pageDone.Index);
-        Assert.Equal("004.jpg", pageDone.Input);
-        Assert.Equal("/out/004.webp", pageDone.Output);
-        Assert.Equal("upscaled", pageDone.Status);
+        yield return new ChapterPage(0, "page0.png", "page0.png");
     }
 }

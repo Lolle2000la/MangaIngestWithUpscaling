@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Xunit;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using SharedScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -16,16 +17,17 @@ public class PageManifestBuilderTests
 {
     [Fact]
     [Trait("Category", "Unit")]
-    public void BuildPageDescriptors_UsesArchiveOrderAndProfileExtension()
+    public void BuildPageDescriptors_OrdersPagesNaturallyAndUsesTheProfileExtension()
     {
         string directory = Directory.CreateTempSubdirectory("manifest").FullName;
         try
         {
             string source = CreateCbz(
                 directory,
-                ("001.jpg", new byte[] { 1 }),
-                ("002.png", new byte[] { 2 }),
-                ("ComicInfo.xml", new byte[] { 3 })
+                ("10.png", new byte[] { 1 }),
+                ("2.png", new byte[] { 2 }),
+                ("001.jpg", new byte[] { 3 }),
+                ("ComicInfo.xml", new byte[] { 4 })
             );
 
             List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
@@ -33,12 +35,16 @@ public class PageManifestBuilderTests
                 Profile()
             );
 
-            Assert.Equal(2, pages.Count);
-            Assert.Equal(new[] { 0, 1 }, pages.Select(p => p.Index));
-            Assert.Equal("001.jpg", pages[0].SourceName);
-            Assert.Equal("001.webp", pages[0].OutputName);
-            Assert.Equal("002.png", pages[1].SourceName);
-            Assert.Equal("002.webp", pages[1].OutputName);
+            // Natural order, matching the whole-CBZ path: an ordinal archive order would be
+            // 10, 2, 001. The descriptor index follows this order too, so streaming and the
+            // assembled archive agree on page sequence.
+            Assert.Equal(3, pages.Count);
+            Assert.Equal(new[] { 0, 1, 2 }, pages.Select(p => p.Index));
+            Assert.Equal(new[] { "001.jpg", "2.png", "10.png" }, pages.Select(p => p.SourceName));
+            Assert.Equal(
+                new[] { "001.webp", "2.webp", "10.webp" },
+                pages.Select(p => p.OutputName)
+            );
         }
         finally
         {
@@ -67,7 +73,8 @@ public class PageManifestBuilderTests
             // A colon is legal on Linux; rejecting it silently dropped the page while the chapter was
             // still reported upscaled.
             Assert.Equal(2, pages.Count);
-            Assert.Equal("Chapter 1: Intro/001.jpg", pages[0].SourceName);
+            Assert.Contains("Chapter 1: Intro/001.jpg", pages.Select(p => p.SourceName));
+            Assert.Contains("002.jpg", pages.Select(p => p.SourceName));
         }
         finally
         {
@@ -96,9 +103,13 @@ public class PageManifestBuilderTests
 
             // "." and empty components collapse harmlessly; dropping them lost pages silently.
             Assert.Equal(3, pages.Count);
-            Assert.Equal("./001.jpg", pages[0].SourceName);
-            Assert.Equal("a//b.jpg", pages[1].SourceName);
-            Assert.Equal("a/./c.jpg", pages[2].SourceName);
+            Assert.Equal(
+                new[] { "./001.jpg", "a//b.jpg", "a/./c.jpg" }.OrderBy(
+                    x => x,
+                    StringComparer.Ordinal
+                ),
+                pages.Select(p => p.SourceName).OrderBy(x => x, StringComparer.Ordinal)
+            );
         }
         finally
         {
@@ -140,10 +151,22 @@ public class PageManifestBuilderTests
         }
     }
 
-    [Fact]
+    [Theory]
     [Trait("Category", "Unit")]
-    public void BuildPageDescriptors_MapsJpgToJpegExtension()
+    [InlineData(SharedCompressionFormat.Webp, "webp")]
+    [InlineData(SharedCompressionFormat.Png, "png")]
+    [InlineData(SharedCompressionFormat.Jpg, "jpg")]
+    [InlineData(SharedCompressionFormat.Avif, "avif")]
+    public void BuildPageDescriptors_UsesTheCanonicalExtensionForEveryFormat(
+        SharedCompressionFormat format,
+        string expected
+    )
     {
+        // Both upscale paths must map a format to the same extension. The streamed path delegates to
+        // MangaJaNaiWorkerClient.ToExtension (the whole-CBZ path's mapping), so pin them together
+        // here rather than letting ".jpg" and ".jpeg" drift apart again.
+        Assert.Equal(expected, MangaJaNaiWorkerClient.ToExtension(format).TrimStart('.'));
+
         string directory = Directory.CreateTempSubdirectory("manifest_ext").FullName;
         try
         {
@@ -151,10 +174,10 @@ public class PageManifestBuilderTests
 
             List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
                 source,
-                Profile(SharedCompressionFormat.Jpg)
+                Profile(format)
             );
 
-            Assert.Equal("001.jpeg", pages[0].OutputName);
+            Assert.Equal($"001.{expected}", pages[0].OutputName);
         }
         finally
         {
@@ -368,6 +391,48 @@ public class PageManifestBuilderTests
 
             Assert.Single(pages);
             Assert.Equal("ok/001.jpg", pages[0].SourceName);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BuildDetectionAndUpscaleDescriptors_AgreeOnTheIndexToSourceMapping()
+    {
+        // Detection and upscaling each derive a page index from the archive entries. If detection
+        // iterated in archive order while upscaling used natural order, the same entry would sit at
+        // a different index on the two paths and a page fetched for detection would not be the page
+        // the upscale manifest names.
+        string directory = Directory.CreateTempSubdirectory("manifest_detect_order").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("10.png", new byte[] { 1 }),
+                ("2.png", new byte[] { 2 }),
+                ("001.jpg", new byte[] { 3 }),
+                ("ComicInfo.xml", new byte[] { 4 })
+            );
+
+            List<SpoolPageDescriptor> upscale = PageManifestBuilder.BuildPageDescriptors(
+                source,
+                Profile()
+            );
+            List<SpoolPageDescriptor> detection = PageManifestBuilder.BuildDetectionPageDescriptors(
+                source
+            );
+
+            Assert.Equal(
+                upscale.OrderBy(p => p.Index).Select(p => (p.Index, p.SourceName)),
+                detection.OrderBy(p => p.Index).Select(p => (p.Index, p.SourceName))
+            );
+            Assert.Equal(
+                new[] { "001.jpg", "2.png", "10.png" },
+                detection.Select(p => p.SourceName)
+            );
         }
         finally
         {

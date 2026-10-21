@@ -1,12 +1,19 @@
-# Remote-Only Docker Variant (Deprecated)
+# Remote-Only Deployment
 
 > For a complete overview of all upscaler settings in one place, see
 > [Upscaler Configuration](UPSCALER_CONFIGURATION.md).
 
-> **⚠️ DEPRECATION NOTICE**
-> The `-remote-only` image variant is deprecated and will be removed in a future release.
-> Use the **standard image** and set `Ingest_Upscaler__RemoteOnly=true` to achieve the same result.
-> See [Using the Standard Image](#using-the-standard-image) below for the recommended approach.
+> **Note:** The separate `-remote-only` image variant has been removed. Remote-only mode is now just
+> the **standard image** with `Ingest_Upscaler__RemoteOnly=true`; the `docker-compose.yml`
+> `remote-only` profile does exactly that. Select it with
+> `COMPOSE_PROFILES=remote-only docker compose up`, which sets the profile in the environment and so
+> cannot be overridden by the tracked `.env` (`docker compose --profile remote-only up` is equivalent
+> on current Compose). There is no longer a variant image to pull.
+>
+> On a host without a GPU render node, the base `docker-compose.yml` fails before the container
+> starts because it maps `/dev/dri` unconditionally. Merge
+> [`docker-compose.cpu-only.yml`](../docker-compose.cpu-only.yml) to drop that mapping, or use the
+> `remote-only` profile above, which has no device mapping.
 
 This document describes the remote-only configuration of MangaIngestWithUpscaling, designed for deployment scenarios where upscaling is handled exclusively by remote workers.
 
@@ -41,7 +48,7 @@ services:
       - "8081:8081"  # gRPC for remote workers (required!)
 ```
 
-> **Note:** The standard image includes `python3` and basic OS libraries, but the heavy ML dependencies (PyTorch, etc.) are downloaded and installed at runtime into the data volume on first startup. When running in remote-only mode, this runtime venv setup is skipped entirely, so the standard image is a good fit for remote-only deployments without any size concerns.
+> **Note:** The application uses pure C# with ONNX Runtime without any Python dependencies. Setting `Ingest_Upscaler__RemoteOnly: true` disables local ML model initialization and processing entirely, routing all upscaling jobs exclusively to connected remote workers.
 
 ## Overview
 

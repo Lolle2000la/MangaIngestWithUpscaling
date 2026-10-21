@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -94,18 +95,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     /// </summary>
     public static StreamingFailureKind ClassifyStreamingFailure(Exception ex)
     {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
+        foreach (Exception current in ExceptionChain.Enumerate(ex))
         {
             if (current is PageStreamRestartException)
             {
                 return StreamingFailureKind.Restart;
-            }
-
-            if (current is UpscaleWorkerCrashedException)
-            {
-                // A crash (OOM/CUDA fault) is recoverable: respawn the worker and resume. Reporting it
-                // would drop the already-spooled pages and consume the retry budget.
-                return StreamingFailureKind.Transient;
             }
 
             if (current is TimeoutException)
@@ -116,11 +110,37 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 return StreamingFailureKind.Transient;
             }
 
+            if (current is NonFiniteModelOutputException or ObjectDisposedException)
+            {
+                // Both the detector and the upscaler path deliver these here instead of reporting a
+                // per-page error, precisely so the spool survives: a non-finite output is a
+                // mis-executing provider that a freshly built session can change (the detector has no
+                // second model to fall back to, and the upscaler's candidate loop rethrows it once
+                // every candidate produced one), and an ObjectDisposedException is a shutdown or an
+                // eviction racing the page. MangaJaNaiWorkerClient.IsInfrastructureFailure lets them
+                // out of the per-page catch for the same reason. Without a case here the chain falls
+                // through to Permanent, the server clears the spool and fails the task — which would
+                // defeat both paths' rethrow.
+                return StreamingFailureKind.Transient;
+            }
+
             if (current is IOException or UnauthorizedAccessException)
             {
                 // A local I/O failure (computing the engine identity, reading a fetched page, or
                 // writing an upload) is transient: requeue with the spool intact rather than dropping
                 // it. A deterministic server rejection is thrown as InvalidOperationException.
+                return StreamingFailureKind.Transient;
+            }
+
+            // A device or host memory failure. The engine rethrows this with its original type when
+            // every candidate model failed transiently, so without this case a memory-pressure blip
+            // would be classified Permanent and drop the spool — the already-upscaled pages included.
+            if (
+                MangaIngestWithUpscaling.Shared.Services.Upscaling.OnnxTiler.IsMemoryException(
+                    current
+                )
+            )
+            {
                 return StreamingFailureKind.Transient;
             }
 
@@ -163,18 +183,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     ///     True when any exception in the chain reports an RPC the server does not implement, which is how a
     ///     worker meets a server from the other side of the upgrade cutover.
     /// </summary>
-    private static bool CarriesUnimplemented(Exception ex)
-    {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (current is RpcException { StatusCode: StatusCode.Unimplemented })
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool CarriesUnimplemented(Exception ex) =>
+        ExceptionChain.Contains(
+            ex,
+            current => current is RpcException { StatusCode: StatusCode.Unimplemented }
+        );
 
     /// <summary>
     ///     Re-runs the connect-time version handshake and describes an incompatible peer, or returns null
@@ -396,16 +409,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                     if (StreamingTaskId == resp.TaskId)
                     {
+                        // The server offered the task this worker is already streaming. Back off on
+                        // the dispatcher tick, like every other retry path here: this branch retries
+                        // an inner loop, so a short fixed delay would hit the claim RPC several times
+                        // a second for as long as the server keeps offering the in-flight task. The
+                        // branch cannot outlive the stream: once it finishes, StreamingTaskId is
+                        // cleared and the server stops offering that id.
                         logger.LogDebug(
                             "FetchLoop: got in-flight task {taskId}; retrying shortly",
                             resp.TaskId
                         );
-                        try
-                        {
-                            await Task.Delay(200, stoppingToken);
-                        }
-                        catch { }
-
+                        await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                         continue;
                     }
 
@@ -482,13 +496,15 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     continue;
                 }
 
+                var keepAliveState = new KeepAliveState();
                 var persistentKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
                 Task persistentKeepAliveTask = _keepAlivePump.RunAsync(
                     persistentKeepAliveCts,
                     () => taskId,
-                    id => new KeepAliveRequest { TaskId = id, Prefetch = true }
+                    id => new KeepAliveRequest { TaskId = id, Prefetch = true },
+                    keepAliveState.MarkTaskGone
                 );
 
                 // Hand the reserved task to the streaming loop; it owns the keep-alive from here.
@@ -497,7 +513,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     resp.TaskType,
                     profile,
                     persistentKeepAliveCts,
-                    persistentKeepAliveTask
+                    persistentKeepAliveTask,
+                    keepAliveState
                 );
                 try
                 {
@@ -510,7 +527,12 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     {
                         await persistentKeepAliveTask;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // A fault in the pump means the task stopped receiving keep-alives; surface it
+                        // rather than swallowing it silently.
+                        logger.LogDebug(ex, "The keep-alive task for {TaskId} faulted.", taskId);
+                    }
                     persistentKeepAliveCts.Dispose();
                     throw;
                 }
@@ -578,12 +600,18 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     "Task {TaskId} was cancelled prior to page streaming, skipping.",
                     item.TaskId
                 );
+                // Clean stop, not a failure: drop any count the task accumulated earlier, or the
+                // stale entry outlives the task for the process lifetime.
+                _softFailures.Reset(item.TaskId);
                 await item.PersistentKeepAliveCts.CancelAsync();
                 try
                 {
                     await item.PersistentKeepAliveTask;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "The keep-alive task for {TaskId} faulted.", item.TaskId);
+                }
                 item.PersistentKeepAliveCts.Dispose();
                 StreamingTaskId = null;
                 // Re-signal the fetch loop, or it would block on _fetchSignals forever and the
@@ -623,7 +651,25 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             }
             catch (OperationCanceledException)
             {
-                // Normal user interruption or task cancellation.
+                // Normal user interruption or task cancellation. A clean stop is not a failure, so
+                // clear the task's counter like the success and terminal paths do; otherwise a task
+                // that was counted and then cancelled keeps its stale count for the process.
+                _softFailures.Reset(item.TaskId);
+            }
+            catch (Exception) when (item.KeepAliveState.TaskGone)
+            {
+                // The server no longer tracks the task: its keep-alive answered NotFound, which
+                // cancelled this stream. grpc-dotnet reports that cancellation as
+                // RpcException(StatusCode.Cancelled), not as an OperationCanceledException, so it
+                // otherwise fell into the general catch and consumed a soft-failure slot for a task
+                // the server already retired — repeated infrastructure requeues could then push it to
+                // the terminal cap. A task the server has forgotten needs no report: stop cleanly,
+                // dropping whatever count it accumulated before it was retired.
+                _softFailures.Reset(item.TaskId);
+                logger.LogInformation(
+                    "Task {TaskId} stopped streaming because the server no longer tracks it.",
+                    item.TaskId
+                );
             }
             catch (Exception ex)
             {
@@ -651,7 +697,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 {
                     await item.PersistentKeepAliveTask;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "The keep-alive task for {TaskId} faulted.", item.TaskId);
+                }
                 item.PersistentKeepAliveCts.Dispose();
                 StreamingTaskId = null;
                 _fetchSignals?.Writer.TryWrite(true);
@@ -708,6 +757,21 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         TaskType TaskType,
         UpscalerProfile Profile,
         CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask
+        Task PersistentKeepAliveTask,
+        KeepAliveState KeepAliveState
     );
+
+    /// <summary>
+    /// Set by the keep-alive pump when the server reports the in-flight task is gone (a NotFound
+    /// keep-alive). The streaming loop reads it to treat the resulting stream cancellation as a clean
+    /// stop rather than a soft failure.
+    /// </summary>
+    private sealed class KeepAliveState
+    {
+        private int _taskGone;
+
+        public bool TaskGone => Volatile.Read(ref _taskGone) != 0;
+
+        public void MarkTaskGone() => Interlocked.Exchange(ref _taskGone, 1);
+    }
 }

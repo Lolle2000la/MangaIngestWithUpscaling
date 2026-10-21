@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -11,20 +11,6 @@ public static class ServiceRegistration
     public static void RegisterSharedServices(this IServiceCollection services)
     {
         services.AutoRegister();
-
-        // The worker client is a single long-lived process manager shared by every upscale job.
-        services.AddSingleton<MangaJaNaiWorkerClient>();
-        services.AddSingleton<IMangaJaNaiWorkerClient>(sp =>
-            sp.GetRequiredService<MangaJaNaiWorkerClient>()
-        );
-        services.AddHostedService(sp => sp.GetRequiredService<MangaJaNaiWorkerClient>());
-
-        // The detection server keeps the page-break model resident across the pages of a chapter.
-        services.AddSingleton<DetectServerClient>();
-        services.AddSingleton<IDetectServerClient>(sp =>
-            sp.GetRequiredService<DetectServerClient>()
-        );
-        services.AddHostedService(sp => sp.GetRequiredService<DetectServerClient>());
 
         // register unix file system if running on unix, otherwise use generic file system
         if (

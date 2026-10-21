@@ -1,4 +1,6 @@
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services;
@@ -27,6 +29,27 @@ public class ServiceRegistrationTests
             serviceTypes,
             t => t.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true
         );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void RegisterSharedServices_ResolvesTheDeviceMemoryCalibratorAndItsRunner()
+    {
+        // Descriptors being present says nothing about whether the container can *build* the services:
+        // the calibrator takes the child-process runner as its last constructor parameter, and the
+        // runner has two constructors — a public one for the container and an internal one the tests
+        // use. A container that cannot choose between them fails at resolution, and in production that
+        // is the first page of the first chapter, not startup. So the resolution is what this pins.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddOptions();
+        services.Configure<UpscalerConfig>(_ => { });
+        services.RegisterSharedServices();
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        Assert.NotNull(provider.GetRequiredService<IDeviceMemoryBenchmarkProcessRunner>());
+        Assert.NotNull(provider.GetRequiredService<IDeviceMemoryCalibrator>());
     }
 
     [Fact]

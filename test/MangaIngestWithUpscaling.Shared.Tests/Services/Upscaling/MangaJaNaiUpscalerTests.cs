@@ -1,8 +1,10 @@
-using System.Reflection;
+using System.Net;
+using System.Security.Cryptography;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Localization;
@@ -21,6 +23,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     private readonly ILogger<MangaJaNaiUpscaler> _mockLogger;
     private readonly IMetadataHandlingService _mockMetadataHandling;
     private readonly IMangaJaNaiWorkerClient _mockWorkerClient;
+    private readonly IOnnxSessionFactory _mockSessionFactory;
     private readonly IStringLocalizer<MangaJaNaiUpscaler> _mockLocalizer;
     private readonly string _tempDir;
     private readonly MangaJaNaiUpscaler _upscaler;
@@ -28,8 +31,17 @@ public class MangaJaNaiUpscalerTests : IDisposable
     public MangaJaNaiUpscalerTests()
     {
         _mockWorkerClient = Substitute.For<IMangaJaNaiWorkerClient>();
+        _mockSessionFactory = Substitute.For<IOnnxSessionFactory>();
         _mockLogger = Substitute.For<ILogger<MangaJaNaiUpscaler>>();
         _mockFileSystem = Substitute.For<IFileSystem>();
+        // Creating directories is forwarded to the real file system: the download test relies on
+        // the production code's own CreateDirectory call for its fresh models directory (the point
+        // is that nothing is pre-installed), and a no-op substitute left that directory missing,
+        // so the download failed at its first File.Create. The other substitutes stay no-ops —
+        // no test depends on Move or ApplyPermissions doing real work.
+        _mockFileSystem
+            .When(fs => fs.CreateDirectory(Arg.Any<string>()))
+            .Do(call => Directory.CreateDirectory((string)call.Args()[0]));
         _mockMetadataHandling = Substitute.For<IMetadataHandlingService>();
         _mockJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         _mockImageResize = Substitute.For<IImageResizeService>();
@@ -49,6 +61,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
             );
         }
 
+        // TestCaseDisplayName is not usable in a path: xUnit renders the theory arguments in it and
+        // the quotes are an invalid character on Windows. A guid is unique per instance instead,
+        // which is all the isolation here needs.
         var config = new UpscalerConfig
         {
             UseFp16 = true,
@@ -56,23 +71,22 @@ public class MangaJaNaiUpscalerTests : IDisposable
             SelectedDeviceIndex = 0,
             RemoteOnly = false,
             PreferredGpuBackend = GpuBackend.Auto,
-            ModelsDirectory = Path.Combine(
-                Path.GetTempPath(),
-                $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
-            ),
+            ModelsDirectory = Path.Combine(Path.GetTempPath(), $"upscaler_test_{Guid.NewGuid():N}"),
             ImageFormatConversionRules = [],
+            EnableSmartDownscale = false,
         };
         _mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
         _mockConfig.Value.Returns(config);
 
-        _tempDir = Path.Combine(
-            Path.GetTempPath(),
-            $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
-        );
+        // A separate directory from ModelsDirectory on purpose: the download tests seed model
+        // placeholders into this one, and sharing it with the configured models directory would let
+        // a test's own files answer for the models it is supposed to be missing.
+        _tempDir = Path.Combine(Path.GetTempPath(), $"upscaler_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
 
         _upscaler = new MangaJaNaiUpscaler(
             _mockWorkerClient,
+            _mockSessionFactory,
             _mockLogger,
             _mockConfig,
             _mockFileSystem,
@@ -85,14 +99,89 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
+        foreach (string dir in new[] { _tempDir, _mockConfig.Value.ResolvedModelsDirectory })
         {
-            Directory.Delete(_tempDir, true);
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+            catch
+            {
+                // A leftover temp directory is not worth failing a test over.
+            }
         }
+    }
 
-        if (Directory.Exists(_mockConfig.Value.ModelsDirectory))
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void SweepStaleScratch_ReclaimsAbandonedPreprocessAndProfileScratch()
+    {
+        // A hard kill between creating a temp and publishing it skips every delete-on-failure path.
+        // The preprocessed whole-chapter archive is deleted only by its in-process Dispose, the
+        // extraction directory only by the run's own finally, and the device-memory profile's write
+        // scratch only by Save's cleanup; no other sweep matched any of them, so all three sat in
+        // temp or the models directory for good. The startup scratch sweep must reclaim the old ones
+        // and leave fresh (in-progress) scratch and unrelated temp content alone.
+        string tempRoot = Path.Combine(Path.GetTempPath(), $"preprocess_sweep_{Guid.NewGuid():N}");
+        string modelsDir = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(tempRoot);
+        Directory.CreateDirectory(modelsDir);
+
+        string staleArchive = Path.Combine(
+            tempRoot,
+            $"preprocessed_{Guid.NewGuid():N}_chapter.cbz"
+        );
+        string freshArchive = Path.Combine(
+            tempRoot,
+            $"preprocessed_{Guid.NewGuid():N}_chapter.cbz"
+        );
+        string unrelated = Path.Combine(tempRoot, "not_ours.cbz");
+        string staleScratch = Path.Combine(tempRoot, $"manga_preprocess_{Guid.NewGuid():N}");
+        string freshScratch = Path.Combine(tempRoot, $"manga_preprocess_{Guid.NewGuid():N}");
+        string staleProfileTemp = Path.Combine(
+            modelsDir,
+            $"{DeviceMemoryProfileStore.FileName}.12345.{Guid.NewGuid():N}.tmp"
+        );
+        string freshProfileTemp = Path.Combine(
+            modelsDir,
+            $"{DeviceMemoryProfileStore.FileName}.12345.{Guid.NewGuid():N}.tmp"
+        );
+
+        File.WriteAllText(staleArchive, "stale");
+        File.WriteAllText(freshArchive, "fresh");
+        File.WriteAllText(unrelated, "unrelated");
+        Directory.CreateDirectory(staleScratch);
+        File.WriteAllText(Path.Combine(staleScratch, "page.png"), "page");
+        Directory.CreateDirectory(freshScratch);
+        File.WriteAllText(staleProfileTemp, "stale");
+        File.WriteAllText(freshProfileTemp, "fresh");
+
+        DateTime old = DateTime.UtcNow - TimeSpan.FromDays(2);
+        File.SetLastWriteTimeUtc(staleArchive, old);
+        File.SetLastWriteTimeUtc(staleProfileTemp, old);
+        Directory.SetLastWriteTimeUtc(staleScratch, old);
+
+        try
         {
-            Directory.Delete(_mockConfig.Value.ModelsDirectory, true);
+            _upscaler.SweepStaleScratch(tempRoot);
+
+            Assert.False(File.Exists(staleArchive));
+            Assert.False(Directory.Exists(staleScratch));
+            Assert.False(File.Exists(staleProfileTemp));
+
+            // A fresh archive/scratch is another run's in-progress work, so it must survive, and
+            // unrelated files that happen to sit in temp are never touched.
+            Assert.True(File.Exists(freshArchive));
+            Assert.True(Directory.Exists(freshScratch));
+            Assert.True(File.Exists(freshProfileTemp));
+            Assert.True(File.Exists(unrelated));
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
         }
     }
 
@@ -174,7 +263,26 @@ public class MangaJaNaiUpscalerTests : IDisposable
         };
 
         var progressReports = new List<UpscaleProgress>();
-        var progress = new Progress<UpscaleProgress>(p => progressReports.Add(p));
+
+        // Under the xUnit runner there is no SynchronizationContext, so Progress<T> hands each report
+        // to the thread pool: the handler runs concurrently with the caller and not necessarily in
+        // the order the worker emitted the reports. The handler completes the gate on the last report
+        // the mock below emits, and every read of the list takes the same lock the handler takes —
+        // enumerating it without the lock threw "Collection was modified" whenever a report was still
+        // being appended while the assertions ran.
+        var reported = new TaskCompletionSource();
+        var progress = new Progress<UpscaleProgress>(p =>
+        {
+            lock (progressReports)
+            {
+                progressReports.Add(p);
+            }
+
+            if (p is { Total: 5, Current: 3 })
+            {
+                reported.TrySetResult();
+            }
+        });
 
         // Mock the worker client to simulate progress events
         _mockImageResize
@@ -208,20 +316,30 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Act
         await _upscaler.Upscale(inputPath, outputPath, profile, progress, cancellationToken);
 
-        // NOTE: If this test continues to fail, take into account timing issues
-        await Task.Delay(200, TestContext.Current.CancellationToken);
+        await reported.Task.WaitAsync(
+            TimeSpan.FromSeconds(30),
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
-        Assert.NotEmpty(progressReports);
+        // One snapshot for every assertion: the handler appends from pool threads, so anything read
+        // outside the lock can see a list that changes during enumeration.
+        List<UpscaleProgress> snapshot;
+        lock (progressReports)
+        {
+            snapshot = progressReports.ToList();
+        }
+
+        Assert.NotEmpty(snapshot);
 
         // Verify total was set
-        var totalReport = progressReports.FirstOrDefault(p => p.Total.HasValue);
+        UpscaleProgress? totalReport = snapshot.FirstOrDefault(p => p.Total.HasValue);
         Assert.NotNull(totalReport);
         Assert.Equal(5, totalReport.Total!.Value);
 
-        // Verify progress increments were reported
-        var progressIncrements = progressReports.Where(p => p.Current > 0).ToList();
-        Assert.NotEmpty(progressIncrements);
+        // Verify progress increments were reported. The gate above is the report with Current 3, so
+        // at least that one is in the snapshot regardless of the order the pool ran them in.
+        Assert.Contains(snapshot, p => p.Current > 0);
     }
 
     [Fact]
@@ -366,15 +484,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             )
             .Returns(callInfo =>
             {
-                // Use reflection to create the TempResizedCbz since constructor is internal
-                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
-                    BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    new[] { typeof(string), typeof(IImageResizeService) },
-                    null
-                );
-                return (TempResizedCbz)
-                    constructor!.Invoke(new object[] { tempResizedPath, _mockImageResize });
+                // The constructor is internal, but the assembly is a friend of the shared
+                // assembly, so it is callable directly. Constructing it through reflection only
+                // renames the constructor at runtime: a rename or signature change would show up
+                // as a NullReferenceException instead of a compile error.
+                return new TempResizedCbz(tempResizedPath, _mockImageResize);
             });
 
         var cancellationToken = CancellationToken.None;
@@ -394,7 +508,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 cancellationToken
             );
 
-        // Verify Python service was called
+        // Verify the worker was asked to run the job
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -459,15 +573,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             )
             .Returns(callInfo =>
             {
-                // Use reflection to create the TempResizedCbz since constructor is internal
-                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
-                    BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    new[] { typeof(string), typeof(IImageResizeService) },
-                    null
-                );
-                return (TempResizedCbz)
-                    constructor!.Invoke(new object[] { tempPreprocessedPath, _mockImageResize });
+                // The constructor is internal, but the assembly is a friend of the shared
+                // assembly, so it is callable directly. Constructing it through reflection only
+                // renames the constructor at runtime: a rename or signature change would show up
+                // as a NullReferenceException instead of a compile error.
+                return new TempResizedCbz(tempPreprocessedPath, _mockImageResize);
             });
 
         var cancellationToken = CancellationToken.None;
@@ -491,7 +601,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 cancellationToken
             );
 
-        // Verify Python service was called
+        // Verify the worker was asked to run the job
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -558,15 +668,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             )
             .Returns(callInfo =>
             {
-                // Use reflection to create the TempResizedCbz since constructor is internal
-                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
-                    BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    new[] { typeof(string), typeof(IImageResizeService) },
-                    null
-                );
-                return (TempResizedCbz)
-                    constructor!.Invoke(new object[] { tempPreprocessedPath, _mockImageResize });
+                // The constructor is internal, but the assembly is a friend of the shared
+                // assembly, so it is callable directly. Constructing it through reflection only
+                // renames the constructor at runtime: a rename or signature change would show up
+                // as a NullReferenceException instead of a compile error.
+                return new TempResizedCbz(tempPreprocessedPath, _mockImageResize);
             });
 
         var cancellationToken = CancellationToken.None;
@@ -592,7 +698,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 cancellationToken
             );
 
-        // Verify Python service was called with the preprocessed file
+        // Verify the worker was asked to run the preprocessed file
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -656,7 +762,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 Arg.Any<CancellationToken>()
             );
 
-        // Verify Python service was called directly with the original input
+        // Verify the worker was asked to run the original input directly
         await _mockWorkerClient
             .Received(1)
             .RunJobAsync(
@@ -665,17 +771,6 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 cancellationToken,
                 Arg.Any<TimeSpan?>()
             );
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void Constructor_ShouldNotThrow()
-    {
-        // This test validates that the constructor can be called with mocked dependencies
-        // without throwing exceptions due to missing dependencies
-
-        // Arrange, Act & Assert - Constructor is called in test setup
-        Assert.NotNull(_upscaler);
     }
 
     [Theory]
@@ -793,32 +888,473 @@ public class MangaJaNaiUpscalerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task DownloadModelsIfNecessary_ShouldComplete()
     {
-        // Arrange
-        var cancellationToken = CancellationToken.None;
+        // The configured models directory is a fresh guid directory, so nothing is installed and
+        // every package the resolved provider selects has to be fetched. The post-condition is the
+        // point: the previous version only checked the exception type and passed on a host that
+        // downloaded nothing, and its two guards contradicted each other over HttpRequestException.
+        IReadOnlyList<MangaJaNaiUpscaler.ModelPackage> packages = _upscaler.GetModelPackages();
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
 
-        // Act & Assert - This may download models
-        var exception = await Record.ExceptionAsync(() =>
-            _upscaler.DownloadModelsIfNecessary(cancellationToken)
+        await _upscaler.DownloadModelsIfNecessary(CancellationToken.None);
+
+        foreach (MangaJaNaiUpscaler.ModelPackage package in packages)
+        {
+            foreach (string archiveFile in package.ExpectedFileHashes.Keys)
+            {
+                string onDisk = Path.Combine(
+                    modelsDirectory,
+                    ModelFileNames.Resolve(archiveFile, package.PrecisionSuffix)
+                );
+                Assert.True(File.Exists(onDisk), $"{package.ZipUrl} did not install {onDisk}");
+                Assert.True(new FileInfo(onDisk).Length > 0, $"{onDisk} was left empty");
+            }
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Download")]
+    [Trait("Category", "Integration")]
+    public async Task DownloadModelsIfNecessary_WhenModelMissing_DownloadsAndRestoresModel()
+    {
+        // Seed every expected model except one target with a placeholder. The download path looks at
+        // names and sizes and never at contents, so a placeholder stands in for the real 3.3 GB of
+        // models that test_data/ holds — this test used to copy gigabytes across to get the same
+        // effect, which is why it could not run on a machine without that directory.
+        SeedEveryExpectedModelExcept("2x_IllustrationJaNai_V1_ESRGAN_120k.onnx");
+
+        string missingModelFile = "2x_IllustrationJaNai_V1_ESRGAN_120k.onnx";
+        string targetMissingPath = Path.Combine(
+            _mockConfig.Value.ResolvedModelsDirectory,
+            missingModelFile
+        );
+        Assert.False(File.Exists(targetMissingPath));
+
+        // Act: Run download if necessary
+        await _upscaler.DownloadModelsIfNecessary(CancellationToken.None);
+
+        // Assert: The missing file was downloaded and extracted from GitHub releases
+        Assert.True(File.Exists(targetMissingPath));
+        Assert.True(new FileInfo(targetMissingPath).Length > 0);
+    }
+
+    [Fact]
+    [Trait("Category", "Download")]
+    [Trait("Category", "Integration")]
+    public async Task DownloadModelsIfNecessary_WhenPageBreakDetectorMissing_DownloadsAndRestoresModel()
+    {
+        SeedEveryExpectedModelExcept("page_break_detector.onnx");
+
+        string targetOnnxPath = Path.Combine(
+            _mockConfig.Value.ResolvedModelsDirectory,
+            "page_break_detector.onnx"
+        );
+        Assert.False(File.Exists(targetOnnxPath));
+
+        // Act: Run download
+        await _upscaler.DownloadModelsIfNecessary(CancellationToken.None);
+
+        // Assert: The page_break_detector file was downloaded and extracted
+        Assert.True(File.Exists(targetOnnxPath));
+        Assert.True(new FileInfo(targetOnnxPath).Length > 0);
+    }
+
+    [Theory]
+    [InlineData(true, "MangaJaNai_V1_FP16_ONNX.zip")]
+    [InlineData(false, "MangaJaNai_V1_ONNX.zip")]
+    public void GetModelPackages_SelectsAppropriatePackageSuiteBasedOnUseFp16(
+        bool? useFp16,
+        string expectedMainZip
+    )
+    {
+        var config = new UpscalerConfig { UseFp16 = useFp16, ModelsDirectory = _tempDir };
+        var mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
+        mockConfig.Value.Returns(config);
+
+        var upscaler = new MangaJaNaiUpscaler(
+            _mockWorkerClient,
+            _mockSessionFactory,
+            _mockLogger,
+            mockConfig,
+            _mockFileSystem,
+            _mockMetadataHandling,
+            _mockJsonHandling,
+            _mockImageResize,
+            _mockLocalizer
         );
 
-        // Should either complete successfully or fail with expected exceptions
-        if (
-            exception != null
-            && exception is not FileNotFoundException
-            && exception is not InvalidOperationException
-        )
+        var list = (
+            (IEnumerable<MangaJaNaiUpscaler.ModelPackage>)upscaler.GetModelPackages()
+        ).ToList();
+        Assert.True(list.Count >= 6);
+
+        string? url = list[0].ZipUrl;
+        Assert.NotNull(url);
+        Assert.Contains(expectedMainZip, url);
+    }
+
+    [Fact]
+    public void GetModelPackages_WhenUseFp16Null_AndCpuEnabled_SelectsFp32PackageSuite()
+    {
+        var config = new UpscalerConfig
         {
-            Assert.Fail(
-                $"Unexpected exception type: {exception.GetType().Name}, Message: {exception.Message}"
-            );
-        }
+            UseFp16 = null,
+            UseCPU = true,
+            ModelsDirectory = _tempDir,
+        };
+        var mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
+        mockConfig.Value.Returns(config);
+
+        var upscaler = new MangaJaNaiUpscaler(
+            _mockWorkerClient,
+            _mockSessionFactory,
+            _mockLogger,
+            mockConfig,
+            _mockFileSystem,
+            _mockMetadataHandling,
+            _mockJsonHandling,
+            _mockImageResize,
+            _mockLocalizer
+        );
+
+        var list = (
+            (IEnumerable<MangaJaNaiUpscaler.ModelPackage>)upscaler.GetModelPackages()
+        ).ToList();
+        var firstPackage = list[0];
+        var urlProp = firstPackage.GetType().GetProperty("ZipUrl");
+        Assert.NotNull(urlProp);
+
+        string? url = urlProp.GetValue(firstPackage) as string;
+        Assert.NotNull(url);
+        Assert.Contains("MangaJaNai_V1_ONNX.zip", url);
+    }
+
+    [Theory]
+    [InlineData(GpuBackend.WebGPU, true)]
+    [InlineData(GpuBackend.CUDA, false)]
+    [InlineData(GpuBackend.DirectML, false)]
+    [InlineData(GpuBackend.CPU, false)]
+    public void GetModelPackages_OnWebGpu_AlsoDownloadsTheFp32Copies(
+        GpuBackend backend,
+        bool expectFp32Suite
+    )
+    {
+        // The WebGPU EP returns NaN for the transformer architectures in fp16 and upscales the
+        // page black, so the fp32 copies have to be present for the engine to fall back to. Every
+        // other provider gets the fp16 set only, which is half the download.
+        var config = new UpscalerConfig { UseFp16 = true, ModelsDirectory = _tempDir };
+        var mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
+        mockConfig.Value.Returns(config);
+        _mockSessionFactory.GetEffectiveBackend().Returns(backend);
+
+        var upscaler = new MangaJaNaiUpscaler(
+            _mockWorkerClient,
+            _mockSessionFactory,
+            _mockLogger,
+            mockConfig,
+            _mockFileSystem,
+            _mockMetadataHandling,
+            _mockJsonHandling,
+            _mockImageResize,
+            _mockLocalizer
+        );
+
+        var urls = upscaler.GetModelPackages().Select(p => p.ZipUrl).ToList();
+
+        Assert.Contains(urls, u => u.EndsWith("_FP16_ONNX.zip", StringComparison.Ordinal));
+        Assert.Equal(
+            expectFp32Suite,
+            urls.Any(u =>
+                u.EndsWith("_ONNX.zip", StringComparison.Ordinal)
+                && !u.Contains("_FP16_ONNX", StringComparison.Ordinal)
+            )
+        );
+    }
+
+    [Fact]
+    public void ModelPackages_OnlyTheFp32SuiteRenamesItsFiles()
+    {
+        // The fp16 and fp32 archives ship identical file names: without a suffix on the fp32 side
+        // one precision overwrites the other and there is nothing to fall back to.
+        Assert.NotEmpty(MangaJaNaiUpscaler.Fp32ModelPackages);
+        Assert.NotEmpty(MangaJaNaiUpscaler.Fp16ModelPackages);
+        Assert.All(
+            MangaJaNaiUpscaler.Fp32ModelPackages,
+            p => Assert.Equal(ModelFileNames.Fp32Suffix, p.PrecisionSuffix)
+        );
+        Assert.All(MangaJaNaiUpscaler.Fp16ModelPackages, p => Assert.Null(p.PrecisionSuffix));
+    }
+
+    [Fact]
+    public void ExpectedModelFiles_CoversBothPrecisionsUnderDistinctNames()
+    {
+        // The rule the download path depends on: every archive name resolves to a name on disk, and
+        // the two precisions of one family never collide.
+        List<string> files = MangaJaNaiUpscaler.ExpectedModelFiles().ToList();
+
+        Assert.NotEmpty(files);
+        Assert.Equal(files.Count, files.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp32.onnx", files);
+        Assert.Contains("4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx", files);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_WhenFileChangesAfterVerification_RequestsRedownload()
+    {
+        // A marker written after the first verification must not be trusted blindly: a model file
+        // corrupted afterwards used to load and render garbage. Writing the file updates its
+        // last-write time, which is the marker's change signal, so the package is re-hashed and the
+        // mismatch is reported instead of silently trusted.
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] original = "a valid model payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, original, TestContext.Current.CancellationToken);
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(original));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('a', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.True(File.Exists(markerPath));
+
+        // Corrupt one byte after verification; the mtime is moved forward explicitly so the change
+        // signal does not depend on the filesystem's timestamp granularity.
+        byte[] corrupted = (byte[])original.Clone();
+        corrupted[0] ^= 0xFF;
+        await File.WriteAllBytesAsync(onDisk, corrupted, TestContext.Current.CancellationToken);
+        File.SetLastWriteTimeUtc(onDisk, File.GetLastWriteTimeUtc(onDisk).AddMinutes(1));
 
         Assert.True(
-            exception
-                is null
-                    or FileNotFoundException
-                    or InvalidOperationException
-                    or HttpRequestException
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
         );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_WhenFileTruncatedAfterVerification_RequestsRedownload()
+    {
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] original = "another valid model payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, original, TestContext.Current.CancellationToken);
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(original));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('b', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        // A truncation changes the size, the other half of the marker's change signal.
+        await File.WriteAllBytesAsync(
+            onDisk,
+            original[..(original.Length / 2)],
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.True(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_LegacyMarker_IsReVerifiedOnceAndUpgraded()
+    {
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] content = "a third valid model payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, content, TestContext.Current.CancellationToken);
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(content));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('c', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        // A marker written by an older build holds only the bare zip hash, which carries no
+        // fingerprint and therefore forces one re-verification. The file matches, so nothing is
+        // re-downloaded and the marker is upgraded in place.
+        await File.WriteAllTextAsync(
+            markerPath,
+            package.ZipHash,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        string upgraded = await File.ReadAllTextAsync(
+            markerPath,
+            TestContext.Current.CancellationToken
+        );
+        Assert.StartsWith("v2\n", upgraded);
+        Assert.Contains(archiveName, upgraded);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ShouldDownloadPackage_WhenFingerprintUnchanged_SkipsTheRehash()
+    {
+        // The trade-off of the fingerprint marker: bytes edited in place with the original size and
+        // mtime restored look unchanged, so the package is trusted without re-hashing. This is the
+        // documented residual boundary, and it is what keeps a multi-gigabyte models directory from
+        // being re-hashed on every start. A change that moves either signal is re-hashed — see the
+        // corruption tests.
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+        const string archiveName = "tiny-model.onnx";
+        string onDisk = Path.Combine(modelsDirectory, archiveName);
+        byte[] original = "a boundary payload"u8.ToArray();
+        await File.WriteAllBytesAsync(onDisk, original, TestContext.Current.CancellationToken);
+        // Pin the write time to a whole second so restoring it later is exact on any filesystem,
+        // including ones with coarse timestamp granularity. The first verification records this value.
+        File.SetLastWriteTimeUtc(onDisk, new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc));
+
+        string expectedHash = Convert.ToHexStringLower(SHA256.HashData(original));
+        var package = new MangaJaNaiUpscaler.ModelPackage(
+            "https://example.invalid/tiny.zip",
+            new string('d', 64),
+            new Dictionary<string, string> { [archiveName] = expectedHash }
+        );
+        string markerPath = Path.Combine(modelsDirectory, $".verified_{package.ZipHash}");
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        DateTime originalWrite = File.GetLastWriteTimeUtc(onDisk);
+
+        // Same length, different bytes, original mtime restored: the fingerprint is identical, so no
+        // hash pass runs and the substituted bytes are trusted. An always-rehash implementation would
+        // return true here, which is exactly the behaviour this marker format exists to avoid.
+        byte[] substituted = (byte[])original.Clone();
+        substituted[0] ^= 0xFF;
+        await File.WriteAllBytesAsync(onDisk, substituted, TestContext.Current.CancellationToken);
+        File.SetLastWriteTimeUtc(onDisk, originalWrite);
+
+        Assert.False(
+            await _upscaler.ShouldDownloadPackage(
+                package,
+                markerPath,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(HttpStatusCode.BadRequest, true)] // 400: the request itself is wrong
+    [InlineData(HttpStatusCode.NotFound, true)] // 404: the package is not served
+    [InlineData(HttpStatusCode.Forbidden, true)] // 403: the package is not served to us
+    [InlineData(HttpStatusCode.RequestTimeout, false)] // 408: transient, retry
+    [InlineData(HttpStatusCode.TooManyRequests, false)] // 429: a rate limit says "come back"
+    [InlineData(HttpStatusCode.InternalServerError, false)] // 5xx
+    [InlineData(HttpStatusCode.BadGateway, false)]
+    public void IsDeterministicHttpFailure_OnlyRejectsTheStatusesThatCannotChange(
+        HttpStatusCode status,
+        bool expected
+    )
+    {
+        // The 4xx range was deterministic wholesale, so GitHub's 429 (and 408) under load aborted the
+        // package on the first response — and, from DownloadModelsIfNecessary, the whole startup.
+        // Those two are transient and now retry like a 5xx; the rest repeat verbatim.
+        var ex = new HttpRequestException("download failed", inner: null, status);
+
+        Assert.Equal(expected, MangaJaNaiUpscaler.IsDeterministicHttpFailure(ex));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void IsDeterministicHttpFailure_ATransportErrorWithoutStatusIsRetried()
+    {
+        // A reset connection carries no status and must reach the retry loop.
+        Assert.False(
+            MangaJaNaiUpscaler.IsDeterministicHttpFailure(
+                new HttpRequestException("connection reset")
+            )
+        );
+    }
+
+    /// <summary>
+    /// Writes a placeholder for every model the suite expects except <paramref name="missing"/>,
+    /// under the name each package stores its files under.
+    /// <para>
+    /// The placeholders make the files *exist*, which is what the existence check inside
+    /// <c>ShouldDownloadPackage</c> looks at — the package that holds <paramref name="missing"/> is
+    /// therefore the only one that is found missing outright. They cannot satisfy the hash
+    /// verification that follows, and no placeholder can: an expected SHA-256 is not something a
+    /// test can produce content for. So the seeded packages are still re-verified and re-downloaded,
+    /// which is why the tests that use this are <c>Category=Download</c>. What the placeholders buy
+    /// is that the download step is not pulling every archive just to reach the one this test is
+    /// about, and that a missing file is diagnosed rather than merely failing a hash.
+    /// </para>
+    /// </summary>
+    private void SeedEveryExpectedModelExcept(string missing) =>
+        SeedEveryExpectedModelExcept(missing, MangaJaNaiUpscaler.ExpectedModelFiles());
+
+    private void SeedEveryExpectedModelExcept(string missing, IEnumerable<string> expectedFiles)
+    {
+        // The configured models directory, not _tempDir: that is the directory the download step
+        // looks at, and the two are deliberately not the same.
+        string modelsDirectory = _mockConfig.Value.ResolvedModelsDirectory;
+        Directory.CreateDirectory(modelsDirectory);
+
+        foreach (string onDisk in expectedFiles)
+        {
+            // The detector is compared by its archive name, the precision pairs by their stored
+            // name, because that is the name the existence check looks for.
+            if (
+                !string.Equals(onDisk, missing, StringComparison.OrdinalIgnoreCase)
+                && !Path.GetFileName(onDisk).Equals(missing, StringComparison.OrdinalIgnoreCase)
+            )
+            {
+                File.WriteAllText(Path.Combine(modelsDirectory, onDisk), "placeholder");
+            }
+        }
     }
 }

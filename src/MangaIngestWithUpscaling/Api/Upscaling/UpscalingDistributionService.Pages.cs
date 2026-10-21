@@ -28,8 +28,11 @@ namespace MangaIngestWithUpscaling.Api.Upscaling;
 /// </summary>
 public partial class UpscalingDistributionService
 {
-    /// <summary>Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.</summary>
-    private const long MaxPageBytes = 512L * 1024 * 1024;
+    /// <summary>
+    /// Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.
+    /// Shared with the whole-CBZ path via <see cref="ArchiveSizeLimits.MaxEntryBytes"/>.
+    /// </summary>
+    private const long MaxPageBytes = ArchiveSizeLimits.MaxEntryBytes;
 
     /// <summary>Upper bound on a detection result payload, so the lifted gRPC body cap cannot be abused.</summary>
     private const int MaxDetectionResultBytes = 16 * 1024 * 1024;
@@ -429,6 +432,11 @@ public partial class UpscalingDistributionService
         bool sawChunk = false;
         bool sawLast = false;
         bool committed = false;
+        // The next ChunkNumber the stream must carry, starting at 0. The worker numbers a page's
+        // chunks strictly in sequence and lets the terminating IsLast chunk continue the sequence
+        // (see PageStreamClient's upload loop), so this is the upload-direction mirror of the
+        // per-page guard the worker applies to the fetch direction.
+        int nextChunkNumber = 0;
 
         try
         {
@@ -467,6 +475,43 @@ public partial class UpscalingDistributionService
                             ),
                         };
                     }
+
+                    // A chunk after the terminator means the page is already whole; appending its
+                    // bytes would commit a corrupt page. Deterministic, so fail rather than restart.
+                    if (sawLast)
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message =
+                                $"Page {chunk.PageIndex} of task {chunk.TaskId} received a chunk after the final chunk.",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = PageStreamRejections.ToWireTerminal(
+                                PageStreamDisposition.Terminal
+                            ),
+                        };
+                    }
+
+                    // A skipped or repeated number would assemble the page from bytes that are not
+                    // the prefix the engine produced, so reject it instead of committing a silently
+                    // wrong page.
+                    if (chunk.ChunkNumber != nextChunkNumber)
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message =
+                                $"Chunk {chunk.ChunkNumber} of page {chunk.PageIndex} of task {chunk.TaskId} is out of sequence (expected {nextChunkNumber}); the page cannot be assembled from a non-contiguous stream.",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = PageStreamRejections.ToWireTerminal(
+                                PageStreamDisposition.Terminal
+                            ),
+                        };
+                    }
+
+                    nextChunkNumber++;
 
                     if (!sawChunk)
                     {

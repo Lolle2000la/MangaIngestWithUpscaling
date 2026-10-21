@@ -64,6 +64,9 @@
   <data name="Error_OutputPathMustBeCbz" xml:space="preserve">
     <value>出力パスはcbzファイルである必要があります</value>
   </data>
+  <data name="Error_PackageTooLarge" xml:space="preserve">
+    <value>{0} のダウンロードを拒否しました。パッケージが上限 {1} バイトを超えています（報告値: {2} バイト）。</value>
+  </data>
   <data name="Error_ZipHashMismatch" xml:space="preserve">
     <value>{0}のハッシュが一致しません。期待値: {1}, 実際: {2}</value>
   </data>

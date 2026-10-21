@@ -13,8 +13,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: recursive
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
         with:
@@ -37,3 +35,157 @@ jobs:
         env:
           TEST_DB_PROVIDER: postgres
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj --filter-not-trait Category=Download
+
+  # The images are only built by the release workflows, which run after the merge — so a Dockerfile
+  # that no longer copies, restores or publishes is first noticed when a release is cut. The migration
+  # rewrote both of them (the app image now also carries the migrator, the worker's copy list and its
+  # base stage changed), so the two WebGPU images are built on every PR.
+  #
+  # The arm64 application image gets its own job below rather than a line in this one: the arm64
+  # runner is a different machine, and only the application image is published for arm64 — the worker
+  # and Compose images are not.
+  #
+  # The CUDA images are deliberately not built (a multi-gigabyte base pull on every PR, and the release
+  # workflows build them anyway) but their base tag is resolved: a retired or mistyped nvidia/cuda tag
+  # is the failure that would otherwise only surface in a release. Only their build and publish stages
+  # resemble the WebGPU images'; their runtime stage is a different base (nvidia/cuda with the .NET
+  # runtime copied in and a CUDA-defaulting PreferredGpuBackend), so a break there is not covered by
+  # the WebGPU builds above.
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build the application image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          # The default Buildx driver is docker-container, whose build cache is isolated from the
+          # local daemon: without `load`, this step only proves the Dockerfile builds and no image
+          # ever reaches `docker run`. The tag is what `--load` needs, and what the smoke step below
+          # runs.
+          load: true
+          tags: mangaingestwithupscaling:ci
+      # The release workflows only build and push, so nothing has ever run the image: a Dockerfile
+      # that builds but whose entrypoint exits at startup passed CI. RemoteOnly skips the startup
+      # model download, so the boot needs no GPU and no network, the image's anonymous `/data` and
+      # `/models` volumes supply writable storage, and `/health` is the anonymous endpoint.
+      - name: Smoke-test the application image
+        run: |
+          set -euo pipefail
+          docker run -d --name miawu-smoke \
+            -p 127.0.0.1:18080:8080 \
+            -e Ingest_Upscaler__RemoteOnly=true \
+            mangaingestwithupscaling:ci >/dev/null
+
+          # Always tear the container down, and surface its logs only when it did not come up.
+          trap 'if [ "${healthy:-0}" -ne 1 ]; then echo "::group::container logs"; docker logs miawu-smoke 2>&1 || true; echo "::endgroup::"; fi; docker rm -f miawu-smoke >/dev/null 2>&1 || true' EXIT
+
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:18080/health >/dev/null 2>&1; then
+              healthy=1
+              echo "Application image answered /health."
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' miawu-smoke 2>/dev/null || echo false)" != "true" ]; then
+              echo "::error::The application container exited before /health answered."
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "::error::/health did not answer within 60 s."
+          exit 1
+      - name: Build the remote worker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/MangaIngestWithUpscaling.RemoteWorker/Dockerfile
+          push: false
+      # The Compose image. This one is built by neither CI nor the release workflows (only
+      # docker-compose.yml uses it), yet this migration rewrote it — the Python removal, the Vulkan
+      # packages, PreferredGpuBackend=WebGPU, the migrator publish that now overlaps the app's
+      # dependencies — so `docker compose up` was the first thing to find out whether it still builds.
+      - name: Build the Compose image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: src/MangaIngestWithUpscaling/Dockerfile
+          push: false
+      # The core service lives in the `default` profile and Compose never auto-enables a profile, so
+      # the tracked `.env` (COMPOSE_PROFILES=default) is what makes a plain `docker compose up` start
+      # it. Untracking that file once already left a fresh clone running only kavita while the header
+      # comment still promised otherwise; the image builds above cannot see a service-selection
+      # regression, so assert the selection here instead of leaving it to a user to discover.
+      - name: Verify the Compose service selection
+        run: |
+          set -euo pipefail
+          echo "plain: $(docker compose config --services | sort | tr '\n' ' ')"
+          docker compose config --services | grep -qx mangaingestwithupscaling || {
+            echo "::error::plain 'docker compose up' would not start the app service — is .env still tracked, and does it still set COMPOSE_PROFILES=default?"
+            exit 1
+          }
+          if docker compose --profile remote-only config --services | grep -qx mangaingestwithupscaling; then
+            echo "::error::'--profile remote-only' must exclude the standard app service"
+            exit 1
+          fi
+      - name: Verify the CUDA base tag resolves
+        run: docker manifest inspect nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04 > /dev/null
+
+  # The arm64 twin of the application-image half of `containers` above, on GitHub's native arm64 runner
+  # (generally available and free for public repositories). The release workflows publish the WebGPU
+  # image for linux/arm64, so without this the arm64 build would first run when a release is cut — the
+  # failure mode the comment above `containers` exists to prevent. Only the application image is built
+  # here, because it is the only one published for arm64.
+  #
+  # The smoke test is the point of the job, not a bonus. The amd64 run above already proves the image
+  # boots with no GPU — GitHub's runners have none, and RemoteOnly=true keeps startup away from any
+  # model — so what this adds is the architecture itself: the arm64 native payload of every dependency
+  # in a real container, and an entrypoint that reaches /health on it.
+  containers-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build the application image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          # See the same step above: without `load` nothing reaches `docker run`, which the smoke step
+          # below needs.
+          load: true
+          tags: mangaingestwithupscaling:ci-arm64
+      - name: Smoke-test the application image
+        run: |
+          set -euo pipefail
+          docker run -d --name miawu-smoke-arm64 \
+            -p 127.0.0.1:18081:8080 \
+            -e Ingest_Upscaler__RemoteOnly=true \
+            mangaingestwithupscaling:ci-arm64 >/dev/null
+
+          # Always tear the container down, and surface its logs only when it did not come up.
+          trap 'if [ "${healthy:-0}" -ne 1 ]; then echo "::group::container logs"; docker logs miawu-smoke-arm64 2>&1 || true; echo "::endgroup::"; fi; docker rm -f miawu-smoke-arm64 >/dev/null 2>&1 || true' EXIT
+
+          healthy=0
+          for _ in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:18081/health >/dev/null 2>&1; then
+              healthy=1
+              echo "Application image answered /health on arm64."
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' miawu-smoke-arm64 2>/dev/null || echo false)" != "true" ]; then
+              echo "::error::The arm64 application container exited before /health answered."
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "::error::/health did not answer within 60 s on arm64."
+          exit 1
