@@ -264,10 +264,12 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         var progressReports = new List<UpscaleProgress>();
 
-        // Progress<T> posts to the captured SynchronizationContext, so its handler does not
-        // necessarily run before Upscale returns. The handler completes the gate on the last report
-        // the mock below emits, so the await is a real signal rather than a fixed sleep that either
-        // races on a loaded machine or wastes 200 ms on a quiet one.
+        // Under the xUnit runner there is no SynchronizationContext, so Progress<T> hands each report
+        // to the thread pool: the handler runs concurrently with the caller and not necessarily in
+        // the order the worker emitted the reports. The handler completes the gate on the last report
+        // the mock below emits, and every read of the list takes the same lock the handler takes —
+        // enumerating it without the lock threw "Collection was modified" whenever a report was still
+        // being appended while the assertions ran.
         var reported = new TaskCompletionSource();
         var progress = new Progress<UpscaleProgress>(p =>
         {
@@ -320,24 +322,24 @@ public class MangaJaNaiUpscalerTests : IDisposable
         );
 
         // Assert
-        Assert.NotEmpty(progressReports);
-
-        // Verify total was set
-        UpscaleProgress? totalReport;
+        // One snapshot for every assertion: the handler appends from pool threads, so anything read
+        // outside the lock can see a list that changes during enumeration.
+        List<UpscaleProgress> snapshot;
         lock (progressReports)
         {
-            totalReport = progressReports.FirstOrDefault(p => p.Total.HasValue);
+            snapshot = progressReports.ToList();
         }
+
+        Assert.NotEmpty(snapshot);
+
+        // Verify total was set
+        UpscaleProgress? totalReport = snapshot.FirstOrDefault(p => p.Total.HasValue);
         Assert.NotNull(totalReport);
         Assert.Equal(5, totalReport.Total!.Value);
 
-        // Verify progress increments were reported
-        List<UpscaleProgress> progressIncrements;
-        lock (progressReports)
-        {
-            progressIncrements = progressReports.Where(p => p.Current > 0).ToList();
-        }
-        Assert.NotEmpty(progressIncrements);
+        // Verify progress increments were reported. The gate above is the report with Current 3, so
+        // at least that one is in the snapshot regardless of the order the pool ran them in.
+        Assert.Contains(snapshot, p => p.Current > 0);
     }
 
     [Fact]
