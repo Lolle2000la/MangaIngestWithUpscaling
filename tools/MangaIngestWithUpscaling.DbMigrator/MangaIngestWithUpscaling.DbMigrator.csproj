@@ -24,7 +24,7 @@
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Postgres\MangaIngestWithUpscaling.Data.Postgres.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="System.CommandLine" Version="2.0.12" />
+    <PackageReference Include="System.CommandLine" Version="2.0.14" />
   </ItemGroup>
   <!--
     The referenced web app copies its linked MangaJaNaiConverterGui ML backend (multiple GB) and
