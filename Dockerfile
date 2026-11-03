@@ -1,16 +1,26 @@
+# Release image, built by the release workflows for GHCR. The Dockerfile is multi-arch via
+# TARGETARCH, and the workflows publish linux/amd64 and linux/arm64; the manifest also carries the CUDA
+# variant, which stays amd64 only (see docs/GPU_BACKEND_CONFIGURATION.md for why).
+# This is the WebGPU variant: the CPU ONNX Runtime plus the WebGPU execution provider, with
+# PreferredGpuBackend=WebGPU below. The flavour is passed explicitly on every restore/build/publish —
+# it is the csproj default, but stating it here keeps this file and cuda.Dockerfile reading the same
+# way and stops a change to that default from silently repointing this image.
+# It ships ASPNETCORE_ENVIRONMENT=Production, a healthcheck and the bundled DbMigrator. The
+# local/Compose image is the separate src/MangaIngestWithUpscaling/Dockerfile; the two are
+# intentionally not the same file, so a change here does not reach `docker compose up` and vice versa.
+#
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
 # Install the required dependencies for the service
-RUN apt-get update && apt-get install -y \
-	python3 python3-venv wget libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	wget ca-certificates libvulkan1 mesa-vulkan-drivers libgomp1 \
+	libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
 	rm -rf /var/lib/apt/lists/*
-# The Python virtual environment is installed at runtime into the data volume on first startup.
-ENV Ingest_Upscaler__PythonEnvironmentDirectory=/data/pyenv
 ENV Ingest_Upscaler__SelectedDeviceIndex=1
-ENV Ingest_Upscaler__PreferredGpuBackend=CUDA
+ENV Ingest_Upscaler__PreferredGpuBackend=WebGPU
 EXPOSE 8080
 EXPOSE 8081
 
@@ -26,21 +36,23 @@ COPY ["src/MangaIngestWithUpscaling.Data/MangaIngestWithUpscaling.Data.csproj", 
 COPY ["src/MangaIngestWithUpscaling.Data.Sqlite/MangaIngestWithUpscaling.Data.Sqlite.csproj", "src/MangaIngestWithUpscaling.Data.Sqlite/"]
 COPY ["src/MangaIngestWithUpscaling.Data.Postgres/MangaIngestWithUpscaling.Data.Postgres.csproj", "src/MangaIngestWithUpscaling.Data.Postgres/"]
 COPY ["tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj", "tools/MangaIngestWithUpscaling.DbMigrator/"]
-RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj"
-RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj"
+RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj" -p:OnnxRuntimeFlavor=Cpu
+RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -p:OnnxRuntimeFlavor=Cpu
 COPY . .
 WORKDIR "/src/src/MangaIngestWithUpscaling"
-RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c Release -o /app/build
+RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -o /app/build -p:OnnxRuntimeFlavor=Cpu
 
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c Release -a $TARGETARCH -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/publish /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cpu
 # SQLite<->PostgreSQL migration CLI. It is framework-dependent (same runtime and shared deps as the
-# app), so publishing it into the same image adds only ~0.2 MB; the migrator csproj strips the web
-# app's multi-GB backend content. Run it by overriding the entrypoint, e.g.:
+# app), so publishing it into the same image adds only ~0.2 MB. It was once much larger because the
+# migrator csproj stripped the web app's bundled Python backend; that backend is gone, so the two
+# now overlap almost completely and `cp -rn` only adds the migrator entrypoint. Run it by overriding
+# the entrypoint, e.g.:
 #   docker run --rm --entrypoint dotnet <image> MangaIngestWithUpscaling.DbMigrator.dll <arguments>
-RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c Release -a $TARGETARCH -o /app/migrator /p:UseAppHost=false
+RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/migrator /p:UseAppHost=false -p:OnnxRuntimeFlavor=Cpu
 RUN cp -rn /app/migrator/. /app/publish/
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)

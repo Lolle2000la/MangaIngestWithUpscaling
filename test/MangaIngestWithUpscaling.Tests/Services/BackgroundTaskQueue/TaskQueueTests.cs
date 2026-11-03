@@ -430,7 +430,10 @@ public class TaskQueueTests : IDisposable
     )]
     [InlineData(
         new[] { "Chapter 1.0.cbz", "Chapter 1.cbz" },
-        new[] { "Chapter 1.0.cbz", "Chapter 1.cbz" }
+        // "1.0" and "1" are the same chapter number, so the canonical name comparison breaks the tie
+        // ordinally and inserts "Chapter 1.cbz" ahead of "Chapter 1.0.cbz". The old app comparer
+        // returned 0 here and left the two in enqueue order.
+        new[] { "Chapter 1.cbz", "Chapter 1.0.cbz" }
     )]
     [Trait("Category", "Unit")]
     public async Task EnqueueAsync_ShouldInsertInLogicalChapterOrder(

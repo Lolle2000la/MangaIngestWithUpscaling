@@ -9,6 +9,7 @@ on:
     paths:
       - "src/MangaIngestWithUpscaling.RemoteWorker/**"
       - "src/MangaIngestWithUpscaling.Shared/**"
+      - "test/MangaIngestWithUpscaling.RemoteWorker.Tests/**"
       - "MangaIngestWithUpscaling.sln"
 
 jobs:

@@ -440,7 +440,7 @@ public class MangaLibraryMoverTests : IAsyncDisposable
 
         return new Library
         {
-            Id = Random.Shared.Next(1, 10000),
+            Id = TestIds.Next(),
             Name = name,
             NotUpscaledLibraryPath = notUpscaledPath,
             UpscaledLibraryPath = upscaledPath,
@@ -451,7 +451,7 @@ public class MangaLibraryMoverTests : IAsyncDisposable
     {
         return new Manga
         {
-            Id = Random.Shared.Next(1, 10000),
+            Id = TestIds.Next(),
             PrimaryTitle = title,
             Library = library,
             LibraryId = library.Id,
@@ -464,7 +464,7 @@ public class MangaLibraryMoverTests : IAsyncDisposable
         var relativePath = Path.Combine(manga.PrimaryTitle, fileName);
         return new Chapter
         {
-            Id = Random.Shared.Next(1, 10000),
+            Id = TestIds.Next(),
             FileName = fileName,
             RelativePath = relativePath,
             Manga = manga,

@@ -14,7 +14,8 @@ public interface IManualSplitService
     List<string> ApplyEqualSplitsToImage(string imagePath, int numberOfSplits, string outputDir);
 
     /// <summary>
-    /// Version constant for manual splits (different from auto-detection)
+    /// Version stamped on manual split findings. It is a separate sequence from the auto-detector's:
+    /// a manual split is drawn by the user, not produced by detection, so no re-detection is owed.
     /// </summary>
     int ManualSplitVersion { get; }
 }
@@ -22,7 +23,10 @@ public interface IManualSplitService
 [RegisterScoped]
 public class ManualSplitService : IManualSplitService
 {
-    public int ManualSplitVersion => 2; // Different from auto-detection (which is 1)
+    // Manual splits are not a detector output, so they carry their own version. The number happens to
+    // equal the current auto-detector version (SplitDetectionService.CURRENT_DETECTOR_VERSION == 2);
+    // it is a separate sequence, not a claim that the two are interchangeable.
+    public int ManualSplitVersion => 2;
 
     public List<string> ApplyManualSplitsToImage(
         string imagePath,

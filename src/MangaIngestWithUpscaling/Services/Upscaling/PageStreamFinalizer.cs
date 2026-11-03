@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
 namespace MangaIngestWithUpscaling.Services.Upscaling;
@@ -220,16 +221,9 @@ public sealed class PageStreamFinalizer(IPageSpoolStore spool, ILogger logger)
     ///     spool and let the worker restart the chapter, instead of deleting a chapter's worth of
     ///     already-upscaled pages.
     /// </summary>
-    internal static bool IsTransientStorageFailure(Exception ex)
-    {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (current is IOException or UnauthorizedAccessException)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    internal static bool IsTransientStorageFailure(Exception ex) =>
+        ExceptionChain.Contains(
+            ex,
+            current => current is IOException or UnauthorizedAccessException
+        );
 }

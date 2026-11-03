@@ -48,8 +48,14 @@ public class SplitProcessingService(
         var resultsToProcess = successfulResults;
         var resultsWithSplits = resultsToProcess.Where(r => r.Splits.Count > 0).ToList();
 
-        // If there are failures and no splits were found, fail the task and do not proceed to upscaling
-        if (failedResults.Count > 0 && resultsWithSplits.Count == 0)
+        // A detection failure is terminal only when every page failed. A partial failure still has
+        // successful pages, whose outcome is the real result — and most chapters legitimately have no
+        // page break at all. Failing the chapter because one page could not be decoded would make a
+        // common, healthy result depend on an unrelated page, and DetectSplitCandidatesTask.RetryFor is
+        // 1, so the chapter would be abandoned on the next attempt. SetFailedAsync is reserved for the
+        // terminal case the detection service documents: every page of the chapter carries a failure.
+        bool allPagesFailed = failedResults.Count > 0 && successfulResults.Count == 0;
+        if (allPagesFailed)
         {
             await stateManager.SetFailedAsync(chapterId, null, cancellationToken);
 
@@ -59,7 +65,7 @@ public class SplitProcessingService(
             var errorMessage = string.Join("; ", uniqueErrors);
 
             logger.LogError(
-                "Split detection failed for images in chapter {ChapterId}. Errors: {Errors}",
+                "Split detection failed for every image in chapter {ChapterId}. Errors: {Errors}",
                 chapterId,
                 errorMessage
             );

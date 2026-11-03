@@ -1,3 +1,4 @@
+using System.Reflection;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -18,7 +19,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
 /// Drives the full <see cref="RemoteTaskProcessor.ExecuteAsync"/> claim → stream loop against a
 /// stubbed server, so the consecutive-soft-failure counter and its cap are exercised end to end (not
 /// just the extracted classifier). The streaming client's manifest call is the failure point, which
-/// keeps the test independent of Python and the page protocol.
+/// keeps the test independent of the upscaler and the page protocol.
 /// </summary>
 public class RemoteTaskProcessorLoopTests
 {
@@ -65,6 +66,49 @@ public class RemoteTaskProcessorLoopTests
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task ExecuteAsync_ResetsTheSoftFailureCounterAfterACleanStop()
+    {
+        // A task that fails transiently and is then cleanly cancelled must not carry its old count
+        // into the next delegation: the clean-stop branch resets it, exactly as the success and
+        // terminal paths do. Without the reset the pre-cancellation failure still counts, so the
+        // cap is reached one manifest call earlier (6 instead of the reset's 7).
+        int manifestCalls = 0;
+        var reported = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var client = CreateServer(
+            manifestError: () =>
+            {
+                int call = Interlocked.Increment(ref manifestCalls);
+                return call == 2
+                    ? new OperationCanceledException("clean stop")
+                    : new RpcException(new Status(StatusCode.Unavailable, "blip"));
+            },
+            onReported: () => reported.TrySetResult(Volatile.Read(ref manifestCalls))
+        );
+
+        RemoteTaskProcessor processor = CreateProcessor(client);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await processor.StartAsync(cts.Token);
+        try
+        {
+            int callsAtReport = await reported.Task.WaitAsync(
+                TimeSpan.FromSeconds(30),
+                TestContext.Current.CancellationToken
+            );
+
+            // The clean stop is the second manifest call; the five counted failures that reach the
+            // cap span calls 1 and 3-7. A reset-less branch would report at call 6.
+            Assert.Equal(SoftFailureCap + 2, callsAtReport);
+        }
+        finally
+        {
+            await processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task ExecuteAsync_ReportsAPermanentFailureImmediately()
     {
         // A deterministic failure must not be retried to the cap: report it on the first attempt so a
@@ -101,16 +145,68 @@ public class RemoteTaskProcessorLoopTests
     }
 
     private static RemoteTaskProcessor CreateProcessor(
-        UpscalingService.UpscalingServiceClient client
+        UpscalingService.UpscalingServiceClient client,
+        ITaskClaimSource? claimSource = null
     )
     {
         var provider = new ServiceCollection()
             .AddSingleton(client)
-            .AddSingleton<ITaskClaimSource>(new FakeTaskClaimSource())
+            .AddSingleton<ITaskClaimSource>(claimSource ?? new FakeTaskClaimSource())
             .AddSingleton(CreatePageStreamClient())
             .AddSingleton(Substitute.For<ILogger<RemoteTaskProcessor>>())
             .BuildServiceProvider();
         return new RemoteTaskProcessor(provider.GetRequiredService<IServiceScopeFactory>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ExecuteAsync_DoesNotSpinWhenTheServerKeepsOfferingTheInFlightTask()
+    {
+        // The claim loop retries the task it is already streaming on an inner `continue`, so it must
+        // not poll the claim RPC at a short fixed cadence. Forcing the in-flight id by hand makes
+        // that branch the very first claim, and the claim count over a short window pins the
+        // backoff: the 5 s dispatcher tick leaves a single claim, whereas the previous 200 ms retry
+        // produced several per second for as long as the server re-offered the task.
+        int claims = 0;
+        var claimSource = new CountingTaskClaimSource(() => Interlocked.Increment(ref claims));
+        UpscalingService.UpscalingServiceClient client = CreateServer(
+            manifestError: () => new RpcException(new Status(StatusCode.Internal, "unused")),
+            onReported: () => { }
+        );
+
+        RemoteTaskProcessor processor = CreateProcessor(client, claimSource);
+        ForceStreamingTaskId(processor, 1);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await processor.StartAsync(cts.Token);
+        try
+        {
+            await Task.Delay(1500, TestContext.Current.CancellationToken);
+            Assert.InRange(Volatile.Read(ref claims), 1, 2);
+        }
+        finally
+        {
+            await processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private static void ForceStreamingTaskId(RemoteTaskProcessor processor, int taskId) =>
+        typeof(RemoteTaskProcessor)
+            .GetField("_streamingTaskIdValue", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(processor, taskId);
+
+    /// <summary>Counts claim attempts; always returns the same task so the in-flight branch repeats.</summary>
+    private sealed class CountingTaskClaimSource(Action onClaim) : ITaskClaimSource
+    {
+        public Task<UpscaleTaskDelegationResponse> RequestTaskWithHintAsync(
+            CancellationToken stoppingToken
+        )
+        {
+            onClaim();
+            return Task.FromResult(
+                new UpscaleTaskDelegationResponse { TaskId = 1, TaskType = TaskType.Upscale }
+            );
+        }
     }
 
     /// <summary>
@@ -142,7 +238,7 @@ public class RemoteTaskProcessorLoopTests
     }
 
     private static UpscalingService.UpscalingServiceClient CreateServer(
-        Func<RpcException> manifestError,
+        Func<Exception> manifestError,
         Action onReported
     )
     {

@@ -84,7 +84,11 @@ public class Library : IHasCreatedAt, IHasModifiedAt
             UpscaledLibraryPath,
             KavitaConfig,
             UpscaleOnIngest,
-            HashCode.Combine(MergeChapterParts, UpscalerProfile)
+            // The id, not the UpscalerProfile navigation: Equals compares UpscalerProfileId, so
+            // hashing the navigation object broke the contract — two libraries equal by Equals
+            // (same id) hashed differently depending on whether the navigation was loaded, which
+            // silently splits equal libraries in any future set/dictionary keyed on Library.
+            HashCode.Combine(MergeChapterParts, UpscalerProfileId)
         );
     }
 }

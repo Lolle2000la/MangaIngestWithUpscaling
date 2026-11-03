@@ -196,6 +196,40 @@ public class PageStreamFinalizerTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task FinalizeAsync_WhenAnAggregateWrapsAPermanentThenIoFailure_ReturnsTransientFailure()
+    {
+        // The IO failure is the second sibling of an AggregateException, invisible to a walk that only
+        // follows InnerException (which surfaces the permanent first sibling). The spool must still be
+        // kept and the task retried, exactly as for a directly-thrown IOException.
+        var spool = Complete();
+        PageStreamSession session = Session();
+        var failures = new List<(int TaskId, string Message)>();
+        var aggregate = new AggregateException(
+            new InvalidOperationException("permanent"),
+            new IOException("disk full")
+        );
+
+        PageStreamFinalizeOutcome outcome = await Finalizer(spool)
+            .FinalizeAsync(
+                session,
+                session.Identity,
+                () => throw aggregate,
+                _ => { },
+                (taskId, message) =>
+                {
+                    failures.Add((taskId, message));
+                    return Task.CompletedTask;
+                },
+                Texts
+            );
+
+        Assert.Equal(PageStreamFinalizeStatus.TransientFailure, outcome.Status);
+        Assert.Empty(failures);
+        spool.Received(1).EndAssembly(session);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task FinalizeAsync_WhenTheFinalizeFailsGenerically_MarksTheTaskFailed()
     {
         var spool = Complete();

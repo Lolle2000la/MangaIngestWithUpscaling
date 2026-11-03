@@ -7,6 +7,26 @@ its cause quickly.
 
 The page-streaming design itself is described in [REMOTE_WORKER.md](REMOTE_WORKER.md).
 
+## Resume is per server process, not across a server restart
+
+- **Where:** `PageStreamSpool` (`SpoolRoot`, the in-memory `_sessions`/completed set) and the
+  page-streaming contract in `protos/upscaling-dist.proto` ("a re-dispatched task resumes where it
+  left off").
+- **Current behaviour:** within **one server process lifetime** a dropped worker or connection
+  resumes where it left off: the manifest reports the already-spooled pages and the worker only
+  re-produces the missing ones. Across a **server restart** there is no resume: the completed set
+  is in memory and each process owns a unique spool root (`{SpoolParent}/{ProcessId}-{Guid}`), so
+  the restarted process starts with an empty session and re-streams (and re-upscales) the whole
+  chapter. The old page bytes may survive on disk — a graceful shutdown deletes the process's own
+  root; a crash leaves it until the startup/periodic sweep ages it out (24 h retention) — but the
+  new session directory cannot see them, so they are orphaned.
+- **Symptom to watch for:** after a server restart, in-flight chapters upscale from scratch again
+  and temp disk usage briefly holds two copies of the chapter until the old spool root is swept.
+- **Direction (follow-up, deliberately not implemented here):** persist the per-task session
+  (identity + completed-page set) so a restarted process can adopt an existing spool root and
+  resume rather than re-stream. That requires discovering and identity-validating the on-disk page
+  files before reuse, which is a separate, riskier change.
+
 ## Spool location and budget (Finding 3)
 
 - **Where:** `PageStreamSpool` (`SpoolRoot`, `_maxTaskBytes`).
@@ -50,6 +70,15 @@ swallowing them, keeps the original only for a page it cannot decode, and expose
 effective options are folded into the server-computed content identity (see the H2 note below), so
 a change resets the spool and the worker's engine identity no longer varies with its local config.
 
+## Permanently unreadable repair source consumes the retry budget — fixed
+
+`DistributedUpscaleTaskProcessor` now counts consecutive transient preparation failures per repair
+task (`transientPreparationFailures`). A source that reports `PageDifferenceResult.ReadFailed` is
+still re-offered on the same 10 s interval, but the streak is incremented on each deferral and the
+task is failed once it reaches its `RetryFor` budget, so a permanently unreadable source can no
+longer defer for ever. A readable source and every terminal exit clear the streak. The counter is
+process-local, matching the repair state beside it and the supported single-replica deployment.
+
 ## Residual medium items
 
 - **Permanent local I/O faults burn a chapter per retry (M6).** `ClassifyStreamingFailure` maps every
@@ -66,18 +95,11 @@ a change resets the spool and the worker's engine identity no longer varies with
 
 - `SplitDetectionLayout.Root` is mutable public process-global state that redirects the detector
   paths and the detector identity hash; make it internal/injected so tests can run in parallel.
-- `DetectServerClient` releases a GPU-cache request that can wait the full timeout when there is no
-  server to ask (now returns early) and its cancellation-ack handshake can skip killing a busy
-  server.
 - `UpscalingDistributionService.Pages` allocates per page in a couple of upload paths and encodes
   detection JSON twice.
 - A repair whose missing-page set became empty between preparation and delegation restarts
   (Unavailable) rather than completing, so it can cycle up to the restart cap.
 - `RequestTaskRequest.prefetch` / `RequestUpscaleTaskWithHint` are now a no-op hint logged at Debug.
-- The detector logs a warning per page while the resident server is in its cooldown window.
-- Device selection for the resident split detector is derived from `SelectedDeviceIndex`, but `GpuBackend`
-  has no MPS value: on an Apple MPS host the backend resolves to `Auto`, so `--device` is omitted and
-  the detector falls back to its own auto-select (which may not match the upscaler's device).
 - The engine identity samples three 64 KiB windows per model file, so a same-size weight change
   confined between the windows is not detected.
 - Cross-instance mutual exclusion for a chapter is process-local (see `TaskQueue.AcquireChapterGateAsync`);
@@ -97,7 +119,7 @@ a change resets the spool and the worker's engine identity no longer varies with
 - Metadata handling uses case-sensitive `.cbz` checks and treats a missing `.cbz` as "no differences"
   (both repair paths now guard `File.Exists` on the source before analysing, so a missing original
   fails terminally instead of rebuilding an empty archive).
-- `PageStreamSpool.IsSafeEntryName` rejects absolute and Windows drive-absolute (`C:\`, `C:/`) entry
+- `ArchiveEntryNameGuard.IsSafeEntryName` rejects absolute and Windows drive-absolute (`C:\`, `C:/`) entry
   names but deliberately keeps a drive-relative `C:evil.jpg` or an NTFS alternate-data-stream
   `page.jpg:evil`, because a colon is legal on Linux and rejecting it silently dropped legitimate
   pages. The server never extracts by entry name; a third-party Windows extractor reading a produced
@@ -106,8 +128,6 @@ a change resets the spool and the worker's engine identity no longer varies with
   `TryCommitPage`'s `size = 0` default is a budget footgun.
 - The streaming inactivity allowance keeps a documented 15-minute floor that the local whole-CBZ
   path does not have, so the two paths kill a wedged engine on different schedules.
-- A permanently unreadable source (`ReadFailed`) is re-offered every 10 s and never consumes the
-  retry budget, so `RetryFor` never escalates; a separate transient-attempt counter is needed.
 - An identity-raced manifest can pair new descriptors with the old identity while the old session is
   still `Assembling`; it self-heals via a `GetPages` `FailedPrecondition` at the cost of extra
   restart round-trips.
@@ -115,10 +135,7 @@ a change resets the spool and the worker's engine identity no longer varies with
   `SweepStale` could in theory reclaim an in-use spool within the retention window.
 - Detection stem-collision handling and detection-upload exception classification are inconsistent
   with the upscale path (both preserve the spool, so safe).
-- On host shutdown the worker is stopped by best-effort NDJSON `cancel`/`shutdown` commands; a failed
-  `cancel` send is now logged at Information instead of Debug, so a lost stop is visible. The
-  terminal's SIGINT also reaches the child directly, and the worker now handles SIGINT/SIGTERM
-  gracefully (submodule `9e0a956`).
+- On host shutdown the in-process upscale worker terminates gracefully via `CancellationToken`.
 
 ## Architecture follow-ups (still open)
 
@@ -126,13 +143,10 @@ a change resets the spool and the worker's engine identity no longer varies with
   partial and return a result type instead of null-means-transient.
 - Decompose `PageStreamClient` (fetch stream / upload queue / progress reporter / work directory) and
   `PageStreamSpool` (session registry / page writer / zip assembler / sweeper).
-- A generic `NdjsonJobRegistry<TResult>` and a `FailureCooldown` value type so `DetectServerClient`
-  and `MangaJaNaiWorkerClient` stop duplicating job/TCS/cooldown plumbing.
 - A single `TaskQueue.TryBeginChapterTaskAsync(task, onDefer)` owning gate + conflict check + claim
   (the conflict rule itself is now single-sourced in `ChapterConflictGuard`).
 - A real engine-fingerprint seam (`IEngineFingerprint`/`IRuntimeInfo`) instead of the static
-  `EngineIdentity` plus `PythonService.Environment` reach-through; the runtime version and engine
-  constant are now hashed, but the seam would make them injectable and testable.
+  `EngineIdentity`; the engine constant and backend are now hashed, but the seam would make them injectable and testable.
 
 ## Architecture follow-ups
 
@@ -140,22 +154,20 @@ The page-streaming work rested on duplicated discipline that has largely been ex
 remaining items are deliberately deferred.
 
 Done:
-1. **Shared resident NDJSON process supervisor.** Extracted to `ResidentNdjsonProcess` (plus a shared
-   `StderrTailBuffer`); `MangaJaNaiWorkerClient` and `DetectServerClient` are protocol adapters.
-2. **`PageManifestBuilder`.** The descriptor builders and identity computers moved out of the RPC
+1. **`PageManifestBuilder`.** The descriptor builders and identity computers moved out of the RPC
    service into `PageManifestBuilder`. (A `PageIdentity` value object is still a possible refinement.)
-3. **One restart/retry taxonomy.** `PageStreamDisposition` + `PageStreamRejections` and a single
+2. **One restart/retry taxonomy.** `PageStreamDisposition` + `PageStreamRejections` and a single
    shared `PageStreamRestartException`; the wire `terminal` bool is mapped in one place.
-4. **`IPageSpoolStore`.** The store seam exists and states the single-replica constraint once; the
+3. **`IPageSpoolStore`.** The store seam exists and states the single-replica constraint once; the
    concrete `PageStreamSpool` is the (process-local) implementation.
-5. **`AtomicFileReplacement`.** The "build a sibling temp → atomic move → sweep stale temps" pattern
+4. **`AtomicFileReplacement`.** The "build a sibling temp → atomic move → sweep stale temps" pattern
    is single-sourced for split apply and the streamed-chapter assembly (the repair assembly now uses
    it too).
-6. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
+5. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
    `SoftFailureTracker` make the loop testable without live gRPC.
-7. **One finalize pipeline.** `PageStreamFinalizer` owns the complete→assemble→finalize ladder for
+6. **One finalize pipeline.** `PageStreamFinalizer` owns the complete→assemble→finalize ladder for
    the two upload handlers and the manifest-complete branch.
-8. **Typed engine identity + one profile mapper.** Assessed and left as-is. The profile is mapped in
+7. **Typed engine identity + one profile mapper.** Assessed and left as-is. The profile is mapped in
    two places (`ToProtoProfile` on the server, `GetProfileFromResponse` on the worker), but they are
    inverses that *fail loudly* on divergence — the server maps an unknown enum to `Unspecified` and
    the worker throws on `Unspecified` — so the "must agree" hazard is limited. Sharing the protobuf

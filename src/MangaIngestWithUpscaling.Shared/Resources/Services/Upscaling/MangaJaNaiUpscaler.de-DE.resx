@@ -64,6 +64,9 @@
   <data name="Error_OutputPathMustBeCbz" xml:space="preserve">
     <value>Ausgabepfad muss eine CBZ-Datei sein</value>
   </data>
+  <data name="Error_PackageTooLarge" xml:space="preserve">
+    <value>Download von {0} abgelehnt: Das Paket ist größer als das Limit von {1} Bytes ({2} Bytes gemeldet).</value>
+  </data>
   <data name="Error_ZipHashMismatch" xml:space="preserve">
     <value>Hash-Fehlanpassung für {0}. Erwartet: {1}, Tatsächlich: {2}</value>
   </data>

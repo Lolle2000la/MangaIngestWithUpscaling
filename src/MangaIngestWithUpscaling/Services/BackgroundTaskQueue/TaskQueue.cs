@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -748,10 +749,6 @@ public class TaskQueue : ITaskQueue, IHostedService
     public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
     public event Func<PersistedTask, Task>? TaskRemoved;
 
-    private static readonly NaturalSortComparer<Chapter> _chapterNameComparer = new(c =>
-        c.FileName
-    );
-
     private static int? GetChapterId(BaseTask data) => TaskClassifier.GetChapterId(data);
 
     private static int CompareChapters(Chapter a, Chapter b)
@@ -788,7 +785,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             }
         }
 
-        return _chapterNameComparer.Compare(a, b);
+        return NaturalEntryNameComparer.Instance.Compare(a.FileName, b.FileName);
     }
 
     /// <summary>

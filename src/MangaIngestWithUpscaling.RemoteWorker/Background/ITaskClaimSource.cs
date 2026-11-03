@@ -1,3 +1,5 @@
+using Google.Protobuf.WellKnownTypes;
+using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
@@ -16,18 +18,51 @@ public interface ITaskClaimSource
 }
 
 /// <summary>
-/// <see cref="ITaskClaimSource" /> over the generated gRPC client. The loop only needs the
-/// hint-bearing RPC; <c>RequestUpscaleTask</c> remains the un-hinted fallback for older servers.
+/// <see cref="ITaskClaimSource" /> over the generated gRPC client. The loop prefers the hint-bearing
+/// RPC and falls back to the un-hinted <c>RequestUpscaleTask</c> for servers from before it existed —
+/// without the fallback the claim loop would spin on <c>Unimplemented</c> roughly every 500 ms
+/// without ever claiming a task from such a server.
 /// </summary>
 public sealed class GrpcTaskClaimSource(UpscalingService.UpscalingServiceClient client)
     : ITaskClaimSource
 {
+    /// <summary>
+    /// Process-level, not per instance: the claim source is registered transient and the claim loop
+    /// resolves it from a new DI scope every iteration, so an instance field reset itself before it
+    /// could ever help — the doomed hint RPC was paid again on every fetch. This is a fact about the
+    /// server the worker is talking to, so its lifetime is the worker process. Volatile because any
+    /// thread that resolves a claim source may read it.
+    /// </summary>
+    private static volatile bool serverLacksHintRpc;
+
     public async Task<UpscaleTaskDelegationResponse> RequestTaskWithHintAsync(
         CancellationToken stoppingToken
-    ) =>
-        await client.RequestUpscaleTaskWithHintAsync(
-            new RequestTaskRequest { Prefetch = true },
+    )
+    {
+        if (!serverLacksHintRpc)
+        {
+            try
+            {
+                return await client.RequestUpscaleTaskWithHintAsync(
+                    new RequestTaskRequest { Prefetch = true },
+                    deadline: DateTime.UtcNow.AddSeconds(15),
+                    cancellationToken: stoppingToken
+                );
+            }
+            catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
+            {
+                // A server from before the hint RPC. The claim loop's own retry would just hit
+                // the same rejection again, so the un-hinted RPC is used from now on instead of
+                // only for this one call. Latching costs nothing for an upgraded server: the
+                // hint is an optimization, and the next worker process picks it back up.
+                serverLacksHintRpc = true;
+            }
+        }
+
+        return await client.RequestUpscaleTaskAsync(
+            new Empty(),
             deadline: DateTime.UtcNow.AddSeconds(15),
             cancellationToken: stoppingToken
         );
+    }
 }

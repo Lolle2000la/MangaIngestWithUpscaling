@@ -2,6 +2,7 @@ using System.IO.Compression;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
@@ -31,10 +32,13 @@ public class RepairService : IRepairService
         string tempMissingCbz = Path.Combine(tempWorkDir, "missing_pages.cbz");
         string tempUpscaledMissingCbz = Path.Combine(tempWorkDir, "upscaled_missing_pages.cbz");
 
-        Directory.CreateDirectory(tempWorkDir);
-        Directory.CreateDirectory(tempOriginalDir);
-        Directory.CreateDirectory(tempUpscaledDir);
-        Directory.CreateDirectory(tempMissingDir);
+        // These directories hold the chapter's private page bytes (original, upscaled and the
+        // extracted missing pages); create them owner-only rather than letting
+        // Directory.CreateDirectory honour the process umask.
+        DirectoryPermissions.CreateDirectoryRestricted(tempWorkDir, logger);
+        DirectoryPermissions.CreateDirectoryRestricted(tempOriginalDir, logger);
+        DirectoryPermissions.CreateDirectoryRestricted(tempUpscaledDir, logger);
+        DirectoryPermissions.CreateDirectoryRestricted(tempMissingDir, logger);
 
         // Extract both archives
         if (File.Exists(originalPath))
@@ -115,7 +119,7 @@ public class RepairService : IRepairService
         {
             // Extract upscaled missing pages
             string tempUpscaledMissingDir = Path.Combine(context.WorkDirectory, "upscaled_missing");
-            Directory.CreateDirectory(tempUpscaledMissingDir);
+            DirectoryPermissions.CreateDirectoryRestricted(tempUpscaledMissingDir, logger);
 
             // If directory already populated (e.g., local flow already processed results), skip re-extracting
             bool alreadyPopulated = Directory
@@ -212,6 +216,10 @@ public class RepairService : IRepairService
             }
         }
 
+        // The archive holds the chapter's missing-page bytes and lives directly in the shared temp
+        // root, so tighten it after the zip writer created it (there is no create-with-mode overload).
+        DirectoryPermissions.RestrictToCurrentUser(tempBatchInputCbz, logger);
+
         await Task.CompletedTask; // Make this truly async if needed in the future
         return tempBatchInputCbz;
     }
@@ -228,7 +236,9 @@ public class RepairService : IRepairService
         CancellationToken cancellationToken = default
     )
     {
-        Directory.CreateDirectory(outputDir);
+        // The output directory receives the extracted upscaled pages, so restrict it like the rest of
+        // the repair scratch space.
+        DirectoryPermissions.CreateDirectoryRestricted(outputDir, logger);
 
         // Extract all upscaled images to the output directory
         int extracted = 0;

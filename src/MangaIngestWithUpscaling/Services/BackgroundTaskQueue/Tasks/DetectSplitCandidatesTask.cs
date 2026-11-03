@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
@@ -65,7 +66,10 @@ public class DetectSplitCandidatesTask : BaseTask, IChapterTask
             "mangaingest_split_detection",
             Guid.NewGuid().ToString()
         );
-        Directory.CreateDirectory(tempDir);
+        // The directory holds the chapter's private page bytes extracted from its CBZ; create it
+        // owner-only rather than letting Directory.CreateDirectory honour the process umask
+        // (typically 022, i.e. world-readable).
+        DirectoryPermissions.CreateDirectoryRestricted(tempDir, logger);
         bool isTempDir = true;
 
         try

@@ -148,7 +148,10 @@ public partial class UpscalingDistributionService(
         else
         {
             context.Status = new Status(StatusCode.InvalidArgument, "Invalid task type");
-            return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
+            return await FailUndeliverableClaimedTaskAsync(
+                task,
+                $"A task of type {task.Data.GetType().Name} cannot be delegated to a remote worker."
+            );
         }
 
         Shared.Data.LibraryManagement.UpscalerProfile? upscalerProfile =
@@ -157,7 +160,10 @@ public partial class UpscalingDistributionService(
         if (upscalerProfile == null)
         {
             context.Status = new Status(StatusCode.NotFound, "Upscaler profile not found");
-            return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
+            return await FailUndeliverableClaimedTaskAsync(
+                task,
+                $"The upscaler profile {upscalerProfileId} no longer exists."
+            );
         }
 
         var response = new UpscaleTaskDelegationResponse
@@ -167,6 +173,28 @@ public partial class UpscalingDistributionService(
         };
 
         return response;
+    }
+
+    /// <summary>
+    ///     Fails a task that <see cref="DistributedUpscaleTaskProcessor.GetTask" /> already claimed but
+    ///     that cannot be delegated to a worker. The claim transitioned the row to Processing with no
+    ///     worker heartbeat, so answering "no task" (<c>TaskId = -1</c>) without failing it would let
+    ///     the dead-task reaper requeue it forever without ever consuming its retry budget: the task
+    ///     would never complete, never fail and never surface. Failing it here makes the failure
+    ///     terminal (after the task's normal <c>RetryFor</c> budget) and visible instead.
+    /// </summary>
+    private async Task<UpscaleTaskDelegationResponse> FailUndeliverableClaimedTaskAsync(
+        PersistedTask task,
+        string reason
+    )
+    {
+        _logger.LogError(
+            "Failing claimed task {TaskId} because it cannot be delegated: {Reason}",
+            task.Id,
+            reason
+        );
+        await taskProcessor.TaskFailed(task.Id, reason);
+        return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
     }
 
     public override Task<KeepAliveResponse> KeepAlive(

@@ -8,7 +8,7 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.Python;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -29,6 +29,17 @@ using Serilog;
 
 // Configure the HTTP client factory to use HTTP/2 for unencrypted connections
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+// The calibration benchmark runs in a child process of this same executable (see
+// DeviceMemoryBenchmarkProcessRunner), so that the device memory its sessions leave behind dies with
+// that process instead of being resident while the first page is planned. Handled before the host is
+// built: the child pays neither the web server nor the database.
+if (DeviceMemoryBenchmarkHost.IsCommand(args))
+{
+    // Environment.Exit rather than returning the code: a top-level program cannot return from one
+    // branch and run a host in another. Nothing below has run yet, so there is nothing to unwind.
+    Environment.Exit(await DeviceMemoryBenchmarkHost.RunAsync(args));
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -355,25 +366,20 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 
-// Warn users who are running a deprecated image variant
-if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
-{
-    var deprecationLogger = app.Services.GetRequiredService<ILogger<Program>>();
-    deprecationLogger.LogWarning(
-        "DEPRECATION WARNING: You are using a deprecated Docker image variant. "
-            + "These images are deprecated and will be removed in a future release. "
-            + "Please switch to the standard image (ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest) "
-            + "and apply your desired configuration via environment variables. "
-            + "For GPU backend selection set Ingest_Upscaler__PreferredGpuBackend (e.g. CUDA, CUDA_12_8, ROCm, ROCm_GFX120X, XPU). "
-            + "For remote-only mode set Ingest_Upscaler__RemoteOnly=true. "
-            + "See docs/GPU_BACKEND_CONFIGURATION.md and docs/REMOTE_ONLY_VARIANT.md for full migration details."
-    );
-}
-
 // Apply migrations on startup
 using (var scope = app.Services.CreateScope())
 {
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    // Resolved (and thereby validated) before the migrations and the model download: registering the
+    // validator makes this first read of the value run it, so an unparsable setting fails the boot
+    // before either has done any work. Reading it afterwards validated a configuration the app had
+    // already migrated the database and downloaded gigabytes of models for — the worker already
+    // validates before touching anything.
+    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
+    // Force the first read here: registering the validator makes this access run it, which is what
+    // fails the boot before either has done any work.
+    _ = upscalerConfig.Value;
 
     await DatabaseBootstrap.ApplyStartupMigrationsAsync(
         scope.ServiceProvider,
@@ -382,41 +388,15 @@ using (var scope = app.Services.CreateScope())
         logger
     );
 
-    // Also initialize python environment
-    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
+    // Initialize upscaler models
     if (upscalerConfig.Value.RemoteOnly)
     {
         logger.LogInformation(
-            "Upscaler is configured to run only on the remote worker, skipping local environment preparation."
+            "Upscaler is configured to run only on the remote worker, skipping local model download."
         );
     }
     else
     {
-        var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
-        if (!pythonService.IsPythonInstalled())
-        {
-            logger.LogError(
-                "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH."
-            );
-        }
-        else
-        {
-            logger.LogInformation("Python is installed on the system.");
-
-            Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
-
-            PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
-                upscalerConfig.Value.PythonEnvironmentDirectory,
-                upscalerConfig.Value.PreferredGpuBackend,
-                upscalerConfig.Value.ForceAcceptExistingEnvironment
-            );
-            PythonService.Environment = environment;
-
-            logger.LogInformation(
-                $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
-            );
-        }
-
         // Download the models once at startup instead of on every usage
         var mangaJaNaiUpscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
         await mangaJaNaiUpscaler.DownloadModelsIfNecessary(CancellationToken.None);

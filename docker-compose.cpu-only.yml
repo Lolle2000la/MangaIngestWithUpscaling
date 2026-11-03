@@ -1,0 +1,15 @@
+# CPU-only override for the standard image on a host with no GPU render node (e.g. a NAS).
+#
+# The base docker-compose.yml passes /dev/dri through to the app service, and Compose aborts
+# `docker compose up` when the host has no such node — the app's own CPU fallback cannot help
+# because the container never starts. This override removes that mapping so the app runs on CPU:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cpu-only.yml up
+#
+# The `!override` tag (Compose 2.24.4+) replaces the base `devices` list instead of merging it.
+# Compose cannot drop a `devices` entry with a plain empty list (`devices: []` is merged as a
+# no-op), so the tag is required. On a Compose older than 2.24.4 comment the `devices:` block out of
+# docker-compose.yml instead, or run the remote-only profile, which has no device mapping.
+services:
+  mangaingestwithupscaling:
+    devices: !override []

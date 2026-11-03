@@ -14,6 +14,7 @@ using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.AspNetCore.Components;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Localization;
 using MudBlazor;
 using MudBlazor.Services;
@@ -260,14 +261,34 @@ public class SimpleComponentTests : BunitContext
         };
 
         // Act
-        var component = Render<ImagePreviewDialog>(parameters =>
-            parameters.Add(p => p.FilteredImage, filteredImage)
+        // MudDialog renders nothing unless it is inside a dialog instance (`IsInline` is true when
+        // the cascading dialog instance is absent), so rendering the component directly never
+        // produced the image the old `Count >= 0` assertion pretended to check. Host it through the
+        // provider and the real dialog service, the way the app does.
+        Services.RemoveAll<IDialogService>();
+        Services.AddScoped<IDialogService, DialogService>();
+
+        var provider = Render<MudDialogProvider>();
+        IDialogService realDialogs = Services.GetRequiredService<IDialogService>();
+        _ = realDialogs.ShowAsync<ImagePreviewDialog>(
+            title: null,
+            new DialogParameters<ImagePreviewDialog>
+            {
+                { dialog => dialog.FilteredImage, filteredImage },
+            }
         );
 
         // Assert
-        var result = component.FindAll("img[src*='data:image/']");
-        // Image may or may not be present depending on component rendering
-        Assert.True(result.Count >= 0, "Should be able to search for images without exceptions");
+        provider.WaitForAssertion(() =>
+        {
+            var images = provider.FindAll("img[src*='data:image/']");
+            Assert.Single(images);
+            Assert.StartsWith(
+                "data:image/jpeg;base64,",
+                images[0].GetAttribute("src"),
+                StringComparison.Ordinal
+            );
+        });
     }
 
     [Fact]

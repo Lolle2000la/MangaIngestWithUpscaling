@@ -1547,7 +1547,7 @@ public class ChapterMergeRevertServiceTests : IAsyncDisposable
     {
         return new Chapter
         {
-            Id = Random.Shared.Next(1000, 9999),
+            Id = TestIds.Next(),
             FileName = fileName,
             RelativePath = Path.Combine(manga.PrimaryTitle, fileName),
             Manga = manga,

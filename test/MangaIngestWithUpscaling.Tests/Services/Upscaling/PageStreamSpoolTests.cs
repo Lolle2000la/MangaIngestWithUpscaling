@@ -233,6 +233,52 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void Assemble_WritesPagesInPageOrderNotSourceArchiveOrder()
+    {
+        // A reader uses the archive's physical order, and the manifest (and the whole-CBZ writer)
+        // natural-sort the pages. A source whose zip order is 2 before 1 must therefore still come out
+        // as 1 then 2, or the streamed CBZ and the whole-CBZ output disagree on page order — which the
+        // code itself calls content-critical.
+        string directory = Directory.CreateTempSubdirectory("spool_order").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "002.jpg", new byte[] { 2 });
+                WriteEntry(zip, "001.jpg", new byte[] { 1 });
+            }
+
+            var pages = new List<SpoolPageDescriptor>
+            {
+                new(0, "001.jpg", "001.webp"),
+                new(1, "002.jpg", "002.webp"),
+            };
+            PageStreamSession session = _spool.GetOrCreateSession(21, "identity", "engine", 1);
+            for (int index = 0; index < pages.Count; index++)
+            {
+                using FileStream page = _spool.BeginPageWrite(session, index, out string temp);
+                page.Write([(byte)(index + 10)]);
+                _spool.CommitPage(session, index, temp);
+            }
+
+            string destination = Path.Combine(directory, "out.cbz");
+            _spool.Assemble(session, session.Identity, path, pages, destination);
+
+            using ZipArchive output = ZipFile.OpenRead(destination);
+            Assert.Equal(
+                new[] { "001.webp", "002.webp" },
+                output.Entries.Select(e => e.FullName).ToArray()
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task WritePage_Assemble_ReplacesImagesAndCopiesOtherEntries()
     {
         string directory = Directory.CreateTempSubdirectory("spool_test").FullName;
@@ -272,8 +318,9 @@ public class PageStreamSpoolTests
             _spool.Assemble(session, session.Identity, source, pages, destination);
 
             using ZipArchive zip = ZipFile.OpenRead(destination);
+            // Non-page entries first, then the pages in order: the order the whole-CBZ writer produces.
             Assert.Equal(
-                new[] { "001.webp", "002.webp", "ComicInfo.xml" },
+                new[] { "ComicInfo.xml", "001.webp", "002.webp" },
                 zip.Entries.Select(e => e.FullName)
             );
             Assert.Equal(new byte[] { 10, 11 }, ReadEntry(zip, "001.webp"));
@@ -484,6 +531,124 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void Assemble_RejectsANonImageEntryOverTheArchiveBudget()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_budget").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
+                // A non-image entry that a crafted archive can inflate far past its compressed size.
+                WriteEntry(zip, "ComicInfo.xml", new byte[4096]);
+            }
+
+            // MaxSpoolBytesPerTask also caps the bytes copied out of pass-through entries while the
+            // archive is assembled, so a small configured budget makes the cap testable.
+            var spool = new PageStreamSpool(
+                Substitute.For<ILogger<PageStreamSpool>>(),
+                Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = "1 KiB" })
+            );
+
+            var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
+            PageStreamSession session = spool.GetOrCreateSession(80, "identity", "engine", 1);
+            string temp;
+            using (FileStream page = spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[] { 7, 8, 9 });
+            }
+
+            spool.CommitPage(session, 0, temp);
+
+            Assert.Throws<InvalidDataException>(() =>
+                spool.Assemble(
+                    session,
+                    session.Identity,
+                    path,
+                    pages,
+                    Path.Combine(directory, "out.cbz")
+                )
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Assemble_CountsSpooledPageBytesAgainstTheSameArchiveBudget()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_budget_combined").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
+                WriteEntry(zip, "ComicInfo.xml", new byte[400]);
+            }
+
+            var spool = new PageStreamSpool(
+                Substitute.For<ILogger<PageStreamSpool>>(),
+                Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = "1 KiB" })
+            );
+
+            var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
+            PageStreamSession session = spool.GetOrCreateSession(82, "identity", "engine", 1);
+            string temp;
+            using (FileStream page = spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[800]);
+            }
+
+            spool.CommitPage(session, 0, temp);
+
+            // The 800-byte spooled page already consumes most of the 1 KiB budget. The 400-byte
+            // pass-through entry fits on its own, but the assembled archive as a whole does not:
+            // counting only the pass-through bytes would let this produce an archive well over the
+            // operator's ceiling.
+            Assert.Throws<InvalidDataException>(() =>
+                spool.Assemble(
+                    session,
+                    session.Identity,
+                    path,
+                    pages,
+                    Path.Combine(directory, "out.cbz")
+                )
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BeginPageWrite_RestrictsTheSpoolDirectoryToTheCurrentUser()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        PageStreamSession session = _spool.GetOrCreateSession(81, "identity", "engine", 1);
+        using (FileStream page = _spool.BeginPageWrite(session, 0, out _))
+        {
+            page.Write(new byte[] { 1 });
+        }
+
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+            File.GetUnixFileMode(session.Directory)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForgetMissingPages_DropsPagesWhoseFileIsGone()
     {
         PageStreamSession session = _spool.GetOrCreateSession(52, "identity", "engine", 2);
@@ -602,7 +767,7 @@ public class PageStreamSpoolTests
     {
         var spool = new PageStreamSpool(
             Substitute.For<ILogger<PageStreamSpool>>(),
-            Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = 100 })
+            Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = "100B" })
         );
         PageStreamSession session = spool.GetOrCreateSession(63, "identity", "engine", 2);
 
@@ -769,7 +934,7 @@ public class PageStreamSpoolTests
     [InlineData("\\evil.jpg", false)]
     public void IsSafeEntryName_RejectsTraversalAndWindowsForms(string name, bool expected)
     {
-        Assert.Equal(expected, PageStreamSpool.IsSafeEntryName(name));
+        Assert.Equal(expected, ArchiveEntryNameGuard.IsSafeEntryName(name));
     }
 
     [Fact]

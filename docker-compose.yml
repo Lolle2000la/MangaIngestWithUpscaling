@@ -4,7 +4,19 @@ services:
     build:
       context: .
       dockerfile: src/MangaIngestWithUpscaling/Dockerfile
-    # Optional so the default (profile-less, SQLite) `docker compose up` still works; when the
+    # In the `default` profile so plain `docker compose up` starts it. Compose never auto-enables
+    # profiles, so the tracked `.env` (which sets COMPOSE_PROFILES=default) is what turns this
+    # profile on — keep that file committed or a fresh clone skips the app service. Selecting the
+    # `remote-only` profile starts the remote-only service instead of this one (the unprofiled
+    # `kavita` service starts either way): `COMPOSE_PROFILES=remote-only docker compose up` sets the
+    # profile in the environment and so cannot be overridden by the tracked `.env`, while
+    # `docker compose --profile remote-only up` is equivalent on current Compose. Also in `postgres`
+    # so the documented `docker compose --profile postgres up` brings the app up together with the
+    # server.
+    profiles:
+      - default
+      - postgres
+    # Optional so the default (SQLite) `docker compose up` still works; when the
     # postgres profile is enabled, the app waits for the server to be healthy. The app now fails
     # fast on a PostgreSQL migration error, so without this it could exit on a slow first boot.
     depends_on:
@@ -13,7 +25,6 @@ services:
         required: false
     environment:
       - TZ=Etc/UTC
-      - Ingest_Upscaler__PythonEnvironmentDirectory=/data/pyenv
       - Ingest_Kavita__BaseUrl=http://kavita:5000
       - Ingest_Kavita__ApiKey=8d5f292a-a1ef-4557-8986-6319ccc80eb9 # Generate your own for your local testing
       - Ingest_Kavita__Enabled=True # Generate your own for your local testing
@@ -27,20 +38,27 @@ services:
     volumes:
       - ./test_data:/data
       - ./test_data/models:/models
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # The standard image is the WebGPU build, which reaches the GPU through Vulkan via /dev/dri, so
+    # the render nodes are passed through (see the README). There is no NVIDIA device reservation
+    # here: this is not the CUDA image. See the README for the :latest-cuda Compose example (with the
+    # NVIDIA reservation) when you need CUDA.
+    #
+    # This mapping is required, not optional: Compose has no "map it if it exists", and a missing
+    # /dev/dri aborts `docker compose up` before the container starts — the CPU fallback in the app
+    # cannot help. On a CPU-only host (a NAS without a render node) merge
+    # `docker-compose.cpu-only.yml`, which drops this mapping via the `!override` tag, or run the
+    # remote-only variant below, which has no device mapping. See the README.
+    devices:
+      - /dev/dri
 
-  # Remote-only variant without ML dependencies
+  # Remote-only variant without ML dependencies: the standard image with local upscaling switched
+  # off. There is no separate image since the PyTorch removal — the ML dependencies it used to
+  # carry are the same ones the standard image loads lazily, so RemoteOnly alone is the difference.
   mangaingestwithupscaling-remote-only:
-    image: ${DOCKER_REGISTRY-}mangaingestwithupscaling-remote-only
+    image: ${DOCKER_REGISTRY-}mangaingestwithupscaling
     build:
       context: .
-      dockerfile: remoteonly.Dockerfile
+      dockerfile: src/MangaIngestWithUpscaling/Dockerfile
     environment:
       - TZ=Etc/UTC
       - Ingest_Kavita__BaseUrl=http://kavita:5000
@@ -53,7 +71,7 @@ services:
     volumes:
       - ./test_data:/data
     profiles:
-      - remote-only # Use docker-compose --profile remote-only to run this variant
+      - remote-only # Select with: COMPOSE_PROFILES=remote-only docker compose up (equivalent to --profile remote-only)
 
   # Optional PostgreSQL server. Start it together with the app using:
   #   docker compose --profile postgres up

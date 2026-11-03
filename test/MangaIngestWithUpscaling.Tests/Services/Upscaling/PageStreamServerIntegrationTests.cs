@@ -1,5 +1,6 @@
 extern alias remote;
 
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Claims;
 using System.Text;
@@ -60,7 +61,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.Upscaling;
 /// <summary>
 /// Exercises the page-streaming transport over a real gRPC channel against the real
 /// <see cref="UpscalingDistributionService"/>, a real <see cref="PageStreamSpool"/> and a real
-/// database, with only the local Python worker faked. This covers what the stubbed-client test
+/// database, with only the local worker faked. This covers what the stubbed-client test
 /// cannot: gRPC serialization, the real handlers, identity/spool persistence and the chapter
 /// completion path.
 ///
@@ -161,7 +162,9 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                     ImageFormatConversionRules = [],
                     MaxDimensionBeforeUpscaling = null,
                     EnableSmartDownscale = false,
-                    MaxSpoolBytesPerTask = maxSpoolBytesPerTask,
+                    MaxSpoolBytesPerTask = maxSpoolBytesPerTask.ToString(
+                        CultureInfo.InvariantCulture
+                    ),
                 }
             )
         );
@@ -273,12 +276,15 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         Assert.True(File.Exists(_upscaledPath));
 
         using ZipArchive zip = ZipFile.OpenRead(_upscaledPath);
-        List<string> entries = zip.Entries.Select(e => e.FullName).ToList();
-        Assert.Equal(4, entries.Count);
-        Assert.Contains("001.webp", entries);
-        Assert.Contains("002.webp", entries);
-        Assert.Contains("ComicInfo.xml", entries);
-        Assert.Contains("upscaler.json", entries);
+        // The exact entry sequence, not a set: a reader uses the archive's physical order, so a
+        // reordering regression — pages emitted in source-archive order instead of page order, or the
+        // page entries split around the pass-through entries differently — has to fail here. The
+        // assembler writes non-page entries first (ComicInfo.xml) and the pages next in page-index
+        // order, then the finalizer appends upscaler.json.
+        Assert.Equal(
+            new[] { "ComicInfo.xml", "001.webp", "002.webp", "upscaler.json" },
+            zip.Entries.Select(e => e.FullName)
+        );
         Assert.Equal(new byte[] { 3, 2, 1 }, ReadEntry(zip, "001.webp"));
         Assert.Equal(new byte[] { 6, 5, 4 }, ReadEntry(zip, "002.webp"));
         Assert.Equal("<ComicInfo/>"u8.ToArray(), ReadEntry(zip, "ComicInfo.xml"));
@@ -333,6 +339,148 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
         Assert.False(response.Success);
         Assert.Contains("final chunk", response.Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAnOutOfSequenceChunkWithoutCommittingThePage()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        // Skip chunk 1: the page would be assembled from a non-contiguous stream, so it must be
+        // rejected rather than committed as a silently wrong page.
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 2,
+                Chunk = ByteString.CopyFrom(new byte[] { 4, 5 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 3,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+        Assert.Contains("out of sequence", response.Message);
+        AssertPageNotCommitted(0);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAChunkAfterTheFinalChunkWithoutCommittingThePage()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        // Trailing data after the terminator would have been appended verbatim and committed as a
+        // whole page; it must be rejected instead.
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 2,
+                Chunk = ByteString.CopyFrom(new byte[] { 4, 5, 6 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+        Assert.Contains("after the final chunk", response.Message);
+        AssertPageNotCommitted(0);
+    }
+
+    /// <summary>Asserts that a page was not recorded as committed in the task's spool session.</summary>
+    private void AssertPageNotCommitted(int pageIndex)
+    {
+        // The manifest created the task's session; a rejected upload must not have committed the page
+        // to it.
+        PageStreamSpool spool = _app.Services.GetRequiredService<PageStreamSpool>();
+        PageStreamSession? session = spool.TryGetSession(_taskId);
+        bool committed =
+            session is not null && spool.GetCompletedPages(session).Contains(pageIndex);
+        Assert.False(committed);
     }
 
     [Fact]
@@ -884,8 +1032,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .DetectSplitsAsync(
                 Arg.Any<string>(),
                 Arg.Any<IProgress<UpscaleProgress>?>(),
-                Arg.Any<CancellationToken>(),
-                Arg.Any<bool>()
+                Arg.Any<CancellationToken>()
             )
             .Returns(ci => new List<SplitDetectionResult>
             {
@@ -1083,8 +1230,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     [Trait("Category", "Integration")]
     public async Task UploadPage_EnforcesThePerTaskBudgetOverGrpc()
     {
-        // A dedicated server with a tiny budget, so the handler-level reservation/commit checks can be
-        // driven with a couple of bytes (the production default is 8 GiB).
+        // A dedicated server with a tiny budget, so the handler-level reservation/commit checks can
+        // be driven with a few bytes (the production default is 8 GiB).
         await using WebApplication budgetApp = await BuildAppAsync(maxSpoolBytesPerTask: 16);
         TestServer server = budgetApp.GetTestServer();
         using GrpcChannel channel = GrpcChannel.ForAddress(
@@ -1695,7 +1842,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                     cancellationToken
                 );
 
-                var file = new UpscaleJobFile(page.Name, outputPath, "upscaled");
+                var file = new UpscaleJobFile(page.Name, outputPath, UpscaleJobStatus.Success);
                 files.Add(file);
                 onPageDone(file);
                 ProcessedPages++;
@@ -1715,8 +1862,6 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             CancellationToken cancellationToken,
             TimeSpan? timeout
         ) => throw new NotSupportedException();
-
-        public Task ShutdownWorkerAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken) =>
             Task.FromResult(true);

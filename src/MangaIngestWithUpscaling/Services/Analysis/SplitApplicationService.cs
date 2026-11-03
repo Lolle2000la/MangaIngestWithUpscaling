@@ -95,8 +95,10 @@ public class SplitApplicationService(
         var newOriginalDir = Path.Combine(tempRoot, "new_original");
         var newUpscaledDir = Path.Combine(tempRoot, "new_upscaled");
 
-        Directory.CreateDirectory(originalExtractDir);
-        Directory.CreateDirectory(newOriginalDir);
+        // These directories hold the chapter's private page bytes (original and upscaled); create
+        // them owner-only rather than letting Directory.CreateDirectory honour the process umask.
+        DirectoryPermissions.CreateDirectoryRestricted(originalExtractDir, logger);
+        DirectoryPermissions.CreateDirectoryRestricted(newOriginalDir, logger);
 
         // Each replacement is built next to the file it replaces and moved onto it, so the swap is a
         // rename instead of a copy that rewrites the chapter in place (see AtomicFileReplacement).
@@ -215,8 +217,8 @@ public class SplitApplicationService(
                         "Applying splits to upscaled chapter {ChapterId}",
                         chapterId
                     );
-                    Directory.CreateDirectory(upscaledExtractDir);
-                    Directory.CreateDirectory(newUpscaledDir);
+                    DirectoryPermissions.CreateDirectoryRestricted(upscaledExtractDir, logger);
+                    DirectoryPermissions.CreateDirectoryRestricted(newUpscaledDir, logger);
 
                     cancellationToken.ThrowIfCancellationRequested();
                     ZipFile.ExtractToDirectory(chapter.UpscaledFullPath, upscaledExtractDir);
@@ -267,7 +269,7 @@ public class SplitApplicationService(
 
                         // Create a temporary CBZ with just the split pages
                         var splitPagesCbzDir = Path.Combine(tempRoot, "split_pages_to_upscale");
-                        Directory.CreateDirectory(splitPagesCbzDir);
+                        DirectoryPermissions.CreateDirectoryRestricted(splitPagesCbzDir, logger);
 
                         foreach (var splitPages in splitPagesToUpscale.Values)
                         {
@@ -299,7 +301,10 @@ public class SplitApplicationService(
 
                         // Extract upscaled split pages and add them to the new upscaled directory
                         var upscaledSplitPagesDir = Path.Combine(tempRoot, "upscaled_split_pages");
-                        Directory.CreateDirectory(upscaledSplitPagesDir);
+                        DirectoryPermissions.CreateDirectoryRestricted(
+                            upscaledSplitPagesDir,
+                            logger
+                        );
                         ZipFile.ExtractToDirectory(upscaledSplitPagesCbz, upscaledSplitPagesDir);
 
                         var upscaledSplitImages = Directory

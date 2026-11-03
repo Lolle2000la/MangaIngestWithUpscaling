@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.Extensions.Localization;
 
@@ -758,7 +759,9 @@ public partial class ChapterPartMerger(
 
         try
         {
-            Directory.CreateDirectory(tempDirectory);
+            // The directory holds a whole merged chapter's private page bytes; create it owner-only
+            // rather than letting Directory.CreateDirectory honour the process umask.
+            DirectoryPermissions.CreateDirectoryRestricted(tempDirectory, logger);
             logger.LogDebug("Created temporary merge directory: {TempDirectory}", tempDirectory);
 
             // Create the merged CBZ file in temporary location

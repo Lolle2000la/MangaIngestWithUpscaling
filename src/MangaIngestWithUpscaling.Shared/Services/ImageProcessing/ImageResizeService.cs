@@ -2,6 +2,8 @@ using System.Buffers;
 using System.IO.Compression;
 using System.Numerics;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Helpers;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MathNet.Numerics.IntegralTransforms;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -36,6 +38,17 @@ public class ImageResizeService(
     /// contrast to yield a meaningful FFT or Laplacian result and will also be skipped.
     /// </summary>
     private const double CropMinStdDev = 5.0;
+
+    /// <summary>
+    /// Name prefix of the temporary preprocessed whole-chapter archives
+    /// <see cref="CreatePreprocessedTempCbzAsync"/> writes into the system temp directory.
+    /// </summary>
+    internal const string PreprocessedTempCbzPrefix = "preprocessed_";
+
+    /// <summary>
+    /// Name prefix of the scratch directories a preprocessing run extracts a chapter into.
+    /// </summary>
+    internal const string PreprocessScratchDirectoryPrefix = "manga_preprocess_";
 
     /// <summary>
     /// Cached to avoid a native libvips allocation per image. Intentionally not disposed:
@@ -84,7 +97,10 @@ public class ImageResizeService(
 
         try
         {
-            Directory.CreateDirectory(tempDir);
+            // The extraction directory holds a whole chapter's private page bytes; create it owner-only
+            // rather than letting Directory.CreateDirectory honour the process umask (typically
+            // world-readable), which the post-hoc chmod would leave a window around.
+            DirectoryPermissions.CreateDirectoryRestricted(tempDir, logger);
 
             logger.LogInformation(
                 "Preprocessing images in {InputPath} (MaxDimension={MaxDimension}, ConversionRules={RuleCount}, SmartDownscale={SmartDownscale})",
@@ -99,6 +115,9 @@ public class ImageResizeService(
             await ProcessImagesInDirectory(tempDir, options, cancellationToken);
 
             ZipFile.CreateFromDirectory(tempDir, tempCbzPath);
+            // The assembled archive also holds the chapter's private page bytes. There is no
+            // create-with-mode overload for a file the zip writer owns, so it is tightened after.
+            DirectoryPermissions.RestrictToCurrentUser(tempCbzPath, logger);
 
             logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
 
@@ -113,7 +132,7 @@ public class ImageResizeService(
         }
     }
 
-    public async Task PreprocessImageInPlaceAsync(
+    public async Task<string> PreprocessImageInPlaceAsync(
         string imagePath,
         ImagePreprocessingOptions options,
         CancellationToken cancellationToken
@@ -124,15 +143,17 @@ public class ImageResizeService(
         // without the downscale the engine identity claims.
         Validate(options);
 
-        // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then move
-        // the single result back over the original so the caller keeps the same path.
+        // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then
+        // install the single result next to the original. The pipeline may rename the page when a
+        // format conversion applies, so the resulting path is returned to the caller rather than
+        // assumed to equal the input path.
         string tempDir = Path.Combine(
             Path.GetTempPath(),
             $"manga_preprocess_page_{Guid.NewGuid()}"
         );
         try
         {
-            Directory.CreateDirectory(tempDir);
+            DirectoryPermissions.CreateDirectoryRestricted(tempDir, logger);
             string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
             File.Copy(imagePath, workingPath, overwrite: true);
 
@@ -160,27 +181,27 @@ public class ImageResizeService(
                     "Preprocessing {ImagePath} failed; keeping the original.",
                     imagePath
                 );
-                return;
+                return imagePath;
             }
 
             string[] results = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
             if (results.Length == 1)
             {
-                File.Move(results[0], imagePath, overwrite: true);
+                return InstallResult(results[0], imagePath);
             }
-            else if (results.Length == 0)
+
+            if (results.Length == 0)
             {
                 logger.LogWarning(
                     "Preprocessing {ImagePath} produced no output; keeping the original.",
                     imagePath
                 );
+                return imagePath;
             }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"Preprocessing {imagePath} produced {results.Length} files for one image."
-                );
-            }
+
+            throw new InvalidOperationException(
+                $"Preprocessing {imagePath} produced {results.Length} files for one image."
+            );
         }
         finally
         {
@@ -189,6 +210,51 @@ public class ImageResizeService(
                 Directory.Delete(tempDir, true);
             }
         }
+    }
+
+    /// <summary>
+    /// Moves the single result of the in-place pipeline next to <paramref name="originalPath"/>,
+    /// removing the original, and returns the path the caller must use.
+    /// <para>
+    /// <see cref="ProcessImage"/> performs a format conversion by writing a new file with the
+    /// converted extension and deleting its input, exactly as the whole-CBZ path does; the converted
+    /// name is the one the whole-CBZ archive keeps. Overwriting the original path with the converted
+    /// bytes instead would leave, say, JPEG bytes under a <c>.png</c> name, so the file's name and its
+    /// content would disagree. When the extension did not change (a resize or a same-format
+    /// re-encode) the original name already matches the content and is kept, which also absorbs the
+    /// numeric suffix <see cref="ProcessImage"/> adds when a same-format conversion writes a sibling
+    /// of the working copy.
+    /// </para>
+    /// </summary>
+    private static string InstallResult(string resultPath, string originalPath)
+    {
+        string directory = Path.GetDirectoryName(originalPath)!;
+        string resultExtension = Path.GetExtension(resultPath).ToLowerInvariant();
+        string originalExtension = Path.GetExtension(originalPath).ToLowerInvariant();
+
+        if (resultExtension == originalExtension)
+        {
+            File.Move(resultPath, originalPath, overwrite: true);
+            return originalPath;
+        }
+
+        string targetPath = Path.Combine(directory, Path.GetFileName(resultPath));
+        if (File.Exists(targetPath))
+        {
+            // A converted sibling already owns the name (e.g. a duplicate fetch inside one work
+            // directory). Keep both by suffixing rather than silently dropping either page.
+            string stem = Path.GetFileNameWithoutExtension(targetPath);
+            int suffix = 1;
+            do
+            {
+                targetPath = Path.Combine(directory, $"{stem}_{suffix}{resultExtension}");
+                suffix++;
+            } while (File.Exists(targetPath));
+        }
+
+        File.Move(resultPath, targetPath);
+        File.Delete(originalPath);
+        return targetPath;
     }
 
     public Task<long> GetMaxPixelCountFromCbzAsync(
@@ -264,6 +330,93 @@ public class ImageResizeService(
                 "Failed to clean up temporary file: {TempFilePath}",
                 tempFilePath
             );
+        }
+    }
+
+    /// <summary>
+    ///     Reclaims preprocessing scratch an interrupted or hard-killed run left in
+    ///     <paramref name="tempRoot" />. Both halves of the family only clean up on a path a hard kill
+    ///     reaches neither: the <c>preprocessed_{guid}_{chapter}.cbz</c> archive is deleted only by
+    ///     <see cref="TempResizedCbz.Dispose" />, and the <c>manga_preprocess_*</c> extraction
+    ///     directories only by the run's own <c>finally</c>. No other sweep (page spool, page-stream
+    ///     directories, model-download scratch, replacement siblings) matches these prefixes, so a
+    ///     whole chapter's archive and extracted pages would otherwise sit in temp for good. Only
+    ///     entries older than <paramref name="retention" /> are removed, so a live preprocess keeps
+    ///     its scratch.
+    /// </summary>
+    internal static void DeleteStalePreprocessScratch(
+        string tempRoot,
+        ILogger logger,
+        TimeSpan retention
+    )
+    {
+        if (!Directory.Exists(tempRoot))
+        {
+            return;
+        }
+
+        DateTime cutoff = DateTime.UtcNow - retention;
+        try
+        {
+            foreach (
+                string archive in Directory.EnumerateFiles(
+                    tempRoot,
+                    $"{PreprocessedTempCbzPrefix}*"
+                )
+            )
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(archive) < cutoff)
+                    {
+                        File.Delete(archive);
+                        logger.LogInformation(
+                            "Removed stale preprocessed archive {Path}.",
+                            archive
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(
+                        ex,
+                        "Failed to remove stale preprocessed archive {Path}.",
+                        archive
+                    );
+                }
+            }
+
+            foreach (
+                string directory in Directory.EnumerateDirectories(
+                    tempRoot,
+                    $"{PreprocessScratchDirectoryPrefix}*"
+                )
+            )
+            {
+                try
+                {
+                    if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                    {
+                        Directory.Delete(directory, recursive: true);
+                        logger.LogInformation(
+                            "Removed stale preprocessing scratch directory {Directory}.",
+                            directory
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(
+                        ex,
+                        "Failed to remove stale preprocessing scratch directory {Directory}.",
+                        directory
+                    );
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to sweep preprocessing scratch in {TempRoot}.", tempRoot);
         }
     }
 
@@ -388,24 +541,16 @@ public class ImageResizeService(
     /// caught by <see cref="VerifyReady"/> at startup instead.
     /// </para>
     /// </summary>
-    private static bool IsInfrastructureFailure(Exception ex)
-    {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (
+    private static bool IsInfrastructureFailure(Exception ex) =>
+        ExceptionChain.Contains(
+            ex,
+            current =>
                 current
-                is DllNotFoundException
-                    or EntryPointNotFoundException
-                    or BadImageFormatException
-                    or TypeInitializationException
-            )
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+                    is DllNotFoundException
+                        or EntryPointNotFoundException
+                        or BadImageFormatException
+                        or TypeInitializationException
+        );
 
     private void ProcessImage(
         string imagePath,
@@ -569,7 +714,13 @@ public class ImageResizeService(
             }
             else
             {
-                processedImage.WriteToFile(imagePath);
+                // No format conversion: re-encode through the explicit-quality save path instead of
+                // WriteToFile, which would let libvips pick the encoder defaults (jpegsave's Q≈75 for
+                // a .jpg). A page that is only resized — or smart-downscaled — would otherwise lose
+                // quality before it is even upscaled, unlike every other save in this pipeline and in
+                // the engine, which all pass an explicit quality. The extension is unchanged, so the
+                // format decisions (and the original file name) are preserved.
+                SaveImageWithFormat(processedImage, imagePath, currentExtension, quality: null);
             }
         }
         finally
@@ -845,8 +996,22 @@ public class ImageResizeService(
         {
             case ".jpg":
             case ".jpeg":
-                image.Jpegsave(outputPath, q: quality ?? 95);
+            {
+                // JPEG has no alpha band, and Jpegsave composites an RGBA image onto black. The
+                // reference keeps the colour stored under a transparent pixel and discards the band
+                // instead, so a transparent region keeps its stored colour rather than becoming a
+                // black band. Every other target below carries alpha and keeps the band as-is.
+                Image? opaque = DropAlpha(image);
+                try
+                {
+                    (opaque ?? image).Jpegsave(outputPath, q: quality ?? 95);
+                }
+                finally
+                {
+                    opaque?.Dispose();
+                }
                 break;
+            }
 
             case ".png":
                 image.Pngsave(outputPath);
@@ -868,6 +1033,17 @@ public class ImageResizeService(
                 break;
         }
     }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="image"/> carrying only its colour bands, or <c>null</c> when
+    /// there is no alpha to drop (letting the caller save <paramref name="image"/> directly). This is
+    /// the same choice the upscaler (<see cref="OnnxUpscaleEngine"/>) and the detector
+    /// (<c>SplitDetectionService</c>) make: a format that cannot store alpha keeps the colour stored
+    /// under a transparent pixel, while libvips' <c>Flatten()</c> would composite that colour onto
+    /// black and black-bake the output. A non-null result is a separate native image the caller owns.
+    /// </summary>
+    private static Image? DropAlpha(Image image) =>
+        image.HasAlpha() ? image.ExtractBand(0, image.Bands - 1) : null;
 
     private static (int width, int height) CalculateNewDimensions(
         int originalWidth,

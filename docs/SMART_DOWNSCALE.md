@@ -10,7 +10,7 @@ bicubic or bilinear interpolation) and reduces them back toward their likely nat
 **before** AI upscaling. This prevents "double-upscaling" artefacts and ensures the model sees
 clean, high-contrast edges instead of the blurry interpolation residue left by a cheap upscale.
 
-Smart Downscale is **disabled by default**. It is most useful when your source library contains
+Smart Downscale is **enabled by default**. It is most useful when your source library contains
 scans that were upscaled before being distributed.
 
 ## How It Works
@@ -57,7 +57,7 @@ environment:
 
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
-| `EnableSmartDownscale` | `Ingest_Upscaler__EnableSmartDownscale` | `false` | Enable or disable the feature. |
+| `EnableSmartDownscale` | `Ingest_Upscaler__EnableSmartDownscale` | `true` | Enable or disable the feature. |
 | `SmartDownscaleThreshold` | `Ingest_Upscaler__SmartDownscaleThreshold` | `15.0` | Laplacian std-dev below which an image is considered cheaply upscaled. Lower = stricter (fewer images downscaled); higher = more aggressive. |
 | `SmartDownscaleFactor` | `Ingest_Upscaler__SmartDownscaleFactor` | `0.75` | Fallback scale factor when the FFT finds no clear cliff. `0.75` reduces the image to 75 % of its current dimensions. |
 

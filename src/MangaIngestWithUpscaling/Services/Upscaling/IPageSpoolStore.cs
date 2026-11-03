@@ -13,6 +13,15 @@ namespace MangaIngestWithUpscaling.Services.Upscaling;
 /// distributed adapter is not achievable without reworking the handlers; a deployment must instead
 /// pin every RPC for a chapter to one replica. This mirrors the single-replica constraint recorded
 /// in <c>docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md</c>.
+/// <para>
+/// Resume is scoped to <b>one server process lifetime</b>. The completed-page set and the session
+/// directory live under a spool root that is unique per process (see
+/// <see cref="PageStreamSpool.SpoolRoot"/>), so a dropped worker or connection resumes where it
+/// left off, but a server restart starts from an empty session and re-streams (and re-upscales) the
+/// whole chapter. The page bytes may survive on disk until the retention sweep, but the new
+/// process cannot see them. On-disk spool persistence is a deliberate follow-up, not implemented
+/// here.
+/// </para>
 /// </summary>
 public interface IPageSpoolStore
 {
@@ -108,7 +117,13 @@ public interface IPageSpoolStore
     /// <summary>
     /// Builds the final CBZ at <paramref name="destinationPath"/> from the source archive: every
     /// non-image entry is copied unchanged and every image entry is replaced by its spooled page,
-    /// written under the page's output name. Source order is preserved.
+    /// written under the page's output name.
+    /// <para>
+    /// The entry order is the one the whole-CBZ writer produces, not the source archive's: non-image
+    /// entries first in source order, then the pages in <see cref="SpoolPageDescriptor.Index"/> order.
+    /// The page order is content (a reader uses the archive's physical order) and it must not depend
+    /// on the order a source zip happens to store its entries in.
+    /// </para>
     /// </summary>
     void Assemble(
         PageStreamSession session,

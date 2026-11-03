@@ -73,14 +73,29 @@ public class RemoteTaskProcessorTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ClassifyStreamingFailure_TreatsAWorkerCrashAsTransient()
+    public void ClassifyStreamingFailure_TreatsTheDetectorsRethrowsAsTransient()
     {
-        // A crashed worker (OOM/CUDA fault) must not drop the already-spooled pages: respawn and
-        // resume instead of reporting a permanent failure.
+        // The detector rethrows a non-finite output and a shutdown race instead of reporting a per-page
+        // error, so the spool has to survive. Neither type is an InvalidOperationException or an
+        // IOException, so without a case here the chain fell through to Permanent, the server cleared
+        // the spool and failed the task — the detector's rethrow would have been defeated, and the
+        // commit message that claims the worker requeues the task with the spool intact, false.
+        Assert.Equal(
+            StreamingFailureKind.Transient,
+            RemoteTaskProcessor.ClassifyStreamingFailure(new NonFiniteModelOutputException())
+        );
         Assert.Equal(
             StreamingFailureKind.Transient,
             RemoteTaskProcessor.ClassifyStreamingFailure(
-                new UpscaleWorkerCrashedException("Upscale worker process exited unexpectedly.")
+                new ObjectDisposedException("OnnxSessionFactory")
+            )
+        );
+
+        // Wrapped, the way the engine and the gRPC paths deliver it.
+        Assert.Equal(
+            StreamingFailureKind.Transient,
+            RemoteTaskProcessor.ClassifyStreamingFailure(
+                new AggregateException(new NonFiniteModelOutputException())
             )
         );
     }

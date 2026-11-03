@@ -48,14 +48,22 @@ public interface IImageResizeService
 
     /// <summary>
     /// Applies the same per-image preprocessing as <see cref="CreatePreprocessedTempCbzAsync"/>
-    /// (max dimension, format conversion, smart downscale) to a single image file, overwriting it
-    /// in place. Used by the page-streaming path so a streamed chapter matches the whole-CBZ path,
-    /// which preprocesses the whole archive before upscaling.
+    /// (max dimension, format conversion, smart downscale) to a single image file. Used by the
+    /// page-streaming path so a streamed chapter matches the whole-CBZ path, which preprocesses the
+    /// whole archive before upscaling. The preprocessed result replaces the input exactly as it does
+    /// there: a format conversion keeps the converted extension (the file is renamed), otherwise the
+    /// file is overwritten in place.
     /// </summary>
-    /// <param name="imagePath">Path to the image to preprocess (overwritten with the result)</param>
+    /// <param name="imagePath">Path to the image to preprocess.</param>
     /// <param name="options">Preprocessing options to apply</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    Task PreprocessImageInPlaceAsync(
+    /// <returns>
+    /// The path of the preprocessed image. A format conversion changes the extension, so callers must
+    /// use this path rather than <paramref name="imagePath"/> — the original file is deleted when the
+    /// extension changes. A page that cannot be decoded is left untouched and its original path is
+    /// returned.
+    /// </returns>
+    Task<string> PreprocessImageInPlaceAsync(
         string imagePath,
         ImagePreprocessingOptions options,
         CancellationToken cancellationToken

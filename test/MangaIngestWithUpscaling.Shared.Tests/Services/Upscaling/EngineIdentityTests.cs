@@ -1,13 +1,12 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
-// Shares the process-wide SplitDetectionLayout.Root with the detector tests, so the mutations below
-// cannot race them.
-[Collection("DetectServerClientLayout")]
+[Collection("SplitDetectionLayout")]
 public class EngineIdentityTests
 {
     [Fact]
@@ -21,6 +20,91 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_ChangesWithTheArchitecturePreferenceOrder()
+    {
+        // The order decides which weights run for a page, and it is worker-local configuration that
+        // does not travel in the job request. Not hashing it let two workers with the same models
+        // produce different pixels under one identity — which is exactly what the server would then
+        // assemble a chapter from.
+        UpscalerConfig baseline = Config();
+        UpscalerConfig promoted = Config();
+        promoted.PreferredModelArchitectures = "FDAT_XL,FDAT_M";
+
+        Assert.NotEqual(EngineIdentity.ForUpscaler(baseline), EngineIdentity.ForUpscaler(promoted));
+
+        // An equivalent spelling is the same engine: the resolved order is hashed, not the raw string.
+        UpscalerConfig spelled = Config();
+        spelled.PreferredModelArchitectures = "fdat_xl, FdatM";
+
+        Assert.Equal(EngineIdentity.ForUpscaler(promoted), EngineIdentity.ForUpscaler(spelled));
+
+        // And the default is the built-in order, so leaving it unset keeps an unchanged identity.
+        UpscalerConfig explicitDefault = Config();
+        explicitDefault.PreferredModelArchitectures = "FDAT_M,ESRGAN,SPAN,FDAT_XL,DAT2,HAT_L";
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(baseline),
+            EngineIdentity.ForUpscaler(explicitDefault)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_HashesTheTilePlanConfiguration()
+    {
+        // A manual TileSize decides the grid and overlapping tiles are half-sine blended, so two
+        // workers with the same models but different tile plans blend different seams into the
+        // same page — the same seam the architecture order is hashed for. The explicit
+        // MemoryBudgetBytes is hashed for the same reason when it is set; the measured budget
+        // deliberately is not (it varies between machines and moments, so hashing it would make
+        // two identical workers discard each other's spool on every measurement), which is what
+        // the stable "auto" token below pins.
+        UpscalerConfig baseline = Config();
+        UpscalerConfig manualTile = Config();
+        manualTile.TileSize = 512;
+
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(baseline),
+            EngineIdentity.ForUpscaler(manualTile)
+        );
+
+        UpscalerConfig explicitBudget = Config();
+        explicitBudget.MemoryBudgetBytes = "4GiB";
+
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(baseline),
+            EngineIdentity.ForUpscaler(explicitBudget)
+        );
+
+        // The resolved budget is hashed, not its spelling: two spellings of the same byte count
+        // are the same engine, exactly like the equivalent architecture-order spelling.
+        UpscalerConfig budgetSpelledDifferently = Config();
+        budgetSpelledDifferently.MemoryBudgetBytes = "4096MiB";
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(explicitBudget),
+            EngineIdentity.ForUpscaler(budgetSpelledDifferently)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void RuntimeVersion_FingerprintsTheDeployedNativeLibrary()
+    {
+        // The build's OnnxRuntimeFlavor swaps the native library while the managed assemblies'
+        // versions stay, so the flavor is only distinguished by fingerprinting the deployed file
+        // itself. The test deployment carries a real native library, so the third segment exists
+        // and is not the "missing" placeholder; it is stable within a process, so an identity
+        // computed twice agrees.
+        string runtime = EngineIdentity.RuntimeVersion();
+
+        Assert.Equal(3, runtime.Split('+').Length);
+        Assert.DoesNotContain("missing", runtime, StringComparison.Ordinal);
+        Assert.Equal(runtime, EngineIdentity.RuntimeVersion());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForUpscaler_IgnoresPreprocessingBecauseTheServerOwnsIt()
     {
         // The server owns preprocessing and folds the effective options into the content identity, so
@@ -29,7 +113,7 @@ public class EngineIdentityTests
         // a spool on a hand-off.
         UpscalerConfig baseline = Config();
         UpscalerConfig changed = Config();
-        changed.EnableSmartDownscale = true;
+        changed.EnableSmartDownscale = false;
         changed.MaxDimensionBeforeUpscaling = 1600;
         changed.ImageFormatConversionRules =
         [
@@ -46,7 +130,7 @@ public class EngineIdentityTests
         string directory = Directory.CreateTempSubdirectory("engine_models").FullName;
         try
         {
-            string model = Path.Combine(directory, "model.pth");
+            string model = Path.Combine(directory, "model.onnx");
             File.WriteAllBytes(model, new byte[] { 1, 2, 3 });
             UpscalerConfig config = Config();
             config.ModelsDirectory = directory;
@@ -65,6 +149,42 @@ public class EngineIdentityTests
     }
 
     [Fact]
+    public void ForUpscaler_IgnoresTheCalibrationProfileAndDownloadMarkers()
+    {
+        // The models directory also carries state that has nothing to do with the weights: the
+        // per-device calibration profile, written the first time a device is calibrated, and a
+        // .verified_* marker per downloaded package. Neither may enter the identity, or two workers
+        // with byte-identical models land on different identities and discard each other's spool.
+        string directory = Directory.CreateTempSubdirectory("engine_models").FullName;
+        try
+        {
+            UpscalerConfig config = Config();
+            config.ModelsDirectory = directory;
+            string before = EngineIdentity.ForUpscaler(config);
+
+            File.WriteAllText(
+                Path.Combine(directory, DeviceMemoryProfileStore.FileName),
+                """{"activationScale": 1.5}"""
+            );
+            File.WriteAllText(
+                Path.Combine(directory, $".verified_{new string('a', 64)}"),
+                new string('a', 64)
+            );
+            string after = EngineIdentity.ForUpscaler(config);
+
+            Assert.Equal(before, after);
+
+            // The weights themselves still count, so the filter is not just hiding everything.
+            File.WriteAllBytes(Path.Combine(directory, "model.onnx"), new byte[] { 1, 2, 3 });
+            Assert.NotEqual(before, EngineIdentity.ForUpscaler(config));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
     [Trait("Category", "Unit")]
     public void ForUpscaler_DistinguishesBackendsButNotDeviceIndex()
     {
@@ -74,12 +194,12 @@ public class EngineIdentityTests
         UpscalerConfig cuda = Config();
         UpscalerConfig cudaOtherDevice = Config();
         cudaOtherDevice.SelectedDeviceIndex = 3;
-        UpscalerConfig rocm = Config();
-        rocm.PreferredGpuBackend = GpuBackend.ROCm;
-        rocm.SelectedDeviceIndex = 3;
+        UpscalerConfig webgpu = Config();
+        webgpu.PreferredGpuBackend = GpuBackend.WebGPU;
+        webgpu.SelectedDeviceIndex = 3;
 
         Assert.Equal(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(cudaOtherDevice));
-        Assert.NotEqual(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(rocm));
+        Assert.NotEqual(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(webgpu));
     }
 
     [Fact]
@@ -107,6 +227,26 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_TreatsEveryNonPositiveDeviceIndexAsCpu()
+    {
+        // OnnxSessionFactory.ShouldUseCpuProvider and UpscalerConfig.ResolveUseFp16 both resolve
+        // SelectedDeviceIndex <= 0 to CPU, so a negative index and 0 run the same way and must hash
+        // the same. A bare `== 0` test made them differ, so two CPU workers discarded each other's
+        // spool.
+        UpscalerConfig zero = Config();
+        zero.SelectedDeviceIndex = 0;
+        UpscalerConfig negative = Config();
+        negative.SelectedDeviceIndex = -1;
+        UpscalerConfig flag = Config();
+        flag.SelectedDeviceIndex = 1;
+        flag.UseCPU = true;
+
+        Assert.Equal(EngineIdentity.ForUpscaler(zero), EngineIdentity.ForUpscaler(negative));
+        Assert.Equal(EngineIdentity.ForUpscaler(zero), EngineIdentity.ForUpscaler(flag));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForUpscaler_DistinguishesASameSizeFineTune()
     {
         // The fingerprint is relative path + size + a content prefix, so two models of the same size
@@ -120,8 +260,8 @@ public class EngineIdentityTests
             byte[] b = new byte[256];
             a[0] = 1;
             b[0] = 2;
-            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
-            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+            File.WriteAllBytes(Path.Combine(first, "model.onnx"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.onnx"), b);
 
             UpscalerConfig firstConfig = Config();
             firstConfig.ModelsDirectory = first;
@@ -155,8 +295,8 @@ public class EngineIdentityTests
             byte[] b = new byte[size];
             a[size - 1] = 1;
             b[size - 1] = 2;
-            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
-            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+            File.WriteAllBytes(Path.Combine(first, "model.onnx"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.onnx"), b);
 
             UpscalerConfig firstConfig = Config();
             firstConfig.ModelsDirectory = first;
@@ -191,8 +331,8 @@ public class EngineIdentityTests
             byte[] b = new byte[size];
             a[size - 1] = 1;
             b[size - 1] = 2;
-            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
-            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+            File.WriteAllBytes(Path.Combine(first, "model.onnx"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.onnx"), b);
 
             UpscalerConfig firstConfig = Config();
             firstConfig.ModelsDirectory = first;
@@ -233,13 +373,13 @@ public class EngineIdentityTests
     {
         // The preference defaults to Auto, so two default deployments on different hardware would
         // share an identity unless the resolved backend is hashed. The provider passes the value the
-        // Python environment actually installed.
+        // ONNX session factory actually resolved.
         UpscalerConfig config = Config();
         Assert.Equal(GpuBackend.Auto, config.PreferredGpuBackend);
 
         Assert.NotEqual(
             EngineIdentity.ForUpscaler(config, GpuBackend.CUDA),
-            EngineIdentity.ForUpscaler(config, GpuBackend.ROCm)
+            EngineIdentity.ForUpscaler(config, GpuBackend.WebGPU)
         );
 
         // Falls back to the preference when the environment is not prepared yet (tests, first start).
@@ -251,23 +391,28 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ForUpscaler_ChangesWhenTheEnvironmentVersionChanges()
+    public void ForUpscaler_UsesTheResolvedBackendsFp16AnswerNotTheAutoPreference()
     {
-        // The installed environment version carries the torch/runtime and package set, which the .NET
-        // build version does not: a worker that force-accepted an older environment must not blend
-        // pages with a freshly installed one.
-        UpscalerConfig config = Config();
+        // Auto is only a preference, so the FP16 probe must answer for the backend actually in use,
+        // exactly as the model set is chosen from that same resolved backend. The CPU and a
+        // non-WebGPU accelerator have a fixed answer (false and true), so an identity that hashed the
+        // Auto preference would use one probe answer for both and could not match both explicit
+        // settings at once.
+        UpscalerConfig autoPreference = Config();
+        Assert.Equal(GpuBackend.Auto, autoPreference.PreferredGpuBackend);
 
-        Assert.NotEqual(
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 15),
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 14)
+        UpscalerConfig explicitFp16 = Config();
+        explicitFp16.UseFp16 = true;
+        UpscalerConfig explicitFp32 = Config();
+        explicitFp32.UseFp16 = false;
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(explicitFp32, GpuBackend.CPU),
+            EngineIdentity.ForUpscaler(autoPreference, GpuBackend.CPU)
         );
-
-        // A worker whose environment is not prepared yet hashes a fixed marker, distinct from any
-        // concrete version.
-        Assert.NotEqual(
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU),
-            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 15)
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(explicitFp16, GpuBackend.CUDA),
+            EngineIdentity.ForUpscaler(autoPreference, GpuBackend.CUDA)
         );
     }
 
@@ -275,7 +420,7 @@ public class EngineIdentityTests
     [Trait("Category", "Unit")]
     public void ForUpscaler_ChangesWhenTheEngineVersionChanges()
     {
-        // The Python engine code version is not part of the .NET assembly version, so it is hashed
+        // The engine code version is not part of the .NET assembly version, so it is hashed
         // explicitly. The parameter override asserts the effect without bumping the constant (which
         // would invalidate every chapter's spool).
         UpscalerConfig config = Config();
@@ -299,7 +444,7 @@ public class EngineIdentityTests
     {
         WithDetectorRoot(() =>
         {
-            WriteDetectorFiles(checkpoint: "model", config: "{}");
+            WriteDetectorFiles(model: "model");
 
             Assert.Equal(EngineIdentity.ForDetector(), EngineIdentity.ForDetector());
         });
@@ -307,18 +452,61 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ForDetector_ChangesWhenTheCheckpointContentChanges()
+    public void ForDetector_ChangesWhenTheModelContentChanges()
     {
         WithDetectorRoot(() =>
         {
-            WriteDetectorFiles(checkpoint: "model", config: "{}");
+            WriteDetectorFiles(model: "model");
             string before = EngineIdentity.ForDetector();
 
             // Same length, different bytes: the identity must hash the content, not just the size.
-            WriteDetectorFiles(checkpoint: "modem", config: "{}");
+            WriteDetectorFiles(model: "modem");
             string after = EngineIdentity.ForDetector();
 
             Assert.NotEqual(before, after);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForDetector_ChangesWithTheResolvedBackend()
+    {
+        // The detector runs on the resolved execution provider and its findings are peak positions in
+        // that provider's output, so two workers that share the detector file but run it on different
+        // backends can report different splits. The identity must separate them or the server blends
+        // the findings into one chapter under a single engine identity.
+        WithDetectorRoot(() =>
+        {
+            WriteDetectorFiles(model: "model");
+
+            Assert.NotEqual(
+                EngineIdentity.ForDetector(resolvedBackend: GpuBackend.CPU),
+                EngineIdentity.ForDetector(resolvedBackend: GpuBackend.WebGPU)
+            );
+
+            // An unresolved backend is not a concrete one and must not collide with any of them.
+            Assert.NotEqual(
+                EngineIdentity.ForDetector(resolvedBackend: GpuBackend.CPU),
+                EngineIdentity.ForDetector()
+            );
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForDetector_ChangesWithTheRuntimeVersion()
+    {
+        // The runtime turns the same detector graph into potentially different peaks, so it is folded
+        // in like ForUpscaler's. RuntimeVersion() is stable within a process, so the override pins
+        // that the component is actually hashed without needing a second deployment.
+        WithDetectorRoot(() =>
+        {
+            WriteDetectorFiles(model: "model");
+
+            Assert.NotEqual(
+                EngineIdentity.ForDetector(runtimeVersion: "runtime-a"),
+                EngineIdentity.ForDetector(runtimeVersion: "runtime-b")
+            );
         });
     }
 
@@ -338,12 +526,30 @@ public class EngineIdentityTests
         }
     }
 
-    private static void WriteDetectorFiles(string checkpoint, string config)
+    private static void WriteDetectorFiles(string model)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.CheckpointPath)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.ConfigPath)!);
-        File.WriteAllText(SplitDetectionLayout.CheckpointPath, checkpoint);
-        File.WriteAllText(SplitDetectionLayout.ConfigPath, config);
+        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.OnnxModelPath)!);
+        File.WriteAllText(SplitDetectionLayout.OnnxModelPath, model);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_TreatsPreferredGpuBackendCpuAsCpuLikeUseCpu()
+    {
+        // ShouldUseCpuProvider is the runtime's single decision, and it counts PreferredGpuBackend=CPU
+        // as CPU along with UseCPU and SelectedDeviceIndex <= 0. The identity defers to it, so the two
+        // spellings of "CPU" must hash the same — otherwise two workers with equivalent settings reject
+        // each other's spool.
+        UpscalerConfig byUseCpu = Config();
+        byUseCpu.UseCPU = true;
+
+        UpscalerConfig byBackend = Config();
+        byBackend.PreferredGpuBackend = GpuBackend.CPU;
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(byUseCpu, GpuBackend.CPU),
+            EngineIdentity.ForUpscaler(byBackend, GpuBackend.CPU)
+        );
     }
 
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };

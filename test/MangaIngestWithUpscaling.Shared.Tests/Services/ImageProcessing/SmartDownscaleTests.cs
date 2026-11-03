@@ -57,7 +57,7 @@ public class SmartDownscaleTests : IDisposable
     {
         var options = new ImagePreprocessingOptions();
 
-        Assert.False(options.EnableSmartDownscale);
+        Assert.True(options.EnableSmartDownscale);
         Assert.Equal(15.0, options.SmartDownscaleThreshold);
         Assert.Equal(0.75, options.SmartDownscaleFactor);
     }
@@ -68,23 +68,23 @@ public class SmartDownscaleTests : IDisposable
     {
         var config = new UpscalerConfig();
 
-        Assert.False(config.EnableSmartDownscale);
+        Assert.True(config.EnableSmartDownscale);
         Assert.Equal(15.0, config.SmartDownscaleThreshold);
         Assert.Equal(0.75, config.SmartDownscaleFactor);
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ImagePreprocessingOptions_SmartDownscaleCanBeEnabled()
+    public void ImagePreprocessingOptions_SmartDownscaleCanBeDisabled()
     {
         var options = new ImagePreprocessingOptions
         {
-            EnableSmartDownscale = true,
+            EnableSmartDownscale = false,
             SmartDownscaleThreshold = 20.0,
             SmartDownscaleFactor = 0.6,
         };
 
-        Assert.True(options.EnableSmartDownscale);
+        Assert.False(options.EnableSmartDownscale);
         Assert.Equal(20.0, options.SmartDownscaleThreshold);
         Assert.Equal(0.6, options.SmartDownscaleFactor);
     }
