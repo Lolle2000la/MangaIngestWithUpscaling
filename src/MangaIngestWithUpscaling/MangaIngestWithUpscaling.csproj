@@ -61,7 +61,7 @@
     <PackageReference Include="MudBlazor" Version="9.11.0" />
     <PackageReference Include="MudBlazor.Translations" Version="3.6.0" />
     <PackageReference Include="Open.ChannelExtensions" Version="10.0.0" />
-    <PackageReference Include="PinguApps.Blazor.QRCode" Version="1.1.4" />
+    <PackageReference Include="PinguApps.Blazor.QRCode" Version="1.1.5" />
     <PackageReference Include="ReactiveUI" Version="25.1.1" />
     <PackageReference Include="ReactiveUI.Blazor" Version="25.1.1" />
     <PackageReference
