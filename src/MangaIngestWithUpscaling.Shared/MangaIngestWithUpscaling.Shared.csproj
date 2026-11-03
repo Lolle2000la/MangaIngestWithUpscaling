@@ -40,13 +40,13 @@
     <PackageReference Include="Microsoft.Build.Framework" Version="18.9.6" />
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="18.9.6" />
     <PackageReference Include="Microsoft.Build.Utilities.Core" Version="18.9.6" />
-    <PackageReference Include="Microsoft.Extensions.Localization" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Localization" Version="10.0.14" />
     <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.14" />
     <PackageReference Include="Open.ChannelExtensions" Version="10.0.0" />
     <PackageReference Include="NetVips" Version="3.2.0" />
 
@@ -107,11 +107,11 @@
       Version="8.18.7"
       Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"
     />
-    <!-- Both are pinned above what Microsoft.Build.Tasks.Core resolves transitively (Pkcs 10.0.10,
-         Xml 10.0.12); those versions carry published advisories, and the audit warnings are errors
-         under /warnaserror. Raise these together with the rest of the 10.0.x line. -->
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <!-- Microsoft.Build.Tasks.Core resolves both transitively at 10.0.10, which carries published
+         advisories; the audit warnings are errors under /warnaserror. Pinned to the current 10.0.x
+         line, so raise these together with the rest of that line. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.14" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
   </ItemGroup>
 
   <ItemGroup>

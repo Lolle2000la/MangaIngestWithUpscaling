@@ -12,25 +12,29 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="AngleSharp" Version="1.8.2" />
+    <PackageReference Include="AngleSharp" Version="1.8.5" />
     <PackageReference Include="bunit" Version="2.11.3" />
     <PackageReference Include="Microsoft.Build" Version="18.9.6" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.9.6" />
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="18.9.6" />
     <PackageReference Include="Microsoft.Build.Utilities.Core" Version="18.9.6" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="coverlet.collector" Version="10.1.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageReference Include="MudBlazor" Version="9.11.0" />
     <PackageReference Include="NSubstitute" Version="6.2.0" />
+    <!-- Microsoft.Extensions.Http.Resilience 10.11.0 was built against the 10.0.13 line and pulls
+         these transitively at 10.0.13; pin them to the line the rest of this graph uses. -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.14" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="xunit.v3" Version="4.0.1" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
