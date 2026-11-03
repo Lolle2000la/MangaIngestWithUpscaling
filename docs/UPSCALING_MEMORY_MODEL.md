@@ -403,8 +403,10 @@ differences reduce to the weight size, which the formula reads off the file.
 
 ### 4.1 Measurement of the real GPU peak vs prediction
 
-`UpscaleProfiler` (`~/mangamem/profiler`) reproduces the engine's exact path —
-`OnnxTiler.UpscaleRgb` with the planned grid — and samples VRAM/GTT around it. 1125×1600 page
+The figures below come from a throwaway profiler that reproduced the engine's exact path —
+`OnnxTiler.UpscaleRgb` with the planned grid — and sampled VRAM/GTT around it. That tool was scratch
+work kept outside the repository and is not part of this checkout any more; §7 says what it did and how
+to rebuild it. 1125×1600 page
 (typical manga page after smart downscale), 12 GB budget, fp16:
 
 ```
@@ -836,21 +838,28 @@ as the dominant term.
 
 ## 7. Reproducing the numbers
 
-The scripts live outside the repository (`~/mangamem/work`) because they need the model files and
-are measurement tools, not part of the app:
+The numbers in this document were taken with scratch tooling kept outside the repository — it needs the
+model files and is a measurement tool, not part of the app. **That tooling is no longer present**; what
+it did is small enough to rebuild, and this is the list of parts, in the order they were used:
 
-| script | purpose |
+| part | purpose |
 |---|---|
-| `shape_peaks.py` | analytic working set per model via shape inference + liveness |
-| `single.sh` + `profiler/Program.cs` | GPU measurement of one inference at a fixed tile size |
-| `join.py` | joins both into the `C_arch` table |
-| `profiler/validate/` | end-to-end check: plan a grid, run a page, verify VRAM/GTT |
+| shape peaks | analytic working set per model via shape inference + liveness |
+| single | GPU measurement of one inference at a fixed tile size |
+| join | joins both into the `C_arch` table |
+| validate | end-to-end check: plan a grid, run a page, verify VRAM/GTT |
+
+The GPU part needs no privileges and almost no code: `OnnxTiler.PlanTileSplit` and
+`OnnxTiler.UpscaleRgb` are public, so plan a split for the page size and budget, decode a page to RGB,
+and sample the device around the call — `nvidia-smi` per process on NVIDIA, `VK_EXT_memory_budget`
+elsewhere (§2.2 covers which of the two figures means what). A real run reports the same quantities in
+its own Debug line, "Upscaling … (predicted peak: … MB, budget: … MB, VRAM: … MB, GTT: … MB)", which is
+often enough without a harness.
 
 To force a re-measurement in the app, set `Ingest_Upscaler__RecalibrateDeviceMemory=true` for one
 upscale and delete `<models>/device-memory-profile.json` (or just leave it — the fingerprint
-decides). Use `ulimit -v` around that Python script — making every intermediate a graph output is
+decides). Use `ulimit -v` around the shape-inference step — making every intermediate a graph output is
 convenient for shape extraction but allocates tens of gigabytes on the big transformer models.
 
-To re-derive after adding a model: run `shape_peaks.py <model.onnx> 64,128`, then
-`profiler single <model.onnx> <scale> <n>` for a few `n`, then `join.py` and update
-`GetOutputLiveChannels`.
+To re-derive after adding a model: run shape inference on it at 64 and 128 px, measure it at a few fixed
+tile sizes through `UpscaleRgb`, and update `GetOutputLiveChannels` from the joined result.
