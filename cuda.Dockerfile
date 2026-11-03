@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=nvidia/cuda:13.4.2-cudnn-runtime-ubuntu24.04
+ARG BASE_IMAGE=nvidia/cuda:13.4.3-cudnn-runtime-ubuntu24.04
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS dotnet-runtime
 
