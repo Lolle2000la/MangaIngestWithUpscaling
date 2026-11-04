@@ -147,7 +147,7 @@ jobs:
   # model — so what this adds is the architecture itself: the arm64 native payload of every dependency
   # in a real container, and an entrypoint that reaches /health on it.
   containers-arm64:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@v7
       - name: Set up Buildx

@@ -47,7 +47,7 @@ jobs:
     # image is built without emulation. Dockerfile's only target-platform RUN is the apt layer in the
     # base stage; under QEMU that is minutes rather than seconds, and it is the reason this job runs on
     # an arm64 host rather than on ubuntu-latest with platforms:.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
