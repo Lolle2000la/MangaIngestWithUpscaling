@@ -366,6 +366,10 @@ public class DistributedUpscaleTaskProcessor(
                         break;
                     }
 
+                    // Deliberately NOT gated by quiet hours: this serves upscale tasks to remote workers
+                    // over gRPC, and quiet hours pause only the server's *own* upscaling intake. A
+                    // worker's window must not block other workers from fetching, so the serving path
+                    // stays open while the local queue is asleep.
                     PersistedTask? task = taskQueue.DequeueUpscale();
 
                     if (task == null)

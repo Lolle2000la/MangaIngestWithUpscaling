@@ -18,6 +18,7 @@ using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -90,7 +91,9 @@ public class IngestProcessorSplitDetectionTests : IAsyncDisposable
             Options.Create(new UpscalerConfig { RemoteOnly = true }),
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             Substitute.For<ITaskPersistenceService>(),
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>(),
+            TimeProvider.System
         );
         var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
             taskQueue,
@@ -244,7 +247,9 @@ public class IngestProcessorSplitDetectionTests : IAsyncDisposable
             Options.Create(new UpscalerConfig { RemoteOnly = true }),
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             Substitute.For<ITaskPersistenceService>(),
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>(),
+            TimeProvider.System
         );
         var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
             taskQueue,

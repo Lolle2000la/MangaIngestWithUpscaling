@@ -26,6 +26,11 @@ The important configuration sections are:
 
 In addition, you can use environment variables to override the settings in `appsettings.json`. The environment variable names are prefixed with `Ingest_`, for example, `Ingest_WorkerConfig__ApiKey` and `Ingest_WorkerConfig__ApiUrl`. Configuring the upscaling is done in exactly the same way as in the server. 
 
+The worker also has its own [quiet hours](./QUIET_HOURS.md): a `QuietHours` section stops it from
+requesting new upscale tasks during a local-wall-clock window while a task it is already streaming
+finishes normally. Each worker configures this independently of the server, and the server's own
+quiet hours never prevent this worker from fetching.
+
 ## Communication
 
 The remote worker communicates with the main application over gRPC, which requires HTTP/2. HTTPS is strongly recommended: modern reverse proxies, when configured for HTTPS, will typically use HTTP/2 automatically for clients that support it, so ensure your reverse proxy hosting the main application has HTTPS and HTTP/2 enabled. A plain `http://` URL is also accepted (gRPC h2c), but the worker logs a startup warning that the API key travels in cleartext on such a connection — reserve it for a trusted LAN.

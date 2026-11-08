@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -173,7 +174,9 @@ public class TaskRegistryTests
             provider.GetRequiredService<IOptions<UpscalerConfig>>(),
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             persistence,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>(),
+            TimeProvider.System
         );
         var distributed = new DistributedUpscaleTaskProcessor(
             taskQueue,
@@ -450,7 +453,9 @@ public class TaskRegistryTests
             provider.GetRequiredService<IOptions<UpscalerConfig>>(),
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             persistence,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>(),
+            TimeProvider.System
         );
         var distributed = new DistributedUpscaleTaskProcessor(
             taskQueue,

@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Background;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -154,6 +155,11 @@ public class RemoteTaskProcessorLoopTests
             .AddSingleton<ITaskClaimSource>(claimSource ?? new FakeTaskClaimSource())
             .AddSingleton(CreatePageStreamClient())
             .AddSingleton(Substitute.For<ILogger<RemoteTaskProcessor>>())
+            // The fetch loop now consults the quiet-hours gate, so the real registration is used here:
+            // a disabled config must leave the loop claiming exactly as before.
+            .AddSingleton(Options.Create(new QuietHoursConfig()))
+            .AddSingleton<IQuietHoursGate, QuietHoursGate>()
+            .AddSingleton(TimeProvider.System)
             .BuildServiceProvider();
         return new RemoteTaskProcessor(provider.GetRequiredService<IServiceScopeFactory>());
     }

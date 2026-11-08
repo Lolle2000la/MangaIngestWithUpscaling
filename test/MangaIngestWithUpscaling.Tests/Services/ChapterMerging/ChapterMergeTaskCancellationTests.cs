@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -91,7 +92,9 @@ public class ChapterMergeTaskCancellationTests : IAsyncDisposable
             Options.Create(new UpscalerConfig()),
             NullLogger<UpscaleTaskProcessor>.Instance,
             persistence,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>(),
+            TimeProvider.System
         );
         var standardProcessor = Substitute.For<StandardTaskProcessor>(
             queue,

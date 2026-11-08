@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -220,7 +221,9 @@ public class StandardTaskProcessorGuardTests : IAsyncDisposable
             Options.Create(new UpscalerConfig { RemoteOnly = false }),
             provider.GetRequiredService<ILogger<UpscaleTaskProcessor>>(),
             new TaskPersistenceService(scopeFactory),
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>(),
+            TimeProvider.System
         );
 
         // A same-chapter apply is already in flight (rewriting the CBZ the upscale would stream from).

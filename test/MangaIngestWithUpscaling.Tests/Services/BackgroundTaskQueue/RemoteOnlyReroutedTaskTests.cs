@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -68,7 +69,9 @@ public class RemoteOnlyReroutedTaskTests : IAsyncDisposable
             _provider.GetRequiredService<IOptions<UpscalerConfig>>(),
             _provider.GetRequiredService<ILogger<UpscaleTaskProcessor>>(),
             persistence,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>(),
+            TimeProvider.System
         );
         _distributed = new DistributedUpscaleTaskProcessor(
             _taskQueue,

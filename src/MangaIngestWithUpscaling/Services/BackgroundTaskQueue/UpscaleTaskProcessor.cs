@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -16,12 +17,18 @@ public class UpscaleTaskProcessor(
     IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscaleTaskProcessor> logger,
     ITaskPersistenceService taskPersistenceService,
-    IPreprocessedInputCache preprocessedCache
+    IPreprocessedInputCache preprocessedCache,
+    IQuietHoursGate quietHours,
+    TimeProvider timeProvider
 ) : BackgroundTaskProcessorBase(taskQueue, scopeFactory, logger, taskPersistenceService)
 {
     private ChannelReader<object> Reader => TaskQueue.UpscaleReader;
     private ChannelReader<PersistedTask> ReroutedReader => TaskQueue.ReroutedUpscaleReader;
     private readonly PrefetchCoordinator _coordinator = new();
+
+    // Tracks whether the current pause episode has been announced, so a window that lasts hours is
+    // logged once on entry and once on exit instead of on every poll.
+    private bool _quietHoursPaused;
 
     protected override string ProcessingFailedLogMessage => "Upscale task {TaskId} failed";
 
@@ -59,6 +66,11 @@ public class UpscaleTaskProcessor(
             // consumers in RemoteOnly are the remote workers.
             while (!stoppingToken.IsCancellationRequested)
             {
+                // Rerouted tasks are locally-required upscale work (they were delegated here because
+                // a remote worker cannot run them), so they are "new work" too and must respect the
+                // window.
+                await WaitForQuietHoursAsync(stoppingToken);
+
                 PersistedTask rerouted;
                 try
                 {
@@ -89,6 +101,10 @@ public class UpscaleTaskProcessor(
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Before any channel read: while paused nothing may be consumed, so no signal is stolen
+            // from the upscale queue and no upscale task is claimed.
+            await WaitForQuietHoursAsync(stoppingToken);
+
             PersistedTask? task = null;
 
             // Priority 1: Rerouted tasks (already claimed or specialized)
@@ -148,6 +164,36 @@ public class UpscaleTaskProcessor(
                 DisposeCurrentStoppingToken(taskStoppingToken);
             }
         }
+    }
+
+    /// <summary>
+    ///     Holds the loop while the configured quiet-hours window is open, so no new upscale task is
+    ///     dequeued and started. An upscale already being processed is untouched: the check happens
+    ///     between tasks, never during one.
+    /// </summary>
+    private async Task WaitForQuietHoursAsync(CancellationToken stoppingToken)
+    {
+        if (!quietHours.IsQuiet)
+        {
+            if (_quietHoursPaused)
+            {
+                _quietHoursPaused = false;
+                Logger.LogInformation("Task claiming resumed");
+            }
+
+            return;
+        }
+
+        if (!_quietHoursPaused)
+        {
+            _quietHoursPaused = true;
+            Logger.LogInformation(
+                "Task claiming paused by quiet hours until {ResumeTime:HH:mm}",
+                timeProvider.GetLocalNow() + (quietHours.TimeUntilResume ?? TimeSpan.Zero)
+            );
+        }
+
+        await quietHours.WaitUntilNotQuietAsync(stoppingToken);
     }
 
     protected override async Task<bool> TryAcquireTaskAsync(
