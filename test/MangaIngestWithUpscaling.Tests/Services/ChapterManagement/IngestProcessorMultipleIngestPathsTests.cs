@@ -17,6 +17,7 @@ using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -93,7 +94,8 @@ public class IngestProcessorMultipleIngestPathsTests : IAsyncDisposable
             Options.Create(new UpscalerConfig { RemoteOnly = true }),
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             Substitute.For<ITaskPersistenceService>(),
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>()
         );
         var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
             taskQueue,

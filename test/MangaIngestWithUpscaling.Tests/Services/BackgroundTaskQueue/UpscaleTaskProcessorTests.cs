@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -87,7 +88,8 @@ public class UpscaleTaskProcessorTests : IDisposable
             _mockOptions,
             _mockLogger,
             _mockPersistence,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>()
         );
     }
 
@@ -459,7 +461,8 @@ public class UpscaleTaskProcessorTests : IDisposable
             _mockOptions,
             _mockLogger,
             persistence,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>()
         );
 
         await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
@@ -527,7 +530,8 @@ public class UpscaleTaskProcessorTests : IDisposable
             upscalerConfig,
             logger,
             taskPersistenceService,
-            preprocessedCache
+            preprocessedCache,
+            Substitute.For<IQuietHoursGate>()
         )
     {
         public Task InvokeProcessTaskAsync(
@@ -553,7 +557,8 @@ public class UpscaleTaskProcessorTests : IDisposable
             upscalerConfig,
             logger,
             taskPersistenceService,
-            preprocessedCache
+            preprocessedCache,
+            Substitute.For<IQuietHoursGate>()
         )
     {
         private static readonly IReadOnlyList<TimeSpan> TinyBackoff = new[]

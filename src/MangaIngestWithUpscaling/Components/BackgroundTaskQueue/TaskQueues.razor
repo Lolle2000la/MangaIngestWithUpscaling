@@ -1,5 +1,8 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Shared.Services.QuietHours
+@using System.Globalization
+@implements IAsyncDisposable
 
 @inject ILogger<TaskQueues> Logger
 @inject ISnackbar Snackbar
@@ -9,6 +12,8 @@
 @inject UpscaleTaskProcessor UpscaleTaskProcessor
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 @inject TaskRegistry TaskRegistry
+@inject IQuietHoursGate QuietHours
+@inject TimeProvider TimeProvider
 @inject IStringLocalizer<TaskQueues> Loc
 
 @page "/tasks"
@@ -16,6 +21,15 @@
 <PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <MudText Typo="Typo.h4" Class="mb-2">@Loc["Title"]</MudText>
+
+@if (_quietState.IsQuiet)
+{
+    <div class="d-flex mb-2" data-testid="quiet-hours-badge">
+        <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Outlined">
+            @QuietHoursBadgeText
+        </MudChip>
+    </div>
+}
 
 <MudGrid>
     <MudItem lg="6" xs="12">
@@ -31,10 +45,73 @@
 </MudGrid>
 
 @code {
+    private readonly CancellationTokenSource _quietHoursRefresh = new();
+    private Task? _quietHoursRefreshTask;
+
+    // The last quiet-hours state that was rendered. The refresh loop only re-renders when this
+    // changes, because re-rendering the page for nothing costs both task tables and every clock on
+    // them a round of interop. It is also read as a whole, so the flag and the time cannot come from
+    // two different evaluations.
+    private QuietHoursState _quietState;
+
+    private string QuietHoursBadgeText =>
+        _quietState.ResumeAtLocal is TimeOnly resume
+            ? Loc["QuietHours_Paused", resume.ToString("HH:mm", CultureInfo.InvariantCulture)]
+            : Loc["QuietHours_Paused_NoEnd"];
+
     // Snapshots are immutable arrays swapped atomically by the registry, so they are safe to
     // enumerate here while the registry flushes on a background thread.
     private IReadOnlyList<PersistedTask> standardTasks => TaskRegistry.GetStandardSnapshot();
     private IReadOnlyList<PersistedTask> upscaleTasks => TaskRegistry.GetUpscaleSnapshot();
+
+    protected override Task OnInitializedAsync()
+    {
+        // The quiet-hours badge is read from an in-memory gate, so it has no event to subscribe to:
+        // a coarse poll is enough to make it disappear when the schedule ends, and it stops on
+        // navigation with the component.
+        _quietState = CurrentQuietState();
+        _quietHoursRefreshTask = RefreshQuietHoursBadgeAsync(_quietHoursRefresh.Token);
+        return Task.CompletedTask;
+    }
+
+    private QuietHoursState CurrentQuietState() => QuietHours.Current;
+
+    private async Task RefreshQuietHoursBadgeAsync(CancellationToken cancellationToken)
+    {
+        // Driven by the injected TimeProvider so the interval is testable instead of being tied to
+        // the wall clock.
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), TimeProvider);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                QuietHoursState current = CurrentQuietState();
+                if (current == _quietState)
+                {
+                    continue;
+                }
+
+                _quietState = current;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away or disposed; nothing to clean up beyond the timer's own disposal.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _quietHoursRefresh.CancelAsync();
+        if (_quietHoursRefreshTask is not null)
+        {
+            // Await the loop so it cannot touch the disposed renderer after this returns.
+            await _quietHoursRefreshTask;
+        }
+
+        _quietHoursRefresh.Dispose();
+    }
 
     private async Task OnClearCompletedStandardTasks()
     {

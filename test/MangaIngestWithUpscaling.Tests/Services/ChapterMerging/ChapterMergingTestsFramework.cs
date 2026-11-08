@@ -14,6 +14,7 @@ using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -2607,7 +2608,8 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             upscalerOptions,
             processorLogger,
             taskPersistenceService,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>()
         );
 
         // ApplySplitsTask runs on the standard processor, so its cancellation has to go there.
@@ -2731,7 +2733,8 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             upscalerOptions,
             processorLogger,
             taskPersistenceService,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>()
         );
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
@@ -2832,7 +2835,8 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             upscalerOptions,
             processorLogger,
             taskPersistenceService,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>()
         );
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();

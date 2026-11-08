@@ -79,4 +79,10 @@
   <data name="Error_RunNow" xml:space="preserve">
     <value>Fehler beim Verschieben der Aufgabe nach vorne: {0}</value>
   </data>
+  <data name="QuietHours_Paused" xml:space="preserve">
+    <value>Ruhezeiten — pausiert bis {0}</value>
+  </data>
+  <data name="QuietHours_Paused_NoEnd" xml:space="preserve">
+    <value>Ruhezeiten — pausiert</value>
+  </data>
 </root>

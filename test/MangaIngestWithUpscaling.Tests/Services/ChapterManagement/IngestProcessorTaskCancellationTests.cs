@@ -17,6 +17,7 @@ using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -84,7 +85,8 @@ public class IngestProcessorTaskCancellationTests : IAsyncDisposable
             upscalerOptions,
             processorLogger,
             taskPersistenceService,
-            new PreprocessedInputCache()
+            new PreprocessedInputCache(),
+            Substitute.For<IQuietHoursGate>()
         );
         var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
             taskQueue,

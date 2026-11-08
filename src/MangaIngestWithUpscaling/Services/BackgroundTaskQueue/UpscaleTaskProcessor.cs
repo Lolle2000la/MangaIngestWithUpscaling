@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Threading.Channels;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -16,12 +18,17 @@ public class UpscaleTaskProcessor(
     IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscaleTaskProcessor> logger,
     ITaskPersistenceService taskPersistenceService,
-    IPreprocessedInputCache preprocessedCache
+    IPreprocessedInputCache preprocessedCache,
+    IQuietHoursGate quietHours
 ) : BackgroundTaskProcessorBase(taskQueue, scopeFactory, logger, taskPersistenceService)
 {
     private ChannelReader<object> Reader => TaskQueue.UpscaleReader;
     private ChannelReader<PersistedTask> ReroutedReader => TaskQueue.ReroutedUpscaleReader;
     private readonly PrefetchCoordinator _coordinator = new();
+
+    // Tracks whether the current pause episode has been announced, so a window that lasts hours is
+    // logged once on entry and once on exit instead of on every poll.
+    private bool _quietHoursPaused;
 
     protected override string ProcessingFailedLogMessage => "Upscale task {TaskId} failed";
 
@@ -62,6 +69,19 @@ public class UpscaleTaskProcessor(
                 PersistedTask rerouted;
                 try
                 {
+                    // WaitToReadAsync does not consume, so parking after it (quiet hours) holds
+                    // nothing and loses nothing — the task stays in the channel if the process stops.
+                    if (!await ReroutedReader.WaitToReadAsync(stoppingToken))
+                    {
+                        break;
+                    }
+
+                    // Rerouted tasks are locally-required upscale work (they were delegated here
+                    // because a remote worker cannot run them), so they are "new work" too and must
+                    // respect the window. Gating here, after the wait, is what catches a host that
+                    // was already parked when the window opened.
+                    await WaitForQuietHoursAsync(stoppingToken);
+
                     rerouted = await ReroutedReader.ReadAsync(stoppingToken);
                 }
                 catch (OperationCanceledException)
@@ -89,47 +109,56 @@ public class UpscaleTaskProcessor(
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Park at the top so an idle host waits out the window at its start rather than polling,
+            // and so a window that opened while the loop was between tasks is honoured before the
+            // channel wait below.
+            await WaitForQuietHoursAsync(stoppingToken);
+
             PersistedTask? task = null;
 
-            // Priority 1: Rerouted tasks (already claimed or specialized)
-            if (ReroutedReader.TryRead(out var rerouted))
+            // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed from its
+            // channel when one of them completes. Neither wait consumes an item, which is what lets
+            // the gate below run with nothing held.
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            Task<bool> reroutedWait = ReroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
+            Task<bool> signalWait = Reader.WaitToReadAsync(linkedCts.Token).AsTask();
+
+            Task<bool> completed = await Task.WhenAny(reroutedWait, signalWait);
+
+            // The authoritative check: the park above happened before an unbounded wait, so a window
+            // that opened while this loop was parked must be honoured here, before anything is read or
+            // claimed. Nothing has been taken off either channel yet, so a task enqueued during the
+            // window stays queued with its signal intact.
+            if (quietHours.Current is { IsQuiet: true } quiet)
             {
-                task = rerouted;
-            }
-            else
-            {
-                // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed
-                // from its channel when one of them completes.
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-                    stoppingToken
-                );
-                var reroutedWait = ReroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
-                var signalWait = Reader.WaitToReadAsync(linkedCts.Token).AsTask();
-
-                var completed = await Task.WhenAny(reroutedWait, signalWait);
-
-                if (completed == reroutedWait && await reroutedWait)
-                {
-                    if (ReroutedReader.TryRead(out var r))
-                    {
-                        task = r;
-                    }
-                }
-                else if (completed == signalWait && await signalWait)
-                {
-                    // Check rerouted one last time before consuming a signal
-                    if (ReroutedReader.TryRead(out var r))
-                    {
-                        task = r;
-                    }
-                    else if (Reader.TryRead(out _))
-                    {
-                        task = TaskQueue.DequeueUpscale();
-                    }
-                }
-
-                // Cancel the CTS to remove any abandoned waiter from the channels
+                LogQuietHoursState(quiet);
                 await linkedCts.CancelAsync();
+                continue;
+            }
+
+            bool reroutedReady = completed == reroutedWait && await reroutedWait;
+            bool signalReady = completed != reroutedWait && await signalWait;
+
+            // Cancel the CTS to remove any abandoned waiter from the channels
+            await linkedCts.CancelAsync();
+
+            if (!reroutedReady && !signalReady)
+            {
+                // Defensive: the winning wait reported completion without readiness (the other wait
+                // was abandoned when the linked CTS was cancelled above, so it says nothing). Nothing
+                // completes these unbounded channels today; this only stops a finished reader from
+                // spinning the loop.
+                break;
+            }
+
+            if (reroutedReady)
+            {
+                // Priority 1: rerouted tasks (already claimed or specialized)
+                task = await ReroutedReader.ReadAsync(stoppingToken);
+            }
+            else if (Reader.TryRead(out _))
+            {
+                task = TaskQueue.DequeueUpscale();
             }
 
             if (task == null)
@@ -147,6 +176,65 @@ public class UpscaleTaskProcessor(
             {
                 DisposeCurrentStoppingToken(taskStoppingToken);
             }
+        }
+    }
+
+    /// <summary>
+    ///     Holds the loop while the configured quiet-hours window is open, so no new upscale task is
+    ///     dequeued and started. An upscale already being processed is untouched: the check happens
+    ///     between tasks, never during one.
+    /// </summary>
+    private async Task WaitForQuietHoursAsync(CancellationToken stoppingToken)
+    {
+        QuietHoursState state = quietHours.Current;
+        LogQuietHoursState(state);
+        if (!state.IsQuiet)
+        {
+            return;
+        }
+
+        await quietHours.WaitUntilNotQuietAsync(stoppingToken);
+
+        // The park just ended, so log the resumption here instead of on the next poll: waiting for
+        // the next iteration would date the line from the first post-window task completing (06:00
+        // reported at 09:00 for an overnight window) and lose it if that task outlives the process.
+        LogQuietHoursState(quietHours.Current);
+    }
+
+    /// <summary>
+    ///     Logs entering or leaving the window once per episode rather than on every poll. A schedule
+    ///     with no end in sight says so by leaving the time out, instead of naming a resume that never
+    ///     arrives.
+    /// </summary>
+    private void LogQuietHoursState(QuietHoursState state)
+    {
+        if (!state.IsQuiet)
+        {
+            if (_quietHoursPaused)
+            {
+                _quietHoursPaused = false;
+                Logger.LogInformation("Task claiming resumed");
+            }
+
+            return;
+        }
+
+        if (_quietHoursPaused)
+        {
+            return;
+        }
+
+        _quietHoursPaused = true;
+        if (state.ResumeAtLocal is TimeOnly resume)
+        {
+            Logger.LogInformation(
+                "Task claiming paused by quiet hours until {ResumeTime}",
+                resume.ToString("HH:mm", CultureInfo.InvariantCulture)
+            );
+        }
+        else
+        {
+            Logger.LogInformation("Task claiming paused by quiet hours");
         }
     }
 

@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Threading.Channels;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Shared.Helpers;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -38,6 +40,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
     private Channel<bool>? _fetchSignals;
     private Channel<StreamingItem>? _toStream;
+
+    // Whether the current quiet-hours pause episode has been announced, so it is logged once on entry
+    // and once on exit rather than on every fetch tick.
+    private bool _quietHoursPaused;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -340,6 +346,58 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     /// <summary>
+    ///     Holds the fetch loop while this worker's quiet-hours window is open, so it issues no new
+    ///     task request. A task already being streamed is untouched: this only governs claiming.
+    ///     <para>
+    ///     Resolved from its own short-lived scope so a multi-hour pause does not keep a scope (and the
+    ///     gRPC client it holds) alive for the whole window; only singletons are resolved from it.
+    ///     </para>
+    /// </summary>
+    private async Task WaitForQuietHoursAsync(CancellationToken stoppingToken)
+    {
+        using var scope = serviceScopeFactory.CreateScope();
+        var quietHours = scope.ServiceProvider.GetRequiredService<IQuietHoursGate>();
+        // One value: the flag and the resume time come from the same clock read, so the log cannot
+        // say "paused until " with no time.
+        QuietHoursState state = quietHours.Current;
+
+        if (!state.IsQuiet)
+        {
+            if (_quietHoursPaused)
+            {
+                _quietHoursPaused = false;
+                scope
+                    .ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>()
+                    .LogInformation("Task claiming resumed");
+            }
+
+            return;
+        }
+
+        if (!_quietHoursPaused)
+        {
+            _quietHoursPaused = true;
+            ILogger<RemoteTaskProcessor> logger = scope.ServiceProvider.GetRequiredService<
+                ILogger<RemoteTaskProcessor>
+            >();
+            if (state.ResumeAtLocal is TimeOnly resume)
+            {
+                logger.LogInformation(
+                    "Task claiming paused by quiet hours until {ResumeTime}",
+                    resume.ToString("HH:mm", CultureInfo.InvariantCulture)
+                );
+            }
+            else
+            {
+                // A schedule that covers every hour has no resume time to name.
+                logger.LogInformation("Task claiming paused by quiet hours");
+            }
+        }
+
+        await quietHours.WaitUntilNotQuietAsync(stoppingToken);
+    }
+
+    /// <summary>
     /// Reserves tasks from the server and hands them to the streaming loop. Only upscale and
     /// split-detection tasks are delegated to workers.
     /// </summary>
@@ -365,6 +423,13 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 // channel and it never re-reads while a fetch is in flight, so there is no in-progress
                 // state to check here.
                 while (_fetchSignals.Reader.TryRead(out _)) { }
+
+                // After the signal read and before anything is claimed: a paused worker must issue no
+                // new task request at all. The signal is consumed first on purpose — resuming goes
+                // straight on to the claim in this same iteration, and nothing would re-signal the
+                // loop. The wait sits before the per-fetch scope so a multi-hour pause does not keep
+                // that scope (and its gRPC client) alive.
+                await WaitForQuietHoursAsync(stoppingToken);
 
                 using var scope = serviceScopeFactory.CreateScope();
                 var logger = scope.ServiceProvider.GetRequiredService<

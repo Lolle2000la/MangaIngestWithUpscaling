@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -219,7 +220,8 @@ public class UpscaleTaskProcessorRerouteGuardTests
             upscalerConfig,
             logger,
             taskPersistenceService,
-            preprocessedCache
+            preprocessedCache,
+            Substitute.For<IQuietHoursGate>()
         )
     {
         public Task InvokeProcessTaskAsync(

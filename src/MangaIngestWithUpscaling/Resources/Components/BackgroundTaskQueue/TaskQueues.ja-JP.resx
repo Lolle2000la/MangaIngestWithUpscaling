@@ -79,4 +79,10 @@
   <data name="Error_RunNow" xml:space="preserve">
     <value>タスクを先頭に移動できませんでした: {0}</value>
   </data>
+  <data name="QuietHours_Paused" xml:space="preserve">
+    <value>静かな時間帯 — {0} まで一時停止中</value>
+  </data>
+  <data name="QuietHours_Paused_NoEnd" xml:space="preserve">
+    <value>静かな時間帯 — 一時停止中</value>
+  </data>
 </root>
