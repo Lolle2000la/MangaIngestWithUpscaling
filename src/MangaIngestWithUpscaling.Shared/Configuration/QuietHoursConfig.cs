@@ -134,7 +134,8 @@ public record QuietHoursConfig
 
     /// <summary>
     ///     How long the quiet period still runs from <paramref name="timeOfDay" /> on
-    ///     <paramref name="day" />, or <see langword="null" /> when it is not active.
+    ///     <paramref name="day" />, or <see langword="null" /> when it does not end within the
+    ///     projection horizon.
     ///     <para>
     ///     The value is the end of the <em>contiguous</em> quiet period containing that instant, not
     ///     the next window boundary: with <c>22:00-06:00</c> plus <c>05:00-07:00</c>, 05:30 is quiet
@@ -144,9 +145,11 @@ public record QuietHoursConfig
     ///     <para>
     ///     The calculation is clock-free: every window is projected onto the local timeline for the
     ///     days around <paramref name="day" />, the intervals are merged, and the end of the one
-    ///     containing <paramref name="timeOfDay" /> is returned. Because schedules can chain across
-    ///     days, the result is not capped at one day; callers that sleep on it re-check at least every
-    ///     minute anyway.
+    ///     containing <paramref name="timeOfDay" /> is returned. A schedule that covers every hour
+    ///     (for example <c>00:00-12:00</c> plus <c>12:00-00:00</c>) has no next end at all, so it
+    ///     reports <see langword="null" /> rather than a boundary that would never actually arrive.
+    ///     Callers must therefore treat <see langword="null" /> as "quiet, end unknown" and re-check
+    ///     instead of assuming the schedule is open.
     ///     </para>
     /// </summary>
     public TimeSpan? TimeUntilEnd(DayOfWeek day, TimeSpan timeOfDay)
@@ -164,14 +167,22 @@ public record QuietHoursConfig
     ///     End of the merged quiet interval containing <paramref name="timeOfDay" />, or
     ///     <see langword="null" /> when that instant is not quiet.
     /// </summary>
+    /// <summary>
+    ///     Days of schedule projected ahead of the instant under test. Eight days cover a full week
+    ///     with room to spare, so a period only reaches the horizon if the schedule is quiet for
+    ///     longer than a week — in practice only an all-day schedule, which never ends.
+    /// </summary>
+    private const int ProjectionDays = 8;
+
     private TimeSpan? ContiguousEnd(DayOfWeek day, TimeSpan timeOfDay)
     {
         TimeSpan dayLength = TimeSpan.FromDays(1);
+        TimeSpan horizon = dayLength * ProjectionDays;
         List<(TimeSpan Start, TimeSpan End)> intervals = [];
 
-        // Yesterday, today and tomorrow cover every window that can reach the instant under test: the
-        // tail of one that began the previous evening, today's, and one that opens just after midnight
-        // tomorrow and continues a period that started today.
+        // Yesterday covers the tail of a window that began the previous evening; the days after it
+        // cover periods that chain forward. Anything past the horizon is clipped, which is what
+        // detects a period that never ends.
         foreach (QuietWindow window in EffectiveWindows())
         {
             if (window.Start == window.End)
@@ -179,7 +190,7 @@ public record QuietHoursConfig
                 continue;
             }
 
-            for (int offset = -1; offset <= 1; offset++)
+            for (int offset = -1; offset < ProjectionDays; offset++)
             {
                 if (!AllowsDay(window, OffsetDay(day, offset)))
                 {
@@ -193,7 +204,7 @@ public record QuietHoursConfig
                     window.End > window.Start
                         ? dayLength * offset + window.End
                         : dayLength * (offset + 1) + window.End;
-                intervals.Add((start, end));
+                intervals.Add((start, end > horizon ? horizon : end));
             }
         }
 
@@ -233,7 +244,15 @@ public record QuietHoursConfig
             mergedEnd = end;
         }
 
-        return haveInterval && mergedStart <= timeOfDay && timeOfDay < mergedEnd ? mergedEnd : null;
+        if (!haveInterval || mergedStart > timeOfDay || timeOfDay >= mergedEnd)
+        {
+            return null;
+        }
+
+        // Reaching the horizon means the period was still going when the projection stopped: it has
+        // no next end to report (an all-day schedule), so report none instead of a boundary that
+        // would never arrive.
+        return mergedEnd >= horizon ? null : mergedEnd;
     }
 
     private static bool IsWindowActive(QuietWindow window, DayOfWeek day, TimeSpan timeOfDay)

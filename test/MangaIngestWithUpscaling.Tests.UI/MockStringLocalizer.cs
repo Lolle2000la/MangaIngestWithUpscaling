@@ -25,6 +25,7 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         { "Error_ClearCompleted", "Failed to clear completed tasks: {0}" },
         { "Error_ClearFailed", "Failed to clear failed tasks: {0}" },
         { "QuietHours_Paused", "Quiet hours — paused until {0}" },
+        { "QuietHours_Paused_NoEnd", "Quiet hours — paused" },
         // TaskTable
         { "ClearFailed", "Clear Failed" },
         { "ClearCompleted", "Clear Completed" },

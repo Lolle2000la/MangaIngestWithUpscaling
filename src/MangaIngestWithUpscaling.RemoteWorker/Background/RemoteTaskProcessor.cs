@@ -357,8 +357,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     {
         using var scope = serviceScopeFactory.CreateScope();
         var quietHours = scope.ServiceProvider.GetRequiredService<IQuietHoursGate>();
+        // One value: the flag and the resume time come from the same clock read, so the log cannot
+        // say "paused until " with no time.
+        QuietHoursState state = quietHours.Current;
 
-        if (!quietHours.IsQuiet)
+        if (!state.IsQuiet)
         {
             if (_quietHoursPaused)
             {
@@ -374,12 +377,21 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         if (!_quietHoursPaused)
         {
             _quietHoursPaused = true;
-            scope
-                .ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>()
-                .LogInformation(
+            ILogger<RemoteTaskProcessor> logger = scope.ServiceProvider.GetRequiredService<
+                ILogger<RemoteTaskProcessor>
+            >();
+            if (state.ResumeAtLocal is TimeOnly resume)
+            {
+                logger.LogInformation(
                     "Task claiming paused by quiet hours until {ResumeTime}",
-                    quietHours.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture)
+                    resume.ToString("HH:mm", CultureInfo.InvariantCulture)
                 );
+            }
+            else
+            {
+                // A schedule that covers every hour has no resume time to name.
+                logger.LogInformation("Task claiming paused by quiet hours");
+            }
         }
 
         await quietHours.WaitUntilNotQuietAsync(stoppingToken);

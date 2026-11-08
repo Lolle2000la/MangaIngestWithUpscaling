@@ -26,7 +26,7 @@
 {
     <div class="d-flex mb-2" data-testid="quiet-hours-badge">
         <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Outlined">
-            @Loc["QuietHours_Paused", _quietState.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? string.Empty]
+            @QuietHoursBadgeText
         </MudChip>
     </div>
 }
@@ -50,8 +50,14 @@
 
     // The last quiet-hours state that was rendered. The refresh loop only re-renders when this
     // changes, because re-rendering the page for nothing costs both task tables and every clock on
-    // them a round of interop.
-    private (bool IsQuiet, TimeOnly? ResumeAtLocal) _quietState;
+    // them a round of interop. It is also read as a whole, so the flag and the time cannot come from
+    // two different evaluations.
+    private QuietHoursState _quietState;
+
+    private string QuietHoursBadgeText =>
+        _quietState.ResumeAtLocal is TimeOnly resume
+            ? Loc["QuietHours_Paused", resume.ToString("HH:mm", CultureInfo.InvariantCulture)]
+            : Loc["QuietHours_Paused_NoEnd"];
 
     // Snapshots are immutable arrays swapped atomically by the registry, so they are safe to
     // enumerate here while the registry flushes on a background thread.
@@ -68,8 +74,7 @@
         return Task.CompletedTask;
     }
 
-    private (bool IsQuiet, TimeOnly? ResumeAtLocal) CurrentQuietState() =>
-        (QuietHours.IsQuiet, QuietHours.ResumeAtLocal);
+    private QuietHoursState CurrentQuietState() => QuietHours.Current;
 
     private async Task RefreshQuietHoursBadgeAsync(CancellationToken cancellationToken)
     {
@@ -80,7 +85,7 @@
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                (bool IsQuiet, TimeOnly? ResumeAtLocal) current = CurrentQuietState();
+                QuietHoursState current = CurrentQuietState();
                 if (current == _quietState)
                 {
                     continue;

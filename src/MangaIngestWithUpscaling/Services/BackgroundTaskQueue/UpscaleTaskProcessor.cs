@@ -115,74 +115,46 @@ public class UpscaleTaskProcessor(
             await WaitForQuietHoursAsync(stoppingToken);
 
             PersistedTask? task = null;
-            // Whether this iteration took a task off the rerouted channel; it has to be handed back
-            // if the window turned out to be open.
-            bool tookReroutedTask = false;
-            // Whether the main channel reported readiness. The signal is deliberately NOT consumed
-            // until the quiet-hours check below has passed: consuming it would leave a queued task
-            // with nobody to wake this loop for it.
-            bool upscaleSignalReady = false;
 
-            // Priority 1: Rerouted tasks (already claimed or specialized)
-            if (ReroutedReader.TryRead(out var rerouted))
-            {
-                task = rerouted;
-                tookReroutedTask = true;
-            }
-            else
-            {
-                // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed
-                // from its channel when one of them completes.
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-                    stoppingToken
-                );
-                var reroutedWait = ReroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
-                var signalWait = Reader.WaitToReadAsync(linkedCts.Token).AsTask();
+            // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed from its
+            // channel when one of them completes. Neither wait consumes an item, which is what lets
+            // the gate below run with nothing held.
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            Task<bool> reroutedWait = ReroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
+            Task<bool> signalWait = Reader.WaitToReadAsync(linkedCts.Token).AsTask();
 
-                var completed = await Task.WhenAny(reroutedWait, signalWait);
-
-                if (completed == reroutedWait && await reroutedWait)
-                {
-                    if (ReroutedReader.TryRead(out var r))
-                    {
-                        task = r;
-                        tookReroutedTask = true;
-                    }
-                }
-                else if (completed == signalWait && await signalWait)
-                {
-                    // Check rerouted one last time before consuming a signal
-                    if (ReroutedReader.TryRead(out var r))
-                    {
-                        task = r;
-                        tookReroutedTask = true;
-                    }
-                    else
-                    {
-                        upscaleSignalReady = true;
-                    }
-                }
-
-                // Cancel the CTS to remove any abandoned waiter from the channels
-                await linkedCts.CancelAsync();
-            }
+            Task<bool> completed = await Task.WhenAny(reroutedWait, signalWait);
 
             // The authoritative check: the park above happened before an unbounded wait, so a window
-            // that opened while this loop was parked must be honoured here, after the wait resolved
-            // and before anything is claimed or processed.
-            if (quietHours.IsQuiet)
+            // that opened while this loop was parked must be honoured here, before anything is read or
+            // claimed. Nothing has been taken off either channel yet, so a task enqueued during the
+            // window stays queued with its signal intact.
+            if (quietHours.Current is { IsQuiet: true } quiet)
             {
-                if (tookReroutedTask && task is not null)
-                {
-                    // Hand it back exactly once, through the same channel the distributed processor
-                    // used to reroute it. Parking with a consumed task would lose it on shutdown.
-                    await TaskQueue.SendToLocalUpscaleAsync(task, stoppingToken);
-                }
-
+                LogQuietHoursState(quiet);
+                await linkedCts.CancelAsync();
                 continue;
             }
 
-            if (upscaleSignalReady && Reader.TryRead(out _))
+            bool reroutedReady = completed == reroutedWait && await reroutedWait;
+            bool signalReady = completed != reroutedWait && await signalWait;
+
+            // Cancel the CTS to remove any abandoned waiter from the channels
+            await linkedCts.CancelAsync();
+
+            if (!reroutedReady && !signalReady)
+            {
+                // Both channels report completion. They are unbounded and never completed, so this
+                // means the reader itself is finished; sitting in the loop would spin.
+                break;
+            }
+
+            if (reroutedReady)
+            {
+                // Priority 1: rerouted tasks (already claimed or specialized)
+                task = await ReroutedReader.ReadAsync(stoppingToken);
+            }
+            else if (Reader.TryRead(out _))
             {
                 task = TaskQueue.DequeueUpscale();
             }
@@ -212,7 +184,22 @@ public class UpscaleTaskProcessor(
     /// </summary>
     private async Task WaitForQuietHoursAsync(CancellationToken stoppingToken)
     {
-        if (!quietHours.IsQuiet)
+        QuietHoursState state = quietHours.Current;
+        LogQuietHoursState(state);
+        if (state.IsQuiet)
+        {
+            await quietHours.WaitUntilNotQuietAsync(stoppingToken);
+        }
+    }
+
+    /// <summary>
+    ///     Logs entering or leaving the window once per episode rather than on every poll. A schedule
+    ///     with no end in sight says so by leaving the time out, instead of naming a resume that never
+    ///     arrives.
+    /// </summary>
+    private void LogQuietHoursState(QuietHoursState state)
+    {
+        if (!state.IsQuiet)
         {
             if (_quietHoursPaused)
             {
@@ -223,16 +210,23 @@ public class UpscaleTaskProcessor(
             return;
         }
 
-        if (!_quietHoursPaused)
+        if (_quietHoursPaused)
         {
-            _quietHoursPaused = true;
-            Logger.LogInformation(
-                "Task claiming paused by quiet hours until {ResumeTime}",
-                quietHours.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture)
-            );
+            return;
         }
 
-        await quietHours.WaitUntilNotQuietAsync(stoppingToken);
+        _quietHoursPaused = true;
+        if (state.ResumeAtLocal is TimeOnly resume)
+        {
+            Logger.LogInformation(
+                "Task claiming paused by quiet hours until {ResumeTime}",
+                resume.ToString("HH:mm", CultureInfo.InvariantCulture)
+            );
+        }
+        else
+        {
+            Logger.LogInformation("Task claiming paused by quiet hours");
+        }
     }
 
     protected override async Task<bool> TryAcquireTaskAsync(

@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.QuietHours;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,88 +31,22 @@ namespace MangaIngestWithUpscaling.Tests.UI.BackgroundTaskQueue;
 public class TaskQueuesQuietHoursBadgeTests : BunitContext
 {
     /// <summary>2026-01-05 23:00 UTC, inside the 22:00-06:00 window configured below.</summary>
-    private static readonly DateTimeOffset QuietInstant = new(2026, 1, 5, 23, 0, 0, TimeSpan.Zero);
+    internal static readonly DateTimeOffset QuietInstant = new(2026, 1, 5, 23, 0, 0, TimeSpan.Zero);
 
     private readonly ManualTimeProvider _clock = new(QuietInstant);
 
     public TaskQueuesQuietHoursBadgeTests()
     {
-        Services.AddMudServices();
-        Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
-        Services.AddSingleton(Substitute.For<ILogger<TaskQueues>>());
-        Services.AddSingleton(Substitute.For<ILogger<TaskTable>>());
-        Services.AddSingleton(Substitute.For<ISnackbar>());
-        // The page's refresh timer and the gate read the same clock, so advancing it moves both.
-        Services.AddSingleton<TimeProvider>(_clock);
-        Services.AddSingleton<IQuietHoursGate>(sp => new QuietHoursGate(
-            Options.Create(
-                new QuietHoursConfig
-                {
-                    Enabled = true,
-                    Start = TimeSpan.FromHours(22),
-                    End = TimeSpan.FromHours(6),
-                }
-            ),
-            sp.GetRequiredService<TimeProvider>()
-        ));
-
-        var queue = Substitute.For<TaskQueue>(
-            Substitute.For<IServiceScopeFactory>(),
-            Substitute.For<ILogger<TaskQueue>>()
+        TaskQueuesPageTestHost.Register(
+            this,
+            _clock,
+            new QuietHoursConfig
+            {
+                Enabled = true,
+                Start = TimeSpan.FromHours(22),
+                End = TimeSpan.FromHours(6),
+            }
         );
-        Services.AddSingleton(queue);
-        var standard = Substitute.For<StandardTaskProcessor>(
-            queue,
-            Substitute.For<IServiceScopeFactory>(),
-            Substitute.For<ILogger<StandardTaskProcessor>>(),
-            Substitute.For<ITaskPersistenceService>()
-        );
-        Services.AddSingleton(standard);
-        var distributed = Substitute.For<DistributedUpscaleTaskProcessor>(
-            queue,
-            Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
-            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
-            Substitute.For<ITaskPersistenceService>()
-        );
-        Services.AddSingleton(distributed);
-        Services.AddSingleton(
-            Substitute.For<UpscaleTaskProcessor>(
-                queue,
-                Substitute.For<IServiceScopeFactory>(),
-                Options.Create(new UpscalerConfig()),
-                Substitute.For<ILogger<UpscaleTaskProcessor>>(),
-                Substitute.For<ITaskPersistenceService>(),
-                new PreprocessedInputCache(),
-                Substitute.For<IQuietHoursGate>()
-            )
-        );
-
-        // A registry substitute returns empty snapshots, so both task tables render their empty state.
-        var describer = Substitute.For<ITaskDescriber<BaseTask>>();
-        describer.GetTitleAsync(Arg.Any<BaseTask>()).Returns(Task.FromResult("task"));
-        var factory = Substitute.For<ITaskDescriberFactory>();
-        factory.GetDescriber(Arg.Any<BaseTask>()).Returns(describer);
-        Services.AddSingleton(factory);
-        Services.AddSingleton(
-            Substitute.For<TaskRegistry>(
-                Substitute.For<IServiceScopeFactory>(),
-                queue,
-                standard,
-                null!,
-                distributed,
-                null!
-            )
-        );
-
-        JSInterop.Mode = JSRuntimeMode.Loose;
-        JSInterop.SetupVoid("mudPopover.initialize").SetVoidResult();
-        JSInterop.SetupVoid("mudKeyInterceptor.connect").SetVoidResult();
-        JSInterop.SetupVoid("mudKeyInterceptor.updatekey").SetVoidResult();
-        JSInterop.SetupVoid("mudScrollManager.lockScroll").SetVoidResult();
-        JSInterop.SetupVoid("mudScrollListener.listenForScroll").SetVoidResult();
-        JSInterop.SetupVoid("mudElementRef.focusFirst").SetVoidResult();
-        JSInterop.SetupVoid("mudElementRef.focusLast").SetVoidResult();
     }
 
     [Fact]
@@ -160,118 +95,251 @@ public class TaskQueuesQuietHoursBadgeTests : BunitContext
     }
 
     [Fact]
-    public void Refresh_DoesNotReRenderWhenTheQuietStateIsUnchanged()
+    public async Task Refresh_RendersOnAStateChangeAndStaysQuietOtherwise()
     {
-        // Re-rendering both task tables (and every clock on them) every 30 s for nothing is the cost
-        // this guards; the render count must stay flat while the state does not change.
+        // Two claims in one: the boundary crossing must produce a render (otherwise a refresh loop
+        // that was deleted would pass the second half), and a tick with no state change must not.
         var cut = Render<TaskQueues>();
-        int rendersBefore = cut.RenderCount;
+        int rendersBeforeBoundary = cut.RenderCount;
 
-        cut.InvokeAsync(() =>
+        await cut.InvokeAsync(() =>
         {
-            _clock.Advance(TimeSpan.FromSeconds(90));
+            _clock.Advance(TimeSpan.FromHours(7));
             return Task.CompletedTask;
         });
 
         cut.WaitForAssertion(
-            () => Assert.Equal(rendersBefore, cut.RenderCount),
+            () => Assert.Empty(cut.FindAll("[data-testid='quiet-hours-badge']")),
             TimeSpan.FromSeconds(5)
+        );
+        Assert.True(
+            cut.RenderCount > rendersBeforeBoundary,
+            "crossing the window end must re-render the page"
+        );
+
+        int rendersAfterBoundary = cut.RenderCount;
+        await cut.InvokeAsync(() =>
+        {
+            _clock.Advance(TimeSpan.FromSeconds(90));
+            return Task.CompletedTask;
+        });
+        await Task.Delay(TimeSpan.FromMilliseconds(200), CancellationToken.None);
+
+        Assert.Equal(rendersAfterBoundary, cut.RenderCount);
+    }
+}
+
+/// <summary>
+/// A schedule that covers every hour has no resume time, so the badge must say so instead of naming a
+/// boundary that never arrives.
+/// </summary>
+public class TaskQueuesQuietHoursBadgeNoEndTests : BunitContext
+{
+    private readonly ManualTimeProvider _clock = new(TaskQueuesQuietHoursBadgeTests.QuietInstant);
+
+    public TaskQueuesQuietHoursBadgeNoEndTests()
+    {
+        TaskQueuesPageTestHost.Register(
+            this,
+            _clock,
+            new QuietHoursConfig
+            {
+                Enabled = true,
+                Windows =
+                [
+                    new QuietWindow { Start = TimeSpan.Zero, End = TimeSpan.FromHours(12) },
+                    new QuietWindow { Start = TimeSpan.FromHours(12), End = TimeSpan.Zero },
+                ],
+            }
         );
     }
 
-    /// <summary>
-    /// A hand-written <see cref="TimeProvider" /> with an exact, settable UTC instant and timers that
-    /// fire when it is advanced. Each timer fires at most once per <see cref="Advance" />, which is
-    /// all a coarse poll needs and keeps a large jump from replaying hundreds of ticks.
-    /// </summary>
-    private sealed class ManualTimeProvider : TimeProvider
+    [Fact]
+    public void Badge_OmitsTheTimeWhenTheScheduleHasNoEnd()
     {
-        private readonly List<ManualTimer> _timers = [];
-        private DateTimeOffset _now;
+        var cut = Render<TaskQueues>();
 
-        public ManualTimeProvider(DateTimeOffset now) => _now = now;
+        var badge = cut.Find("[data-testid='quiet-hours-badge']");
+        Assert.Contains("Quiet hours — paused", badge.TextContent, StringComparison.Ordinal);
+        // Nothing that looks like a resume time, because there is none.
+        Assert.DoesNotContain("06:00", badge.TextContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("paused until", badge.TextContent, StringComparison.Ordinal);
+    }
+}
 
-        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+/// <summary>
+/// Registers the services the tasks page and its two task tables need, with the real gate over the
+/// supplied clock so the page's badge follows a schedule that can be driven.
+/// </summary>
+internal static class TaskQueuesPageTestHost
+{
+    public static void Register(BunitContext context, TimeProvider clock, QuietHoursConfig config)
+    {
+        IServiceCollection services = context.Services;
+        services.AddMudServices();
+        services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
+        services.AddSingleton(Substitute.For<ILogger<TaskQueues>>());
+        services.AddSingleton(Substitute.For<ILogger<TaskTable>>());
+        services.AddSingleton(Substitute.For<ISnackbar>());
+        // The page's refresh timer and the gate read the same clock, so advancing it moves both.
+        services.AddSingleton(clock);
+        services.AddSingleton<IQuietHoursGate>(sp => new QuietHoursGate(
+            Options.Create(config),
+            sp.GetRequiredService<TimeProvider>()
+        ));
 
-        public override DateTimeOffset GetUtcNow() => _now;
+        var queue = Substitute.For<TaskQueue>(
+            Substitute.For<IServiceScopeFactory>(),
+            Substitute.For<ILogger<TaskQueue>>()
+        );
+        services.AddSingleton(queue);
+        var standard = Substitute.For<StandardTaskProcessor>(
+            queue,
+            Substitute.For<IServiceScopeFactory>(),
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            Substitute.For<ITaskPersistenceService>()
+        );
+        services.AddSingleton(standard);
+        var distributed = Substitute.For<DistributedUpscaleTaskProcessor>(
+            queue,
+            Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            Substitute.For<ITaskPersistenceService>()
+        );
+        services.AddSingleton(distributed);
+        services.AddSingleton(
+            Substitute.For<UpscaleTaskProcessor>(
+                queue,
+                Substitute.For<IServiceScopeFactory>(),
+                Options.Create(new UpscalerConfig()),
+                Substitute.For<ILogger<UpscaleTaskProcessor>>(),
+                Substitute.For<ITaskPersistenceService>(),
+                new PreprocessedInputCache(),
+                Substitute.For<IQuietHoursGate>()
+            )
+        );
 
-        public void SetUtcNow(DateTimeOffset now) => _now = now;
+        // A registry substitute returns empty snapshots, so both task tables render their empty state.
+        var describer = Substitute.For<ITaskDescriber<BaseTask>>();
+        describer.GetTitleAsync(Arg.Any<BaseTask>()).Returns(Task.FromResult("task"));
+        var factory = Substitute.For<ITaskDescriberFactory>();
+        factory.GetDescriber(Arg.Any<BaseTask>()).Returns(describer);
+        services.AddSingleton(factory);
+        services.AddSingleton(
+            Substitute.For<TaskRegistry>(
+                Substitute.For<IServiceScopeFactory>(),
+                queue,
+                standard,
+                null!,
+                distributed,
+                null!
+            )
+        );
 
-        public void Advance(TimeSpan delta)
+        context.JSInterop.Mode = JSRuntimeMode.Loose;
+        context.JSInterop.SetupVoid("mudPopover.initialize").SetVoidResult();
+        context.JSInterop.SetupVoid("mudKeyInterceptor.connect").SetVoidResult();
+        context.JSInterop.SetupVoid("mudKeyInterceptor.updatekey").SetVoidResult();
+        context.JSInterop.SetupVoid("mudScrollManager.lockScroll").SetVoidResult();
+        context.JSInterop.SetupVoid("mudScrollListener.listenForScroll").SetVoidResult();
+        context.JSInterop.SetupVoid("mudElementRef.focusFirst").SetVoidResult();
+        context.JSInterop.SetupVoid("mudElementRef.focusLast").SetVoidResult();
+    }
+}
+
+/// <summary>
+/// A hand-written <see cref="TimeProvider" /> with an exact, settable UTC instant and timers that fire
+/// when it is advanced. Each timer fires at most once per <see cref="Advance" />, which is all a
+/// coarse poll needs and keeps a large jump from replaying hundreds of ticks.
+/// </summary>
+internal sealed class ManualTimeProvider : TimeProvider
+{
+    private readonly List<ManualTimer> _timers = [];
+    private DateTimeOffset _now;
+
+    public ManualTimeProvider(DateTimeOffset now) => _now = now;
+
+    public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+
+    public override DateTimeOffset GetUtcNow() => _now;
+
+    public void SetUtcNow(DateTimeOffset now) => _now = now;
+
+    public void Advance(TimeSpan delta)
+    {
+        _now += delta;
+        foreach (ManualTimer timer in _timers.ToArray())
         {
-            _now += delta;
-            foreach (ManualTimer timer in _timers.ToArray())
-            {
-                timer.FireIfDue(_now);
-            }
+            timer.FireIfDue(_now);
         }
+    }
 
-        public override ITimer CreateTimer(
+    public override ITimer CreateTimer(
+        TimerCallback callback,
+        object? state,
+        TimeSpan dueTime,
+        TimeSpan period
+    )
+    {
+        var timer = new ManualTimer(this, callback, state, dueTime, period);
+        _timers.Add(timer);
+        return timer;
+    }
+
+    private void Remove(ManualTimer timer) => _timers.Remove(timer);
+
+    private sealed class ManualTimer : ITimer
+    {
+        private readonly ManualTimeProvider _owner;
+        private readonly TimerCallback _callback;
+        private readonly object? _state;
+        private DateTimeOffset? _due;
+        private TimeSpan _period;
+
+        public ManualTimer(
+            ManualTimeProvider owner,
             TimerCallback callback,
             object? state,
             TimeSpan dueTime,
             TimeSpan period
         )
         {
-            var timer = new ManualTimer(this, callback, state, dueTime, period);
-            _timers.Add(timer);
-            return timer;
+            _owner = owner;
+            _callback = callback;
+            _state = state;
+            _due = DueAt(dueTime);
+            _period = period;
         }
 
-        private void Remove(ManualTimer timer) => _timers.Remove(timer);
-
-        private sealed class ManualTimer : ITimer
+        public void FireIfDue(DateTimeOffset now)
         {
-            private readonly ManualTimeProvider _owner;
-            private readonly TimerCallback _callback;
-            private readonly object? _state;
-            private DateTimeOffset? _due;
-            private TimeSpan _period;
-
-            public ManualTimer(
-                ManualTimeProvider owner,
-                TimerCallback callback,
-                object? state,
-                TimeSpan dueTime,
-                TimeSpan period
-            )
+            if (_due is not DateTimeOffset dueAt || now < dueAt)
             {
-                _owner = owner;
-                _callback = callback;
-                _state = state;
-                _due = DueAt(dueTime);
-                _period = period;
+                return;
             }
 
-            public void FireIfDue(DateTimeOffset now)
-            {
-                if (_due is not DateTimeOffset dueAt || now < dueAt)
-                {
-                    return;
-                }
-
-                // Reschedule before invoking, so a callback that changes the timer is not overwritten.
-                _due = DueAt(_period);
-                _callback(_state);
-            }
-
-            public bool Change(TimeSpan dueTime, TimeSpan period)
-            {
-                _due = DueAt(dueTime);
-                _period = period;
-                return true;
-            }
-
-            public void Dispose() => _owner.Remove(this);
-
-            public ValueTask DisposeAsync()
-            {
-                Dispose();
-                return default;
-            }
-
-            private DateTimeOffset? DueAt(TimeSpan delay) =>
-                delay == Timeout.InfiniteTimeSpan ? null : _owner.GetUtcNow() + delay;
+            // Reschedule before invoking, so a callback that changes the timer is not overwritten.
+            _due = DueAt(_period);
+            _callback(_state);
         }
+
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            _due = DueAt(dueTime);
+            _period = period;
+            return true;
+        }
+
+        public void Dispose() => _owner.Remove(this);
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
+
+        private DateTimeOffset? DueAt(TimeSpan delay) =>
+            delay == Timeout.InfiniteTimeSpan ? null : _owner.GetUtcNow() + delay;
     }
 }

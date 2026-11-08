@@ -397,6 +397,47 @@ public class QuietHoursConfigTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void AllDaySchedule_IsActiveEveryHourAndHasNoEnd()
+    {
+        // 00:00-12:00 plus 12:00-00:00 covers every instant. Reporting a finite end would name a
+        // resume that never arrives (the two windows keep handing over to each other), so the answer
+        // is "quiet, with no end", not a boundary ~a day and a half out.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.Zero, End = TimeSpan.FromHours(12) },
+                new QuietWindow { Start = TimeSpan.FromHours(12), End = TimeSpan.Zero },
+            ],
+        };
+
+        foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>())
+        {
+            for (int minutes = 0; minutes < 24 * 60; minutes += 30)
+            {
+                TimeSpan timeOfDay = TimeSpan.FromMinutes(minutes);
+                Assert.True(config.IsActive(day, timeOfDay), $"{day} {timeOfDay}");
+                Assert.Null(config.TimeUntilEnd(day, timeOfDay));
+            }
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void NormalWindow_StillReportsItsEnd()
+    {
+        // The counterpart to the all-day case: a schedule that stops must keep naming when.
+        QuietHoursConfig config = Night();
+
+        Assert.Equal(
+            TimeSpan.FromHours(6.5),
+            config.TimeUntilEnd(DayOfWeek.Monday, new TimeSpan(23, 30, 0))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void IsActive_And_TimeUntilEnd_AgreeEverywhereInTheWeek()
     {
         // The two answers come from different code paths — a direct membership test and a projected,
@@ -430,9 +471,17 @@ public class QuietHoursConfigTests
                 bool active = config.IsActive(day, timeOfDay);
                 TimeSpan? remaining = config.TimeUntilEnd(day, timeOfDay);
 
-                Assert.Equal(active, remaining is not null);
+                // The end may be null while the schedule is quiet (a schedule that never ends), so the
+                // invariant is one-directional: a reported end proves the instant is quiet, and an
+                // open schedule never reports one.
+                if (!active)
+                {
+                    Assert.Null(remaining);
+                }
+
                 if (remaining is TimeSpan left)
                 {
+                    Assert.True(active, $"{day} {timeOfDay}: an end was reported while open");
                     Assert.True(left > TimeSpan.Zero, $"{day} {timeOfDay}: non-positive remaining");
                     // The reported end must itself be a moment the schedule stops covering.
                     long dayTicks = TimeSpan.FromDays(1).Ticks;

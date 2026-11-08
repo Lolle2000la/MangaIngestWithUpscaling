@@ -70,7 +70,7 @@ public class SqliteApplicationStartupTests
             IQuietHoursGate gate = factory.Services.GetRequiredService<IQuietHoursGate>();
             Assert.IsType<QuietHoursGate>(gate);
             // No QuietHours section in the test environment, so the feature is off and nothing pauses.
-            Assert.False(gate.IsQuiet);
+            Assert.False(gate.Current.IsQuiet);
             Assert.Same(TimeProvider.System, factory.Services.GetRequiredService<TimeProvider>());
         }
         finally

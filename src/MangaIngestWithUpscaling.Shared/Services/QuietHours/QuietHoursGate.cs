@@ -4,31 +4,45 @@ using Microsoft.Extensions.Options;
 namespace MangaIngestWithUpscaling.Shared.Services.QuietHours;
 
 /// <summary>
+///     One evaluation of the quiet-hours schedule, read in one go.
+///     <para>
+///     Consumers need the flag and the resume time together (a badge, a log line). Reading them as
+///     separate properties let a boundary cross between the two reads and produced "paused until "
+///     with an empty time for a whole poll interval, so the gate hands out a single value instead.
+///     </para>
+/// </summary>
+/// <param name="IsQuiet">Whether new upscale work must not be started right now.</param>
+/// <param name="TimeUntilResume">
+///     How long the current quiet period still runs; <see langword="null" /> when it is not quiet, and
+///     also when it is quiet with no end in sight (a schedule that covers every hour).
+/// </param>
+/// <param name="ResumeAtLocal">
+///     The wall-clock time of day, in the gate's configured zone, at which the current quiet period
+///     ends; <see langword="null" /> when it is not quiet or has no end.
+/// </param>
+public readonly record struct QuietHoursState(
+    bool IsQuiet,
+    TimeSpan? TimeUntilResume,
+    TimeOnly? ResumeAtLocal
+);
+
+/// <summary>
 ///     Tells a host whether it is currently inside its configured quiet-hours schedule, and lets it
 ///     wait the schedule out. Shared by both hosts so the server's local upscale processor and each
 ///     remote worker's fetching loop gate on exactly the same rules.
 /// </summary>
 public interface IQuietHoursGate
 {
-    /// <summary>Whether new upscale work must not be started right now.</summary>
-    bool IsQuiet { get; }
-
     /// <summary>
-    ///     How long the current quiet period still runs, or <see langword="null" /> when it is not
-    ///     quiet.
+    ///     The current state of the schedule. Each access is one clock read, so the members of the
+    ///     returned value always belong together.
     /// </summary>
-    TimeSpan? TimeUntilResume { get; }
-
-    /// <summary>
-    ///     The wall-clock time of day, in the gate's configured time zone, at which the current quiet
-    ///     period ends; <see langword="null" /> when it is not quiet. Lets a UI show when work resumes
-    ///     without reading a clock itself.
-    /// </summary>
-    TimeOnly? ResumeAtLocal { get; }
+    QuietHoursState Current { get; }
 
     /// <summary>
     ///     Returns immediately when the gate is open; otherwise blocks until the schedule ends,
-    ///     re-evaluating the clock as it goes so a wall-clock change cannot strand the caller.
+    ///     re-evaluating the clock as it goes so a wall-clock change cannot strand the caller. A
+    ///     schedule with no end in sight never returns (and never spins: it re-checks once a minute).
     /// </summary>
     Task WaitUntilNotQuietAsync(CancellationToken cancellationToken);
 }
@@ -47,7 +61,8 @@ public sealed class QuietHoursGate : IQuietHoursGate
     /// <summary>
     ///     Ceiling on a single wait. Re-evaluating at least once a minute means a clock jump (NTP, a
     ///     manual change, a host resumed from suspend, a DST transition) is observed promptly instead
-    ///     of after a computed delay that was based on the old clock.
+    ///     of after a computed delay that was based on the old clock, and it is also how an endless
+    ///     schedule is re-checked without spinning.
     /// </summary>
     private static readonly TimeSpan MaxWait = TimeSpan.FromMinutes(1);
 
@@ -83,51 +98,40 @@ public sealed class QuietHoursGate : IQuietHoursGate
     private DateTime WallClock =>
         TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), _zone).DateTime;
 
-    /// <summary>
-    ///     One evaluation of the schedule. Every public member derives from this, so the quiet flag,
-    ///     the remaining time and the resume time can never come from different clock reads or
-    ///     disagree with each other.
-    /// </summary>
-    private readonly record struct QuietSnapshot(
-        bool IsQuiet,
-        TimeSpan Remaining,
-        TimeOnly ResumeAtLocal
-    );
-
-    private QuietSnapshot Read()
+    public QuietHoursState Current
     {
-        DateTime now = WallClock;
-        // TimeUntilEnd already answers "is this instant quiet" by returning null when it is not, so a
-        // quiet snapshot always carries a remaining time: there is no "quiet but unknown" state for a
-        // caller to fall back from.
-        if (Config.TimeUntilEnd(now.DayOfWeek, now.TimeOfDay) is not TimeSpan remaining)
+        get
         {
-            return default;
+            DateTime now = WallClock;
+            if (!Config.IsActive(now.DayOfWeek, now.TimeOfDay))
+            {
+                return default;
+            }
+
+            // Null here means the schedule never ends, which is still "quiet" — the flag comes from
+            // IsActive above precisely so the two cases cannot be confused.
+            TimeSpan? remaining = Config.TimeUntilEnd(now.DayOfWeek, now.TimeOfDay);
+            TimeOnly? resumeAt = remaining is TimeSpan left
+                // Wrapped into the day so a period ending after midnight reports the morning time.
+                ? TimeOnly.FromTimeSpan(
+                    TimeSpan.FromTicks((now.TimeOfDay + left).Ticks % TicksPerDay)
+                )
+                : null;
+
+            return new QuietHoursState(true, remaining, resumeAt);
         }
-
-        // Wrapped into the day so a period ending after midnight reports the morning time.
-        long resumeTicks = (now.TimeOfDay + remaining).Ticks % TicksPerDay;
-        return new QuietSnapshot(
-            true,
-            remaining,
-            TimeOnly.FromTimeSpan(TimeSpan.FromTicks(resumeTicks))
-        );
     }
-
-    public bool IsQuiet => Read().IsQuiet;
-
-    public TimeSpan? TimeUntilResume =>
-        Read() is { IsQuiet: true } snapshot ? snapshot.Remaining : null;
-
-    public TimeOnly? ResumeAtLocal =>
-        Read() is { IsQuiet: true } snapshot ? snapshot.ResumeAtLocal : null;
 
     public async Task WaitUntilNotQuietAsync(CancellationToken cancellationToken)
     {
-        while (Read() is { IsQuiet: true } snapshot)
+        while (Current is { IsQuiet: true } state)
         {
-            TimeSpan delay = snapshot.Remaining > MaxWait ? MaxWait : snapshot.Remaining;
-            if (delay < MinWait)
+            TimeSpan delay = state.TimeUntilResume ?? MaxWait;
+            if (delay > MaxWait)
+            {
+                delay = MaxWait;
+            }
+            else if (delay < MinWait)
             {
                 delay = MinWait;
             }

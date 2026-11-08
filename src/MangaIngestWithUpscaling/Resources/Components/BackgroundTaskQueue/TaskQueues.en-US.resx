@@ -82,4 +82,7 @@
   <data name="QuietHours_Paused" xml:space="preserve">
     <value>Quiet hours — paused until {0}</value>
   </data>
+  <data name="QuietHours_Paused_NoEnd" xml:space="preserve">
+    <value>Quiet hours — paused</value>
+  </data>
 </root>

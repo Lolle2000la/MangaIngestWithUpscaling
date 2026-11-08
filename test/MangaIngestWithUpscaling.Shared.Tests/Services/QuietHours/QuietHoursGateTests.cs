@@ -56,10 +56,10 @@ public class QuietHoursGateTests
             UtcPlusTwo
         );
 
-        Assert.True(gate.IsQuiet);
+        Assert.True(gate.Current.IsQuiet);
         // 23:00 local -> 06:00 next day is 7 hours away.
-        Assert.Equal(TimeSpan.FromHours(7), gate.TimeUntilResume);
-        Assert.Equal(new TimeOnly(6, 0), gate.ResumeAtLocal);
+        Assert.Equal(TimeSpan.FromHours(7), gate.Current.TimeUntilResume);
+        Assert.Equal(new TimeOnly(6, 0), gate.Current.ResumeAtLocal);
     }
 
     [Fact]
@@ -77,8 +77,8 @@ public class QuietHoursGateTests
             UtcMinusFive
         );
 
-        Assert.True(gate.IsQuiet);
-        Assert.Equal(new TimeOnly(6, 0), gate.ResumeAtLocal);
+        Assert.True(gate.Current.IsQuiet);
+        Assert.Equal(new TimeOnly(6, 0), gate.Current.ResumeAtLocal);
     }
 
     [Fact]
@@ -101,9 +101,9 @@ public class QuietHoursGateTests
             UtcMinusFive
         );
 
-        Assert.False(gate.IsQuiet);
-        Assert.Null(gate.TimeUntilResume);
-        Assert.Null(gate.ResumeAtLocal);
+        Assert.False(gate.Current.IsQuiet);
+        Assert.Null(gate.Current.TimeUntilResume);
+        Assert.Null(gate.Current.ResumeAtLocal);
     }
 
     [Fact]
@@ -117,9 +117,9 @@ public class QuietHoursGateTests
             UtcPlusTwo
         );
 
-        Assert.False(gate.IsQuiet);
-        Assert.Null(gate.TimeUntilResume);
-        Assert.Null(gate.ResumeAtLocal);
+        Assert.False(gate.Current.IsQuiet);
+        Assert.Null(gate.Current.TimeUntilResume);
+        Assert.Null(gate.Current.ResumeAtLocal);
     }
 
     [Fact]
@@ -135,7 +135,7 @@ public class QuietHoursGateTests
             UtcPlusTwo
         );
 
-        Assert.False(gate.IsQuiet);
+        Assert.False(gate.Current.IsQuiet);
     }
 
     [Fact]
@@ -164,8 +164,8 @@ public class QuietHoursGateTests
             new DateTimeOffset(2026, 1, 10, 12, 30, 0, TimeSpan.Zero)
         );
 
-        Assert.True(gate.IsQuiet);
-        Assert.Equal(new TimeOnly(13, 0), gate.ResumeAtLocal);
+        Assert.True(gate.Current.IsQuiet);
+        Assert.Equal(new TimeOnly(13, 0), gate.Current.ResumeAtLocal);
     }
 
     [Fact]
@@ -223,7 +223,7 @@ public class QuietHoursGateTests
         clock.UtcNow = new DateTimeOffset(2026, 1, 5, 6, 0, 0, TimeSpan.Zero);
 
         await wait.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        Assert.False(gate.IsQuiet);
+        Assert.False(gate.Current.IsQuiet);
     }
 
     [Fact]
@@ -248,7 +248,60 @@ public class QuietHoursGateTests
         await gate.WaitUntilNotQuietAsync(TestContext.Current.CancellationToken)
             .WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
 
-        Assert.False(gate.IsQuiet);
+        Assert.False(gate.Current.IsQuiet);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void AllDaySchedule_IsQuietWithNoResumeTimeToReport()
+    {
+        // An endless schedule is still quiet, but it has no resume time: the badge and the log must
+        // not name one.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.Zero, End = TimeSpan.FromHours(12) },
+                new QuietWindow { Start = TimeSpan.FromHours(12), End = TimeSpan.Zero },
+            ],
+        };
+        QuietHoursGate gate = CreateGate(
+            config,
+            new DateTimeOffset(2026, 1, 5, 23, 0, 0, TimeSpan.Zero)
+        );
+
+        QuietHoursState state = gate.Current;
+
+        Assert.True(state.IsQuiet);
+        Assert.Null(state.TimeUntilResume);
+        Assert.Null(state.ResumeAtLocal);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task WaitUntilNotQuietAsync_KeepsReCheckingAnEndlessScheduleWithoutSpinning()
+    {
+        // With no end to sleep to, the loop re-checks once a minute: it must not return early (the
+        // schedule is still quiet) and must not spin.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.Zero, End = TimeSpan.FromHours(12) },
+                new QuietWindow { Start = TimeSpan.FromHours(12), End = TimeSpan.Zero },
+            ],
+        };
+        QuietHoursGate gate = CreateGate(
+            config,
+            new DateTimeOffset(2026, 1, 5, 23, 0, 0, TimeSpan.Zero)
+        );
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            gate.WaitUntilNotQuietAsync(cancellation.Token)
+        );
     }
 
     /// <summary>

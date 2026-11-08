@@ -25,7 +25,8 @@ Each worker decides for itself: two workers may have different windows, or none 
 
 The tasks page (`/tasks`) shows a *Quiet hours — paused until 06:00* badge while the server's own
 schedule is open, so a queue that is not moving is explained rather than mysterious. The time is the end
-of the current pause, and the badge disappears within 30 seconds of the pause ending.
+of the current pause, and the badge disappears within 30 seconds of the pause ending. A schedule that
+covers every hour has no resume time at all, so the badge then reads just *Quiet hours — paused*.
 
 ## Schedule shapes
 
@@ -149,5 +150,6 @@ A host logs one `Information` line when it enters the schedule —
 Task claiming paused by quiet hours until 06:00
 ```
 
-— and one when it leaves it (`Task claiming resumed`). The lines are emitted once per pause episode,
+— and one when it leaves it (`Task claiming resumed`). When the schedule has no end (every hour is
+covered) the entry line drops the time: `Task claiming paused by quiet hours`. The lines are emitted once per pause episode,
 not per poll, so a six-hour window produces two lines, not thousands.

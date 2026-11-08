@@ -114,36 +114,61 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
         );
 
     /// <summary>
-    /// Records when the processor starts work, and how many times. A rerouted task is never claimed
-    /// here, so this is the only visible sign that it ran.
+    /// Records which tasks the processor starts, in order. A rerouted task is never claimed here, so
+    /// this is the only visible sign that it ran.
     /// </summary>
-    private static (TaskCompletionSource Started, Func<int> Count) ObserveStart(
-        UpscaleTaskProcessor processor
-    )
+    private static (
+        TaskCompletionSource<PersistedTask> First,
+        Func<int[]> StartedIds
+    ) ObserveStarts(UpscaleTaskProcessor processor)
     {
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        int count = 0;
+        var first = new TaskCompletionSource<PersistedTask>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var ids = new List<int>();
         processor.StatusChanged += task =>
         {
             if (task.Status == PersistedTaskStatus.Processing)
             {
-                Interlocked.Increment(ref count);
-                started.TrySetResult();
+                lock (ids)
+                {
+                    ids.Add(task.Id);
+                }
+
+                first.TrySetResult(task);
             }
 
             return Task.CompletedTask;
         };
-        return (started, () => Volatile.Read(ref count));
+        return (
+            first,
+            () =>
+            {
+                lock (ids)
+                {
+                    return [.. ids];
+                }
+            }
+        );
     }
 
-    /// <summary>A rerouted task: already claimed, so only its processed state is observable here.</summary>
-    private static PersistedTask ClaimedUpscaleTask(int id) =>
-        new()
+    /// <summary>
+    /// Persists a task row that is already claimed, without touching the queue: enqueueing would also
+    /// signal the main channel, and this task is meant to arrive through the rerouted channel only.
+    /// </summary>
+    private async Task<PersistedTask> PersistClaimedUpscaleTaskAsync(CancellationToken ct)
+    {
+        using IServiceScope scope = ScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var row = new PersistedTask
         {
-            Id = id,
             Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
             Status = PersistedTaskStatus.Processing,
         };
+        db.PersistedTasks.Add(row);
+        await db.SaveChangesAsync(ct);
+        return row;
+    }
 
     [Fact]
     [Trait("Category", "Unit")]
@@ -215,7 +240,7 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
         UpscaleTaskProcessor processor = CreateProcessor(
             GateOpeningAfter(TimeSpan.FromSeconds(2), TimeSpan.FromHours(1))
         );
-        var (_, startedCount) = ObserveStart(processor);
+        var (_, startedIds) = ObserveStarts(processor);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await processor.StartAsync(cts.Token);
@@ -229,7 +254,7 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
         await Persistence
             .DidNotReceive()
             .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
-        Assert.Equal(0, startedCount());
+        Assert.Empty(startedIds());
         Assert.Single(Queue.GetUpscaleSnapshot());
 
         await cts.CancelAsync();
@@ -238,29 +263,33 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ExecuteAsync_HandsBackAReroutedTaskConsumedAsTheWindowOpens()
+    public async Task ExecuteAsync_ProcessesAReroutedTaskSentDuringTheWindowExactlyOnceAfterIt()
     {
-        // A rerouted task that arrives after the loop parked in the wait is already consumed when the
-        // window turns out to be open. Parking with it held would lose it on shutdown, so it has to go
-        // back to the rerouted channel — and it must not be processed now.
-        PersistedTask rerouted = ClaimedUpscaleTask(9001);
+        // A rerouted task that arrives while the loop is parked must wait for the window to close and
+        // then run exactly once, as itself: neither dropped nor duplicated by the wait and dispatch.
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        PersistedTask rerouted = await PersistClaimedUpscaleTaskAsync(ct);
+
         UpscaleTaskProcessor processor = CreateProcessor(
-            GateOpeningAfter(TimeSpan.FromSeconds(2), TimeSpan.FromHours(1))
+            GateOpeningAfter(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1.5))
         );
-        var (_, startedCount) = ObserveStart(processor);
+        var (first, startedIds) = ObserveStarts(processor);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await processor.StartAsync(cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(2.5), TestContext.Current.CancellationToken);
-
+        await Task.Delay(TimeSpan.FromSeconds(2.5), ct);
         await Queue.SendToLocalUpscaleAsync(rerouted, cts.Token);
-        await Task.Delay(800, TestContext.Current.CancellationToken);
+        await Task.Delay(400, ct);
 
-        Assert.Equal(0, startedCount());
-        Assert.True(
-            await Queue.ReroutedUpscaleReader.WaitToReadAsync(cts.Token),
-            "the consumed rerouted task must be back in its channel"
-        );
+        // Still inside the window: nothing may have started.
+        Assert.Empty(startedIds());
+
+        PersistedTask started = await first.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+        Assert.Equal(rerouted.Id, started.Id);
+
+        // Give a duplicate a chance to appear before asserting the count.
+        await Task.Delay(600, ct);
+        Assert.Equal([rerouted.Id], startedIds());
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
@@ -270,32 +299,32 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
     [Trait("Category", "Unit")]
     public async Task RemoteOnly_DoesNotProcessAReroutedTaskThatArrivesDuringTheWindow()
     {
-        // The RemoteOnly loop used to gate before ReadAsync and then park in it, so a task rerouted
-        // while the window was open was processed straight away. It must wait for the end instead,
-        // and still be processed then.
+        // The discriminating interleaving: the loop is already parked in its channel wait when the
+        // window opens, and the task arrives while it is open. Gating only before the wait would let
+        // the task start immediately.
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await Queue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
         PersistedTask rerouted = Queue.GetUpscaleSnapshot().Single();
         rerouted.Status = PersistedTaskStatus.Processing;
 
+        // Opens 2 s after start and closes 1.5 s later, so arrival at 2.5 s is inside it.
         UpscaleTaskProcessor processor = CreateProcessor(
-            GateCoveringNowFor(TimeSpan.FromHours(1), TimeSpan.FromSeconds(2.5)),
+            GateOpeningAfter(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1.5)),
             remoteOnly: true
         );
-        var (started, startedCount) = ObserveStart(processor);
+        var (first, startedIds) = ObserveStarts(processor);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await processor.StartAsync(cts.Token);
-        await Task.Delay(300, TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(2.5), ct);
 
         await Queue.SendToLocalUpscaleAsync(rerouted, cts.Token);
-        await Task.Delay(600, TestContext.Current.CancellationToken);
+        await Task.Delay(400, ct);
 
-        Assert.Equal(0, startedCount());
+        Assert.Empty(startedIds());
 
-        await started.Task.WaitAsync(
-            TimeSpan.FromSeconds(15),
-            TestContext.Current.CancellationToken
-        );
+        PersistedTask started = await first.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+        Assert.Equal(rerouted.Id, started.Id);
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);

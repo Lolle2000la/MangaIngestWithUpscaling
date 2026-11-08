@@ -61,8 +61,8 @@ public class QuietHoursRegistrationTests
 
         IQuietHoursGate gate = provider.GetRequiredService<IQuietHoursGate>();
 
-        Assert.True(gate.IsQuiet);
-        Assert.NotNull(gate.TimeUntilResume);
+        Assert.True(gate.Current.IsQuiet);
+        Assert.NotNull(gate.Current.TimeUntilResume);
     }
 
     [Fact]
