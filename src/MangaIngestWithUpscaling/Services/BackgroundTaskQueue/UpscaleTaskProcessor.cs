@@ -144,8 +144,10 @@ public class UpscaleTaskProcessor(
 
             if (!reroutedReady && !signalReady)
             {
-                // Both channels report completion. They are unbounded and never completed, so this
-                // means the reader itself is finished; sitting in the loop would spin.
+                // Defensive: the winning wait reported completion without readiness (the other wait
+                // was abandoned when the linked CTS was cancelled above, so it says nothing). Nothing
+                // completes these unbounded channels today; this only stops a finished reader from
+                // spinning the loop.
                 break;
             }
 
@@ -186,10 +188,17 @@ public class UpscaleTaskProcessor(
     {
         QuietHoursState state = quietHours.Current;
         LogQuietHoursState(state);
-        if (state.IsQuiet)
+        if (!state.IsQuiet)
         {
-            await quietHours.WaitUntilNotQuietAsync(stoppingToken);
+            return;
         }
+
+        await quietHours.WaitUntilNotQuietAsync(stoppingToken);
+
+        // The park just ended, so log the resumption here instead of on the next poll: waiting for
+        // the next iteration would date the line from the first post-window task completing (06:00
+        // reported at 09:00 for an overnight window) and lose it if that task outlives the process.
+        LogQuietHoursState(quietHours.Current);
     }
 
     /// <summary>

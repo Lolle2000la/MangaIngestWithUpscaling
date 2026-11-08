@@ -102,12 +102,16 @@ public abstract class QuietHoursProcessorTestsBase : IDisposable
 
 public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
 {
-    private UpscaleTaskProcessor CreateProcessor(IQuietHoursGate gate, bool remoteOnly = false) =>
+    private UpscaleTaskProcessor CreateProcessor(
+        IQuietHoursGate gate,
+        bool remoteOnly = false,
+        ILogger<UpscaleTaskProcessor>? logger = null
+    ) =>
         new(
             Queue,
             ScopeFactory,
             Options.Create(new UpscalerConfig { RemoteOnly = remoteOnly }),
-            Substitute.For<ILogger<UpscaleTaskProcessor>>(),
+            logger ?? Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             Persistence,
             new PreprocessedInputCache(),
             gate
@@ -236,27 +240,41 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
     {
         // Regression guard: the processor used to gate only at the top of the loop, so a host that
         // was idle when the window opened was parked in the channel wait and started the first
-        // chapter enqueued afterwards. The check has to run after that wait resolves too.
-        UpscaleTaskProcessor processor = CreateProcessor(
-            GateOpeningAfter(TimeSpan.FromSeconds(2), TimeSpan.FromHours(1))
-        );
+        // chapter enqueued afterwards. The gate is scripted rather than clocked so the test knows
+        // where the loop is instead of sleeping and hoping:
+        //   * its first park returns immediately — proof the loop got past the gate and is now in the
+        //     channel wait;
+        //   * the second park is the post-wait check, and it blocks until the test releases it.
+        var gate = new PassOnceGate();
+        UpscaleTaskProcessor processor = CreateProcessor(gate);
         var (_, startedIds) = ObserveStarts(processor);
+        var claimed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                claimed.TrySetResult();
+                return true;
+            });
 
+        CancellationToken ct = TestContext.Current.CancellationToken;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await processor.StartAsync(cts.Token);
 
-        // Long enough for the loop to park in the channel wait and for the window to open.
-        await Task.Delay(TimeSpan.FromSeconds(2.5), TestContext.Current.CancellationToken);
+        await gate.PassedFirstGate.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
 
+        // The window is open from here on: this arrival must wait for it.
         await Queue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
-        await Task.Delay(600, TestContext.Current.CancellationToken);
+        await gate.QuietParked.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
 
+        Assert.Empty(startedIds());
         await Persistence
             .DidNotReceive()
             .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
-        Assert.Empty(startedIds());
         Assert.Single(Queue.GetUpscaleSnapshot());
 
+        gate.Release();
+        await claimed.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
     }
@@ -267,23 +285,27 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
     {
         // A rerouted task that arrives while the loop is parked must wait for the window to close and
         // then run exactly once, as itself: neither dropped nor duplicated by the wait and dispatch.
+        // The gate reports one open read (proof the loop left the top-of-loop gate and is in its
+        // channel wait) and then stays quiet until the test releases it.
         CancellationToken ct = TestContext.Current.CancellationToken;
         PersistedTask rerouted = await PersistClaimedUpscaleTaskAsync(ct);
 
-        UpscaleTaskProcessor processor = CreateProcessor(
-            GateOpeningAfter(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1.5))
-        );
+        var gate = new WindowOpensAfterFirstReadGate();
+        UpscaleTaskProcessor processor = CreateProcessor(gate);
         var (first, startedIds) = ObserveStarts(processor);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await processor.StartAsync(cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(2.5), ct);
+        await gate.FirstRead.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+
+        gate.OpenWindow();
         await Queue.SendToLocalUpscaleAsync(rerouted, cts.Token);
-        await Task.Delay(400, ct);
+        await gate.QuietParked.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
 
         // Still inside the window: nothing may have started.
         Assert.Empty(startedIds());
 
+        gate.Release();
         PersistedTask started = await first.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
         Assert.Equal(rerouted.Id, started.Id);
 
@@ -299,34 +321,208 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
     [Trait("Category", "Unit")]
     public async Task RemoteOnly_DoesNotProcessAReroutedTaskThatArrivesDuringTheWindow()
     {
-        // The discriminating interleaving: the loop is already parked in its channel wait when the
-        // window opens, and the task arrives while it is open. Gating only before the wait would let
-        // the task start immediately.
+        // The same script for the RemoteOnly loop, with one difference: that loop has no
+        // top-of-loop gate to observe, so the window is opened before the task is sent and the
+        // assertion that matters is that the arrival blocks in the gate instead of starting. It is
+        // deterministic for the fixed loop; it cannot also be made discriminating against the old
+        // loop without a wall-clock window, because the fixed loop offers no observable step between
+        // start and its channel wait to place the window opening inside.
         CancellationToken ct = TestContext.Current.CancellationToken;
         await Queue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
         PersistedTask rerouted = Queue.GetUpscaleSnapshot().Single();
         rerouted.Status = PersistedTaskStatus.Processing;
 
-        // Opens 2 s after start and closes 1.5 s later, so arrival at 2.5 s is inside it.
-        UpscaleTaskProcessor processor = CreateProcessor(
-            GateOpeningAfter(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1.5)),
-            remoteOnly: true
-        );
+        var gate = new WindowOpensAfterFirstReadGate();
+        UpscaleTaskProcessor processor = CreateProcessor(gate, remoteOnly: true);
         var (first, startedIds) = ObserveStarts(processor);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await processor.StartAsync(cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(2.5), ct);
 
+        // The RemoteOnly loop has no top-of-loop gate — it parks in the channel wait straight away —
+        // so there is nothing to observe before the arrival. Opening the window here is what makes
+        // the arrival itself the thing that must wait, and the wait it must block in is asserted
+        // below, so no sleep decides anything.
+        gate.OpenWindow();
         await Queue.SendToLocalUpscaleAsync(rerouted, cts.Token);
-        await Task.Delay(400, ct);
+        await gate.QuietParked.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
 
         Assert.Empty(startedIds());
 
+        gate.Release();
         PersistedTask started = await first.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
         Assert.Equal(rerouted.Id, started.Id);
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_LogsTheResumptionAsTheWindowEndsNotAfterTheNextTask()
+    {
+        // The "resumed" line used to be emitted by the next iteration's poll, i.e. only after the
+        // first post-window task finished (and never if that task outlived the process). It belongs
+        // to the moment the park returns, before anything is claimed.
+        var logger = new RecordingLogger<UpscaleTaskProcessor>();
+        var gate = new PassOnceGate();
+        UpscaleTaskProcessor processor = CreateProcessor(gate, logger: logger);
+        var claimed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool resumedBeforeClaim = false;
+        Persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                resumedBeforeClaim = logger.Count("Task claiming resumed") == 1;
+                claimed.TrySetResult();
+                return true;
+            });
+
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await processor.StartAsync(cts.Token);
+        await gate.PassedFirstGate.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+        await Queue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
+        await gate.QuietParked.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+
+        gate.Release();
+        await claimed.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+
+        Assert.True(resumedBeforeClaim, "the resumption must be logged as the window ends");
+        // Exactly one line per transition in each direction.
+        Assert.Equal(1, logger.Count("Task claiming paused by quiet hours until "));
+        Assert.Equal(1, logger.Count("Task claiming resumed"));
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+    }
+
+    /// <summary>Records the formatted messages, so log timing and count can be asserted.</summary>
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        private readonly List<string> _messages = [];
+
+        public int Count(string prefix)
+        {
+            lock (_messages)
+            {
+                return _messages.Count(message =>
+                    message.StartsWith(prefix, StringComparison.Ordinal)
+                );
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            lock (_messages)
+            {
+                _messages.Add(formatter(state, exception));
+            }
+        }
+    }
+
+    /// <summary>The state a scripted gate reports while the schedule is open.</summary>
+    private static QuietHoursState QuietState =>
+        new(true, TimeSpan.FromMinutes(5), new TimeOnly(6, 0));
+
+    /// <summary>
+    /// Scripts a gate whose first park returns immediately — evidence that the loop got past the
+    /// top-of-loop gate — and whose later parks block until <see cref="Release" />. The schedule
+    /// stays quiet throughout, so a loop that checks only once cannot claim anything.
+    /// </summary>
+    private sealed class PassOnceGate : IQuietHoursGate
+    {
+        private readonly TaskCompletionSource _release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private volatile bool _quiet = true;
+        private int _parks;
+
+        public TaskCompletionSource PassedFirstGate { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource QuietParked { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public QuietHoursState Current => _quiet ? QuietState : default;
+
+        public Task WaitUntilNotQuietAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _parks) == 1)
+            {
+                PassedFirstGate.TrySetResult();
+                return Task.CompletedTask;
+            }
+
+            QuietParked.TrySetResult();
+            return _release.Task.WaitAsync(cancellationToken);
+        }
+
+        /// <summary>Ends the window: later reads report it open.</summary>
+        public void Release()
+        {
+            _quiet = false;
+            _release.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// Scripts a gate that is open for its first read — so the loop passes the top-of-loop gate and
+    /// parks in its channel wait — and quiet from the moment <see cref="OpenWindow" /> is called.
+    /// The first quiet park blocks until <see cref="Release" />.
+    /// </summary>
+    private sealed class WindowOpensAfterFirstReadGate : IQuietHoursGate
+    {
+        private readonly TaskCompletionSource _release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private volatile bool _quiet;
+        private int _reads;
+
+        public TaskCompletionSource FirstRead { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource QuietParked { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public QuietHoursState Current
+        {
+            get
+            {
+                bool quiet = _quiet;
+                if (Interlocked.Increment(ref _reads) == 1)
+                {
+                    FirstRead.TrySetResult();
+                }
+
+                return quiet ? QuietState : default;
+            }
+        }
+
+        public Task WaitUntilNotQuietAsync(CancellationToken cancellationToken)
+        {
+            QuietParked.TrySetResult();
+            return _release.Task.WaitAsync(cancellationToken);
+        }
+
+        public void OpenWindow() => _quiet = true;
+
+        /// <summary>Ends the window: later reads report it open.</summary>
+        public void Release()
+        {
+            _quiet = false;
+            _release.TrySetResult();
+        }
     }
 }
