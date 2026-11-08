@@ -136,10 +136,17 @@ public record QuietHoursConfig
     ///     How long the quiet period still runs from <paramref name="timeOfDay" /> on
     ///     <paramref name="day" />, or <see langword="null" /> when it is not active.
     ///     <para>
-    ///     With several windows the value is the <em>smallest</em> remaining time across the matching
-    ///     ones — the next boundary that could end the pause — not the global maximum. That is
-    ///     sufficient because the gate re-evaluates at least every 60 seconds, so a longer remaining
-    ///     window only costs one re-check.
+    ///     The value is the end of the <em>contiguous</em> quiet period containing that instant, not
+    ///     the next window boundary: with <c>22:00-06:00</c> plus <c>05:00-07:00</c>, 05:30 is quiet
+    ///     until 07:00, and reporting 06:00 would understate the pause to the log and to the UI
+    ///     badge. Windows that overlap or merely touch therefore merge.
+    ///     </para>
+    ///     <para>
+    ///     The calculation is clock-free: every window is projected onto the local timeline for the
+    ///     days around <paramref name="day" />, the intervals are merged, and the end of the one
+    ///     containing <paramref name="timeOfDay" /> is returned. Because schedules can chain across
+    ///     days, the result is not capped at one day; callers that sleep on it re-check at least every
+    ///     minute anyway.
     ///     </para>
     /// </summary>
     public TimeSpan? TimeUntilEnd(DayOfWeek day, TimeSpan timeOfDay)
@@ -149,22 +156,84 @@ public record QuietHoursConfig
             return null;
         }
 
-        TimeSpan? next = null;
+        TimeSpan? end = ContiguousEnd(day, timeOfDay);
+        return end is TimeSpan quietEnd ? quietEnd - timeOfDay : null;
+    }
+
+    /// <summary>
+    ///     End of the merged quiet interval containing <paramref name="timeOfDay" />, or
+    ///     <see langword="null" /> when that instant is not quiet.
+    /// </summary>
+    private TimeSpan? ContiguousEnd(DayOfWeek day, TimeSpan timeOfDay)
+    {
+        TimeSpan dayLength = TimeSpan.FromDays(1);
+        List<(TimeSpan Start, TimeSpan End)> intervals = [];
+
+        // Yesterday, today and tomorrow cover every window that can reach the instant under test: the
+        // tail of one that began the previous evening, today's, and one that opens just after midnight
+        // tomorrow and continues a period that started today.
         foreach (QuietWindow window in EffectiveWindows())
         {
-            if (!IsWindowActive(window, day, timeOfDay))
+            if (window.Start == window.End)
             {
                 continue;
             }
 
-            TimeSpan remaining = Remaining(window, timeOfDay);
-            if (next is null || remaining < next.Value)
+            for (int offset = -1; offset <= 1; offset++)
             {
-                next = remaining;
+                if (!AllowsDay(window, OffsetDay(day, offset)))
+                {
+                    continue;
+                }
+
+                TimeSpan start = dayLength * offset + window.Start;
+                // A wrapping window ends on the following day, which is what makes its evening and
+                // morning halves a single interval rather than two.
+                TimeSpan end =
+                    window.End > window.Start
+                        ? dayLength * offset + window.End
+                        : dayLength * (offset + 1) + window.End;
+                intervals.Add((start, end));
             }
         }
 
-        return next;
+        intervals.Sort(static (left, right) => left.Start.CompareTo(right.Start));
+
+        bool haveInterval = false;
+        TimeSpan mergedStart = TimeSpan.Zero;
+        TimeSpan mergedEnd = TimeSpan.Zero;
+        foreach ((TimeSpan start, TimeSpan end) in intervals)
+        {
+            if (!haveInterval)
+            {
+                mergedStart = start;
+                mergedEnd = end;
+                haveInterval = true;
+                continue;
+            }
+
+            // Overlapping or merely touching windows are one quiet period: a pause that ends at 06:00
+            // and another that opens at 06:00 is a single pause from the operator's point of view.
+            if (start <= mergedEnd)
+            {
+                if (end > mergedEnd)
+                {
+                    mergedEnd = end;
+                }
+
+                continue;
+            }
+
+            if (mergedStart <= timeOfDay && timeOfDay < mergedEnd)
+            {
+                return mergedEnd;
+            }
+
+            mergedStart = start;
+            mergedEnd = end;
+        }
+
+        return haveInterval && mergedStart <= timeOfDay && timeOfDay < mergedEnd ? mergedEnd : null;
     }
 
     private static bool IsWindowActive(QuietWindow window, DayOfWeek day, TimeSpan timeOfDay)
@@ -185,19 +254,13 @@ public record QuietHoursConfig
             || (AllowsDay(window, PreviousDay(day)) && timeOfDay < window.End);
     }
 
-    /// <summary>
-    ///     Time left until the window's end, measured from <paramref name="timeOfDay" />. For a
-    ///     wrapping window the end is on the next day once the start has passed, and the same morning
-    ///     before it.
-    /// </summary>
-    private static TimeSpan Remaining(QuietWindow window, TimeSpan timeOfDay) =>
-        window.End > window.Start ? window.End - timeOfDay
-        : timeOfDay >= window.Start ? TimeSpan.FromDays(1) - timeOfDay + window.End
-        : window.End - timeOfDay;
-
     /// <summary>An empty day list means every day.</summary>
     private static bool AllowsDay(QuietWindow window, DayOfWeek day) =>
         window.Days is not { Count: > 0 } || window.Days.Contains(day);
 
-    private static DayOfWeek PreviousDay(DayOfWeek day) => (DayOfWeek)(((int)day + 6) % 7);
+    private static DayOfWeek PreviousDay(DayOfWeek day) => OffsetDay(day, -1);
+
+    /// <summary>Shifts a weekday by <paramref name="days" />, wrapping around the week in both directions.</summary>
+    private static DayOfWeek OffsetDay(DayOfWeek day, int days) =>
+        (DayOfWeek)((((int)day + days) % 7 + 7) % 7);
 }

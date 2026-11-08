@@ -244,12 +244,21 @@ public class QuietHoursConfigTests
             Enabled = true,
             Windows =
             [
-                new QuietWindow { Start = TimeSpan.FromHours(1), End = TimeSpan.FromHours(2) },
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(1),
+                    End = TimeSpan.FromHours(2),
+                    Days = [DayOfWeek.Monday],
+                },
             ],
         };
 
-        Assert.Single(config.EffectiveWindows());
-        Assert.NotEmpty(config.EffectiveWindows());
+        QuietWindow window = Assert.Single(config.EffectiveWindows());
+        Assert.Equal(TimeSpan.FromHours(1), window.Start);
+        Assert.Equal(TimeSpan.FromHours(2), window.End);
+        Assert.Equal([DayOfWeek.Monday], window.Days);
+        // The daily pair is not consulted at all while an explicit list exists.
+        Assert.False(config.IsActive(DayOfWeek.Tuesday, new TimeSpan(1, 30, 0)));
     }
 
     [Fact]
@@ -332,6 +341,118 @@ public class QuietHoursConfigTests
             config.TimeUntilEnd(DayOfWeek.Saturday, new TimeSpan(23, 30, 0))
         );
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TimeUntilEnd_ReportsTheEndOfTheMergedPeriodForOverlappingWindows()
+    {
+        // 22:00-06:00 plus 05:00-07:00: at 05:30 the pause really runs to 07:00, so reporting the
+        // next boundary (06:00) would understate it to both the log and the UI badge.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.FromHours(22), End = TimeSpan.FromHours(6) },
+                new QuietWindow { Start = TimeSpan.FromHours(5), End = TimeSpan.FromHours(7) },
+            ],
+        };
+
+        Assert.Equal(
+            TimeSpan.FromHours(1.5),
+            config.TimeUntilEnd(DayOfWeek.Monday, new TimeSpan(5, 30, 0))
+        );
+        // The overlap also extends the period from the evening side: 23:00 is quiet until 07:00.
+        Assert.Equal(
+            TimeSpan.FromHours(8),
+            config.TimeUntilEnd(DayOfWeek.Monday, TimeSpan.FromHours(23))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TimeUntilEnd_MergesWindowsThatMerelyTouch()
+    {
+        // 22:00-06:00 followed by 06:00-08:00 is one pause from 22:00 to 08:00: a pause that ends at
+        // a boundary another window opens on is a single period from the operator's point of view.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.FromHours(22), End = TimeSpan.FromHours(6) },
+                new QuietWindow { Start = TimeSpan.FromHours(6), End = TimeSpan.FromHours(8) },
+            ],
+        };
+
+        Assert.Equal(
+            TimeSpan.FromHours(9),
+            config.TimeUntilEnd(DayOfWeek.Monday, TimeSpan.FromHours(23))
+        );
+        Assert.Equal(
+            TimeSpan.FromHours(7),
+            config.TimeUntilEnd(DayOfWeek.Tuesday, TimeSpan.FromHours(1))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void IsActive_And_TimeUntilEnd_AgreeEverywhereInTheWeek()
+    {
+        // The two answers come from different code paths — a direct membership test and a projected,
+        // merged interval — so a schedule with weekday restrictions and a wrap must keep them equal.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(22),
+                    End = TimeSpan.FromHours(6),
+                    Days = [DayOfWeek.Friday, DayOfWeek.Saturday],
+                },
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(5),
+                    End = TimeSpan.FromHours(7),
+                    Days = [DayOfWeek.Saturday],
+                },
+                new QuietWindow { Start = TimeSpan.FromHours(12), End = TimeSpan.FromHours(13) },
+            ],
+        };
+
+        foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>())
+        {
+            for (int minutes = 0; minutes < 24 * 60; minutes += 15)
+            {
+                TimeSpan timeOfDay = TimeSpan.FromMinutes(minutes);
+                bool active = config.IsActive(day, timeOfDay);
+                TimeSpan? remaining = config.TimeUntilEnd(day, timeOfDay);
+
+                Assert.Equal(active, remaining is not null);
+                if (remaining is TimeSpan left)
+                {
+                    Assert.True(left > TimeSpan.Zero, $"{day} {timeOfDay}: non-positive remaining");
+                    // The reported end must itself be a moment the schedule stops covering.
+                    long dayTicks = TimeSpan.FromDays(1).Ticks;
+                    TimeSpan endsAt = timeOfDay + left;
+                    DayOfWeek endDay = day;
+                    for (long i = 0; i < endsAt.Ticks / dayTicks; i++)
+                    {
+                        endDay = NextDay(endDay);
+                    }
+
+                    Assert.False(
+                        config.IsActive(endDay, TimeSpan.FromTicks(endsAt.Ticks % dayTicks)),
+                        $"{day} {timeOfDay}: quiet supposed to resume at {endsAt}, still quiet"
+                    );
+                }
+            }
+        }
+    }
+
+    private static DayOfWeek NextDay(DayOfWeek day) => (DayOfWeek)(((int)day + 1) % 7);
 
     [Fact]
     [Trait("Category", "Unit")]

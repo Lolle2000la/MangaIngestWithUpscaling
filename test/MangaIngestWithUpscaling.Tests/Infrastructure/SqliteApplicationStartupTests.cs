@@ -1,5 +1,7 @@
 using System.Net;
+using MangaIngestWithUpscaling.Shared.Services.QuietHours;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MangaIngestWithUpscaling.Tests.Infrastructure;
 
@@ -40,6 +42,36 @@ public class SqliteApplicationStartupTests
             HttpResponseMessage response = await client.GetAsync("/health", ct);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        finally
+        {
+            RestoreEnvironment(previous);
+            DeleteDataDirectory(dataDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task Application_RegistersTheQuietHoursGateInTheRealHost()
+    {
+        // The tasks page injects IQuietHoursGate, so a missing AddSingleton would compile, pass every
+        // other test (which substitute the gate) and throw at render time on /tasks. This is the only
+        // test that exercises the server's own ConfigRegistration wiring.
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string dataDirectory = CreateDataDirectory();
+        Dictionary<string, string?> previous = CaptureEnvironment();
+
+        try
+        {
+            ConfigureSqliteEnvironment(dataDirectory);
+
+            await using var factory = new WebApplicationFactory<Program>();
+            using HttpClient client = factory.CreateClient();
+
+            IQuietHoursGate gate = factory.Services.GetRequiredService<IQuietHoursGate>();
+            Assert.IsType<QuietHoursGate>(gate);
+            // No QuietHours section in the test environment, so the feature is off and nothing pauses.
+            Assert.False(gate.IsQuiet);
+            Assert.Same(TimeProvider.System, factory.Services.GetRequiredService<TimeProvider>());
         }
         finally
         {

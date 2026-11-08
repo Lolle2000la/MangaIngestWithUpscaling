@@ -66,14 +66,22 @@ public class UpscaleTaskProcessor(
             // consumers in RemoteOnly are the remote workers.
             while (!stoppingToken.IsCancellationRequested)
             {
-                // Rerouted tasks are locally-required upscale work (they were delegated here because
-                // a remote worker cannot run them), so they are "new work" too and must respect the
-                // window.
-                await WaitForQuietHoursAsync(stoppingToken);
-
                 PersistedTask rerouted;
                 try
                 {
+                    // WaitToReadAsync does not consume, so parking after it (quiet hours) holds
+                    // nothing and loses nothing — the task stays in the channel if the process stops.
+                    if (!await ReroutedReader.WaitToReadAsync(stoppingToken))
+                    {
+                        break;
+                    }
+
+                    // Rerouted tasks are locally-required upscale work (they were delegated here
+                    // because a remote worker cannot run them), so they are "new work" too and must
+                    // respect the window. Gating here, after the wait, is what catches a host that
+                    // was already parked when the window opened.
+                    await WaitForQuietHoursAsync(stoppingToken);
+
                     rerouted = await ReroutedReader.ReadAsync(stoppingToken);
                 }
                 catch (OperationCanceledException)
@@ -101,16 +109,25 @@ public class UpscaleTaskProcessor(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Before any channel read: while paused nothing may be consumed, so no signal is stolen
-            // from the upscale queue and no upscale task is claimed.
+            // Park at the top so an idle host waits out the window at its start rather than polling,
+            // and so a window that opened while the loop was between tasks is honoured before the
+            // channel wait below.
             await WaitForQuietHoursAsync(stoppingToken);
 
             PersistedTask? task = null;
+            // Whether this iteration took a task off the rerouted channel; it has to be handed back
+            // if the window turned out to be open.
+            bool tookReroutedTask = false;
+            // Whether the main channel reported readiness. The signal is deliberately NOT consumed
+            // until the quiet-hours check below has passed: consuming it would leave a queued task
+            // with nobody to wake this loop for it.
+            bool upscaleSignalReady = false;
 
             // Priority 1: Rerouted tasks (already claimed or specialized)
             if (ReroutedReader.TryRead(out var rerouted))
             {
                 task = rerouted;
+                tookReroutedTask = true;
             }
             else
             {
@@ -129,6 +146,7 @@ public class UpscaleTaskProcessor(
                     if (ReroutedReader.TryRead(out var r))
                     {
                         task = r;
+                        tookReroutedTask = true;
                     }
                 }
                 else if (completed == signalWait && await signalWait)
@@ -137,15 +155,36 @@ public class UpscaleTaskProcessor(
                     if (ReroutedReader.TryRead(out var r))
                     {
                         task = r;
+                        tookReroutedTask = true;
                     }
-                    else if (Reader.TryRead(out _))
+                    else
                     {
-                        task = TaskQueue.DequeueUpscale();
+                        upscaleSignalReady = true;
                     }
                 }
 
                 // Cancel the CTS to remove any abandoned waiter from the channels
                 await linkedCts.CancelAsync();
+            }
+
+            // The authoritative check: the park above happened before an unbounded wait, so a window
+            // that opened while this loop was parked must be honoured here, after the wait resolved
+            // and before anything is claimed or processed.
+            if (quietHours.IsQuiet)
+            {
+                if (tookReroutedTask && task is not null)
+                {
+                    // Hand it back exactly once, through the same channel the distributed processor
+                    // used to reroute it. Parking with a consumed task would lose it on shutdown.
+                    await TaskQueue.SendToLocalUpscaleAsync(task, stoppingToken);
+                }
+
+                continue;
+            }
+
+            if (upscaleSignalReady && Reader.TryRead(out _))
+            {
+                task = TaskQueue.DequeueUpscale();
             }
 
             if (task == null)

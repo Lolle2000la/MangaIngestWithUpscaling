@@ -226,6 +226,50 @@ public class QuietHoursGateTests
         Assert.False(gate.IsQuiet);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task WaitUntilNotQuietAsync_DoesNotOversleepWhenTheBoundaryFallsBetweenTwoReads()
+    {
+        // Regression guard: the quiet flag and the remaining time used to be read separately, so a
+        // clock that crossed the window end between the two reads produced "quiet" followed by
+        // "no remaining time" and the loop fell back to a full-minute sleep. One snapshot per
+        // iteration makes that state impossible; the wait must return as soon as the clock says the
+        // schedule is open.
+        // Two reads report the last second inside the window; from the third on the window has closed.
+        // Reading the flag and the remaining time separately spends exactly those reads before it has
+        // to decide how long to sleep.
+        var clock = new BoundaryCrossingClock(
+            quietUntil: new DateTimeOffset(2026, 1, 5, 5, 59, 59, TimeSpan.Zero),
+            afterwards: new DateTimeOffset(2026, 1, 5, 6, 0, 0, TimeSpan.Zero),
+            quietReads: 2
+        );
+        var gate = new QuietHoursGate(Options.Create(Night()), clock);
+
+        await gate.WaitUntilNotQuietAsync(TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+
+        Assert.False(gate.IsQuiet);
+    }
+
+    /// <summary>
+    /// Answers the first <see cref="TimeProvider.GetUtcNow" /> call with the last instant inside the
+    /// window and every later one with the first instant outside it — the boundary arriving while the
+    /// gate is deciding what to do.
+    /// </summary>
+    private sealed class BoundaryCrossingClock(
+        DateTimeOffset quietUntil,
+        DateTimeOffset afterwards,
+        int quietReads
+    ) : TimeProvider
+    {
+        private int _reads;
+
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+
+        public override DateTimeOffset GetUtcNow() =>
+            Interlocked.Increment(ref _reads) <= quietReads ? quietUntil : afterwards;
+    }
+
     /// <summary>
     /// A <see cref="TimeProvider" /> with an exact, settable UTC instant and an exact time zone.
     /// </summary>

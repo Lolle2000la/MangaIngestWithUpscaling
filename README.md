@@ -267,9 +267,10 @@ Without this, after being redirected back to the application, you might be faced
 For a full reference of all upscaler settings and their corresponding environment variables (the recommended approach for Docker deployments), see [Upscaler Configuration](./docs/UPSCALER_CONFIGURATION.md).
 
 Quiet hours pause a host's *new* upscaling work during a local-wall-clock schedule (a daily window, or
-several windows with optional per-weekday `Days` and a `TimeZone` override), independently for the
-server's local upscale pipeline and for each remote worker, without stopping remote workers from
-fetching tasks and without pausing ingest or analysis. See [Quiet Hours](./docs/QUIET_HOURS.md).
+several windows with optional per-weekday `Days` and a `TimeZone` override). Each host configures its
+own schedule: the server's window pauses only its local upscale pipeline and never stops remote workers
+from fetching, while a worker in its own window stops requesting tasks. Ingest and analysis keep
+running either way. See [Quiet Hours](./docs/QUIET_HOURS.md).
 
 The application relies on `appsettings.json` for configuration. Modify the connection strings and other parameters as needed.
 Alternatively, you can use environment variables to override the configuration values.

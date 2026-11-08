@@ -24,7 +24,8 @@ keeps upscaling.
 Each worker decides for itself: two workers may have different windows, or none at all.
 
 The tasks page (`/tasks`) shows a *Quiet hours — paused until 06:00* badge while the server's own
-window is open, so a queue that is not moving is explained rather than mysterious.
+schedule is open, so a queue that is not moving is explained rather than mysterious. The time is the end
+of the current pause, and the badge disappears within 30 seconds of the pause ending.
 
 ## Schedule shapes
 
@@ -60,7 +61,8 @@ Per-weekday scheduling is `Days` on a window, and it composes with the wrap rule
 
 `Start`/`End` and `Windows` are alternatives: setting both is rejected, and so is setting only one
 half of the daily pair. Windows may overlap — they combine as a union — and an empty `Days` list means
-every day.
+every day. Overlapping or touching windows are one continuous pause: with `22:00-06:00` plus
+`05:00-07:00`, the page reports "paused until 07:00", not 06:00, because that is when work resumes.
 
 ## Semantics
 

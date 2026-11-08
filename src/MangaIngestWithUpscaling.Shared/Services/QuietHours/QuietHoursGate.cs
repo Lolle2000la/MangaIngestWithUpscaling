@@ -83,33 +83,50 @@ public sealed class QuietHoursGate : IQuietHoursGate
     private DateTime WallClock =>
         TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), _zone).DateTime;
 
-    public bool IsQuiet => Config.IsActive(WallClock.DayOfWeek, WallClock.TimeOfDay);
+    /// <summary>
+    ///     One evaluation of the schedule. Every public member derives from this, so the quiet flag,
+    ///     the remaining time and the resume time can never come from different clock reads or
+    ///     disagree with each other.
+    /// </summary>
+    private readonly record struct QuietSnapshot(
+        bool IsQuiet,
+        TimeSpan Remaining,
+        TimeOnly ResumeAtLocal
+    );
 
-    public TimeSpan? TimeUntilResume => Remaining(WallClock);
-
-    public TimeOnly? ResumeAtLocal
+    private QuietSnapshot Read()
     {
-        get
+        DateTime now = WallClock;
+        // TimeUntilEnd already answers "is this instant quiet" by returning null when it is not, so a
+        // quiet snapshot always carries a remaining time: there is no "quiet but unknown" state for a
+        // caller to fall back from.
+        if (Config.TimeUntilEnd(now.DayOfWeek, now.TimeOfDay) is not TimeSpan remaining)
         {
-            DateTime now = WallClock;
-            TimeSpan? remaining = Remaining(now);
-            if (remaining is null)
-            {
-                return null;
-            }
-
-            // Wrapped into the day so a window ending after midnight reports the morning time.
-            long resumeTicks = (now.TimeOfDay + remaining.Value).Ticks % TicksPerDay;
-            return TimeOnly.FromTimeSpan(TimeSpan.FromTicks(resumeTicks));
+            return default;
         }
+
+        // Wrapped into the day so a period ending after midnight reports the morning time.
+        long resumeTicks = (now.TimeOfDay + remaining).Ticks % TicksPerDay;
+        return new QuietSnapshot(
+            true,
+            remaining,
+            TimeOnly.FromTimeSpan(TimeSpan.FromTicks(resumeTicks))
+        );
     }
+
+    public bool IsQuiet => Read().IsQuiet;
+
+    public TimeSpan? TimeUntilResume =>
+        Read() is { IsQuiet: true } snapshot ? snapshot.Remaining : null;
+
+    public TimeOnly? ResumeAtLocal =>
+        Read() is { IsQuiet: true } snapshot ? snapshot.ResumeAtLocal : null;
 
     public async Task WaitUntilNotQuietAsync(CancellationToken cancellationToken)
     {
-        while (IsQuiet)
+        while (Read() is { IsQuiet: true } snapshot)
         {
-            TimeSpan remaining = TimeUntilResume ?? MaxWait;
-            TimeSpan delay = remaining > MaxWait ? MaxWait : remaining;
+            TimeSpan delay = snapshot.Remaining > MaxWait ? MaxWait : snapshot.Remaining;
             if (delay < MinWait)
             {
                 delay = MinWait;
@@ -118,6 +135,4 @@ public sealed class QuietHoursGate : IQuietHoursGate
             await Task.Delay(delay, _timeProvider, cancellationToken);
         }
     }
-
-    private TimeSpan? Remaining(DateTime now) => Config.TimeUntilEnd(now.DayOfWeek, now.TimeOfDay);
 }

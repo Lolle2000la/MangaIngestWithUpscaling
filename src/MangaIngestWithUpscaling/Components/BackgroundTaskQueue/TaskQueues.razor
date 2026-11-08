@@ -13,6 +13,7 @@
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 @inject TaskRegistry TaskRegistry
 @inject IQuietHoursGate QuietHours
+@inject TimeProvider TimeProvider
 @inject IStringLocalizer<TaskQueues> Loc
 
 @page "/tasks"
@@ -21,11 +22,11 @@
 
 <MudText Typo="Typo.h4" Class="mb-2">@Loc["Title"]</MudText>
 
-@if (QuietHours.IsQuiet)
+@if (_quietState.IsQuiet)
 {
     <div class="d-flex mb-2" data-testid="quiet-hours-badge">
         <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Outlined">
-            @Loc["QuietHours_Paused", QuietHours.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? string.Empty]
+            @Loc["QuietHours_Paused", _quietState.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? string.Empty]
         </MudChip>
     </div>
 }
@@ -47,6 +48,11 @@
     private readonly CancellationTokenSource _quietHoursRefresh = new();
     private Task? _quietHoursRefreshTask;
 
+    // The last quiet-hours state that was rendered. The refresh loop only re-renders when this
+    // changes, because re-rendering the page for nothing costs both task tables and every clock on
+    // them a round of interop.
+    private (bool IsQuiet, TimeOnly? ResumeAtLocal) _quietState;
+
     // Snapshots are immutable arrays swapped atomically by the registry, so they are safe to
     // enumerate here while the registry flushes on a background thread.
     private IReadOnlyList<PersistedTask> standardTasks => TaskRegistry.GetStandardSnapshot();
@@ -57,17 +63,30 @@
         // The quiet-hours badge is read from an in-memory gate, so it has no event to subscribe to:
         // a coarse poll is enough to make it disappear when the schedule ends, and it stops on
         // navigation with the component.
+        _quietState = CurrentQuietState();
         _quietHoursRefreshTask = RefreshQuietHoursBadgeAsync(_quietHoursRefresh.Token);
         return Task.CompletedTask;
     }
 
+    private (bool IsQuiet, TimeOnly? ResumeAtLocal) CurrentQuietState() =>
+        (QuietHours.IsQuiet, QuietHours.ResumeAtLocal);
+
     private async Task RefreshQuietHoursBadgeAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        // Driven by the injected TimeProvider so the interval is testable instead of being tied to
+        // the wall clock.
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), TimeProvider);
         try
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
+                (bool IsQuiet, TimeOnly? ResumeAtLocal) current = CurrentQuietState();
+                if (current == _quietState)
+                {
+                    continue;
+                }
+
+                _quietState = current;
                 await InvokeAsync(StateHasChanged);
             }
         }
