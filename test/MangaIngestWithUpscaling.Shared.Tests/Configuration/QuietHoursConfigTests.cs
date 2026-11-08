@@ -3,12 +3,12 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 namespace MangaIngestWithUpscaling.Shared.Tests.Configuration;
 
 /// <summary>
-/// Pins the window arithmetic of <see cref="QuietHoursConfig" />. The type is clock-free on purpose:
-/// the processors and the gate supply the local time of day, so the boundaries can be asserted exactly.
+/// Pins the schedule arithmetic of <see cref="QuietHoursConfig" />. The type is clock-free on purpose:
+/// the gate supplies the wall-clock day and time of day, so every boundary can be asserted exactly.
 /// </summary>
 public class QuietHoursConfigTests
 {
-    private static QuietHoursConfig Daytime() =>
+    private static QuietHoursConfig Daily() =>
         new()
         {
             Enabled = true,
@@ -24,6 +24,8 @@ public class QuietHoursConfigTests
             End = TimeSpan.FromHours(6),
         };
 
+    private static readonly DayOfWeek AnyWeekday = DayOfWeek.Wednesday;
+
     [Fact]
     [Trait("Category", "Unit")]
     public void Disabled_IsNeverActive()
@@ -36,8 +38,8 @@ public class QuietHoursConfigTests
         };
 
         Assert.False(config.Enabled);
-        Assert.False(config.IsActive(TimeSpan.FromHours(23)));
-        Assert.Null(config.TimeUntilEnd(TimeSpan.FromHours(23)));
+        Assert.False(config.IsActive(DayOfWeek.Monday, TimeSpan.FromHours(23)));
+        Assert.Null(config.TimeUntilEnd(DayOfWeek.Monday, TimeSpan.FromHours(23)));
     }
 
     [Theory]
@@ -48,17 +50,13 @@ public class QuietHoursConfigTests
     [InlineData(16, 59, true)]
     [InlineData(17, 0, false)]
     [InlineData(21, 0, false)]
-    public void DaytimeWindow_CoversStartInclusiveAndEndExclusive(
-        int hour,
-        int minute,
-        bool expected
-    )
+    public void DailyWindow_CoversStartInclusiveAndEndExclusive(int hour, int minute, bool expected)
     {
-        // [Start, End): a task starting at exactly End must be allowed, and one at exactly Start
-        // must not. An off-by-one here silently shifts the whole window by a minute or an hour.
-        QuietHoursConfig config = Daytime();
+        // [Start, End): a task starting at exactly End must be allowed, and one at exactly Start must
+        // not. An off-by-one here silently shifts the whole window by a minute or an hour.
+        QuietHoursConfig config = Daily();
 
-        Assert.Equal(expected, config.IsActive(new TimeSpan(hour, minute, 0)));
+        Assert.Equal(expected, config.IsActive(AnyWeekday, new TimeSpan(hour, minute, 0)));
     }
 
     [Theory]
@@ -71,21 +69,195 @@ public class QuietHoursConfigTests
     [InlineData(5, 59, true)]
     [InlineData(6, 0, false)]
     [InlineData(12, 0, false)]
-    public void WrappingWindow_CoversTheHoursPastMidnight(int hour, int minute, bool expected)
+    public void WrappingWindowWithoutDays_CoversTheHoursPastMidnight(
+        int hour,
+        int minute,
+        bool expected
+    )
     {
         // 22:00 -> 06:00 wraps, which is the documented default. Reading it as a plain
         // Start <= t < End range would make the window empty instead.
         QuietHoursConfig config = Night();
 
-        Assert.Equal(expected, config.IsActive(new TimeSpan(hour, minute, 0)));
+        Assert.Equal(expected, config.IsActive(AnyWeekday, new TimeSpan(hour, minute, 0)));
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    // The window belongs to the day it starts on, so Friday 22:00 runs into Saturday morning only.
+    [InlineData(DayOfWeek.Friday, 23, 0, true)]
+    [InlineData(DayOfWeek.Saturday, 3, 0, true)]
+    [InlineData(DayOfWeek.Saturday, 23, 0, false)]
+    [InlineData(DayOfWeek.Sunday, 3, 0, false)]
+    [InlineData(DayOfWeek.Friday, 21, 59, false)]
+    public void WrappingWindowWithDays_IsOwnedByItsStartDay(
+        DayOfWeek day,
+        int hour,
+        int minute,
+        bool expected
+    )
+    {
+        // The subtle half of the schedule: after midnight the clock belongs to the *next* day, so the
+        // check must look back one day. Without that a Friday window would not cover Saturday 03:00,
+        // and with the look-back applied to the evening hours it would wrongly cover Saturday night.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(22),
+                    End = TimeSpan.FromHours(6),
+                    Days = [DayOfWeek.Friday],
+                },
+            ],
+        };
+
+        Assert.Equal(expected, config.IsActive(day, new TimeSpan(hour, minute, 0)));
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    // Same rule with the day on the other side of the week boundary: Sunday's window ends Monday.
+    [InlineData(DayOfWeek.Sunday, 23, 0, true)]
+    [InlineData(DayOfWeek.Monday, 3, 0, true)]
+    [InlineData(DayOfWeek.Monday, 23, 0, false)]
+    [InlineData(DayOfWeek.Sunday, 3, 0, false)]
+    public void WrappingWindowWithDays_HandlesTheWeekBoundary(
+        DayOfWeek day,
+        int hour,
+        int minute,
+        bool expected
+    )
+    {
+        // Saturday -> Sunday is 6 -> 0, so the previous-day arithmetic has to wrap the enum too.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(22),
+                    End = TimeSpan.FromHours(6),
+                    Days = [DayOfWeek.Sunday],
+                },
+            ],
+        };
+
+        Assert.Equal(expected, config.IsActive(day, new TimeSpan(hour, minute, 0)));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void EmptyDays_MeansEveryDay()
+    {
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.FromHours(22), End = TimeSpan.FromHours(6) },
+            ],
+        };
+
+        foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>())
+        {
+            Assert.True(config.IsActive(day, TimeSpan.FromHours(23)), $"{day} evening");
+            Assert.True(config.IsActive(day, TimeSpan.FromHours(3)), $"{day} morning");
+            Assert.False(config.IsActive(day, TimeSpan.FromHours(12)), $"{day} midday");
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void MultipleWindows_CombineAsAUnion()
+    {
+        // A daily night window plus a weekend lunch break: any match is quiet, and the weekday
+        // restriction applies to its own window only.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.FromHours(22), End = TimeSpan.FromHours(6) },
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(12),
+                    End = TimeSpan.FromHours(13),
+                    Days = [DayOfWeek.Saturday, DayOfWeek.Sunday],
+                },
+            ],
+        };
+
+        Assert.True(config.IsActive(DayOfWeek.Saturday, new TimeSpan(12, 30, 0)));
+        Assert.False(config.IsActive(DayOfWeek.Friday, new TimeSpan(12, 30, 0)));
+        Assert.True(config.IsActive(DayOfWeek.Friday, TimeSpan.FromHours(23)));
+        Assert.False(config.IsActive(DayOfWeek.Friday, new TimeSpan(15, 0, 0)));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void NonWrappingWindowWithDays_OnlyCoversThoseDays()
+    {
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(9),
+                    End = TimeSpan.FromHours(17),
+                    Days = [DayOfWeek.Friday],
+                },
+            ],
+        };
+
+        Assert.True(config.IsActive(DayOfWeek.Friday, TimeSpan.FromHours(10)));
+        Assert.False(config.IsActive(DayOfWeek.Thursday, TimeSpan.FromHours(10)));
+        // No look-back for a non-wrapping window: Saturday morning is not Friday's window.
+        Assert.False(config.IsActive(DayOfWeek.Saturday, TimeSpan.FromHours(10)));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void EffectiveWindows_NormaliseTheDailyPairToOneAllDaysWindow()
+    {
+        // The simple form must run through the same code path as an explicit list, not a second
+        // implementation that can drift from it.
+        QuietHoursConfig config = Night();
+
+        QuietWindow window = Assert.Single(config.EffectiveWindows());
+        Assert.Equal(TimeSpan.FromHours(22), window.Start);
+        Assert.Equal(TimeSpan.FromHours(6), window.End);
+        Assert.Empty(window.Days);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void EffectiveWindows_PreferTheExplicitList()
+    {
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.FromHours(1), End = TimeSpan.FromHours(2) },
+            ],
+        };
+
+        Assert.Single(config.EffectiveWindows());
+        Assert.NotEmpty(config.EffectiveWindows());
     }
 
     [Fact]
     [Trait("Category", "Unit")]
     public void ZeroLengthWindow_IsNeverActive()
     {
-        // Start == End is rejected by the validator while the feature is enabled; if it is reached
-        // anyway it must not read as "always active" (which would stop the queue forever).
+        // Start == End is rejected by the validator; if it is reached anyway it must not read as
+        // "always active" (which would stop the queue forever).
         var config = new QuietHoursConfig
         {
             Enabled = true,
@@ -93,19 +265,22 @@ public class QuietHoursConfigTests
             End = TimeSpan.FromHours(8),
         };
 
-        Assert.False(config.IsActive(TimeSpan.FromHours(8)));
-        Assert.False(config.IsActive(TimeSpan.FromHours(12)));
-        Assert.Null(config.TimeUntilEnd(TimeSpan.FromHours(8)));
+        Assert.False(config.IsActive(DayOfWeek.Monday, TimeSpan.FromHours(8)));
+        Assert.False(config.IsActive(DayOfWeek.Monday, TimeSpan.FromHours(12)));
+        Assert.Null(config.TimeUntilEnd(DayOfWeek.Monday, TimeSpan.FromHours(8)));
     }
 
     [Fact]
     [Trait("Category", "Unit")]
     public void TimeUntilEnd_CountsDownToEndWithinTheSameDay()
     {
-        QuietHoursConfig config = Daytime();
+        QuietHoursConfig config = Daily();
 
-        Assert.Equal(TimeSpan.FromHours(5), config.TimeUntilEnd(TimeSpan.FromHours(12)));
-        Assert.Equal(TimeSpan.FromHours(8), config.TimeUntilEnd(TimeSpan.FromHours(9)));
+        Assert.Equal(
+            TimeSpan.FromHours(5),
+            config.TimeUntilEnd(AnyWeekday, TimeSpan.FromHours(12))
+        );
+        Assert.Equal(TimeSpan.FromHours(8), config.TimeUntilEnd(AnyWeekday, TimeSpan.FromHours(9)));
     }
 
     [Fact]
@@ -115,19 +290,56 @@ public class QuietHoursConfigTests
         QuietHoursConfig config = Night();
 
         // Past the start: the end is on the next day, so 23:30 has 30 minutes plus the 6 hours.
-        Assert.Equal(TimeSpan.FromHours(6.5), config.TimeUntilEnd(new TimeSpan(23, 30, 0)));
+        Assert.Equal(
+            TimeSpan.FromHours(6.5),
+            config.TimeUntilEnd(DayOfWeek.Monday, new TimeSpan(23, 30, 0))
+        );
         // Before the end: the remaining time is still on the same morning.
-        Assert.Equal(TimeSpan.FromHours(3), config.TimeUntilEnd(TimeSpan.FromHours(3)));
-        Assert.Equal(TimeSpan.FromHours(6), config.TimeUntilEnd(TimeSpan.Zero));
+        Assert.Equal(
+            TimeSpan.FromHours(3),
+            config.TimeUntilEnd(DayOfWeek.Tuesday, TimeSpan.FromHours(3))
+        );
+        Assert.Equal(TimeSpan.FromHours(6), config.TimeUntilEnd(DayOfWeek.Tuesday, TimeSpan.Zero));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TimeUntilEnd_ReturnsTheNextBoundaryAcrossSeveralWindows()
+    {
+        // 12:30 on Saturday matches both the weekend lunch window (0.5 h left) and the night window
+        // (no match yet), so the next boundary — and the value the gate sleeps on — is the lunch one.
+        var config = new QuietHoursConfig
+        {
+            Enabled = true,
+            Windows =
+            [
+                new QuietWindow { Start = TimeSpan.FromHours(22), End = TimeSpan.FromHours(6) },
+                new QuietWindow
+                {
+                    Start = TimeSpan.FromHours(12),
+                    End = TimeSpan.FromHours(13),
+                    Days = [DayOfWeek.Saturday],
+                },
+            ],
+        };
+
+        Assert.Equal(
+            TimeSpan.FromMinutes(30),
+            config.TimeUntilEnd(DayOfWeek.Saturday, new TimeSpan(12, 30, 0))
+        );
+        Assert.Equal(
+            TimeSpan.FromHours(6.5),
+            config.TimeUntilEnd(DayOfWeek.Saturday, new TimeSpan(23, 30, 0))
+        );
     }
 
     [Fact]
     [Trait("Category", "Unit")]
     public void TimeUntilEnd_IsNullOutsideTheWindow()
     {
-        QuietHoursConfig config = Daytime();
+        QuietHoursConfig config = Daily();
 
-        Assert.Null(config.TimeUntilEnd(TimeSpan.FromHours(8)));
-        Assert.Null(config.TimeUntilEnd(TimeSpan.FromHours(17)));
+        Assert.Null(config.TimeUntilEnd(AnyWeekday, TimeSpan.FromHours(8)));
+        Assert.Null(config.TimeUntilEnd(AnyWeekday, TimeSpan.FromHours(17)));
     }
 }

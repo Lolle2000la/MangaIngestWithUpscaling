@@ -27,7 +27,8 @@ The important configuration sections are:
 In addition, you can use environment variables to override the settings in `appsettings.json`. The environment variable names are prefixed with `Ingest_`, for example, `Ingest_WorkerConfig__ApiKey` and `Ingest_WorkerConfig__ApiUrl`. Configuring the upscaling is done in exactly the same way as in the server. 
 
 The worker also has its own [quiet hours](./QUIET_HOURS.md): a `QuietHours` section stops it from
-requesting new upscale tasks during a local-wall-clock window while a task it is already streaming
+requesting new upscale tasks during a local-wall-clock schedule (a daily window, or several windows
+with per-weekday `Days`, read in `TimeZone` when that is set) while a task it is already streaming
 finishes normally. Each worker configures this independently of the server, and the server's own
 quiet hours never prevent this worker from fetching.
 

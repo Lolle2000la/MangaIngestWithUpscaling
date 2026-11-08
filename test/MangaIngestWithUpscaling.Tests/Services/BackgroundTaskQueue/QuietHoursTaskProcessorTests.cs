@@ -99,8 +99,7 @@ public class UpscaleTaskProcessorQuietHoursTests : QuietHoursProcessorTestsBase
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             Persistence,
             new PreprocessedInputCache(),
-            gate,
-            TimeProvider.System
+            gate
         );
 
     [Fact]

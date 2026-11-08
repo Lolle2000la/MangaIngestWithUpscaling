@@ -89,8 +89,7 @@ public class UpscaleTaskProcessorTests : IDisposable
             _mockLogger,
             _mockPersistence,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
     }
 
@@ -463,8 +462,7 @@ public class UpscaleTaskProcessorTests : IDisposable
             _mockLogger,
             persistence,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
 
         await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
@@ -533,8 +531,7 @@ public class UpscaleTaskProcessorTests : IDisposable
             logger,
             taskPersistenceService,
             preprocessedCache,
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         )
     {
         public Task InvokeProcessTaskAsync(
@@ -561,8 +558,7 @@ public class UpscaleTaskProcessorTests : IDisposable
             logger,
             taskPersistenceService,
             preprocessedCache,
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         )
     {
         private static readonly IReadOnlyList<TimeSpan> TinyBackoff = new[]

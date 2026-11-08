@@ -1,5 +1,8 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Shared.Services.QuietHours
+@using System.Globalization
+@implements IAsyncDisposable
 
 @inject ILogger<TaskQueues> Logger
 @inject ISnackbar Snackbar
@@ -9,6 +12,7 @@
 @inject UpscaleTaskProcessor UpscaleTaskProcessor
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 @inject TaskRegistry TaskRegistry
+@inject IQuietHoursGate QuietHours
 @inject IStringLocalizer<TaskQueues> Loc
 
 @page "/tasks"
@@ -16,6 +20,15 @@
 <PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <MudText Typo="Typo.h4" Class="mb-2">@Loc["Title"]</MudText>
+
+@if (QuietHours.IsQuiet)
+{
+    <div class="d-flex mb-2" data-testid="quiet-hours-badge">
+        <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Outlined">
+            @Loc["QuietHours_Paused", QuietHours.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? string.Empty]
+        </MudChip>
+    </div>
+}
 
 <MudGrid>
     <MudItem lg="6" xs="12">
@@ -31,10 +44,50 @@
 </MudGrid>
 
 @code {
+    private readonly CancellationTokenSource _quietHoursRefresh = new();
+    private Task? _quietHoursRefreshTask;
+
     // Snapshots are immutable arrays swapped atomically by the registry, so they are safe to
     // enumerate here while the registry flushes on a background thread.
     private IReadOnlyList<PersistedTask> standardTasks => TaskRegistry.GetStandardSnapshot();
     private IReadOnlyList<PersistedTask> upscaleTasks => TaskRegistry.GetUpscaleSnapshot();
+
+    protected override Task OnInitializedAsync()
+    {
+        // The quiet-hours badge is read from an in-memory gate, so it has no event to subscribe to:
+        // a coarse poll is enough to make it disappear when the schedule ends, and it stops on
+        // navigation with the component.
+        _quietHoursRefreshTask = RefreshQuietHoursBadgeAsync(_quietHoursRefresh.Token);
+        return Task.CompletedTask;
+    }
+
+    private async Task RefreshQuietHoursBadgeAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigated away or disposed; nothing to clean up beyond the timer's own disposal.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _quietHoursRefresh.CancelAsync();
+        if (_quietHoursRefreshTask is not null)
+        {
+            // Await the loop so it cannot touch the disposed renderer after this returns.
+            await _quietHoursRefreshTask;
+        }
+
+        _quietHoursRefresh.Dispose();
+    }
 
     private async Task OnClearCompletedStandardTasks()
     {

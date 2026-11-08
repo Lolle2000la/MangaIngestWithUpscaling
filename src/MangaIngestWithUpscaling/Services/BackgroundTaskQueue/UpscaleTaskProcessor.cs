@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Threading.Channels;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
@@ -18,8 +19,7 @@ public class UpscaleTaskProcessor(
     ILogger<UpscaleTaskProcessor> logger,
     ITaskPersistenceService taskPersistenceService,
     IPreprocessedInputCache preprocessedCache,
-    IQuietHoursGate quietHours,
-    TimeProvider timeProvider
+    IQuietHoursGate quietHours
 ) : BackgroundTaskProcessorBase(taskQueue, scopeFactory, logger, taskPersistenceService)
 {
     private ChannelReader<object> Reader => TaskQueue.UpscaleReader;
@@ -188,8 +188,8 @@ public class UpscaleTaskProcessor(
         {
             _quietHoursPaused = true;
             Logger.LogInformation(
-                "Task claiming paused by quiet hours until {ResumeTime:HH:mm}",
-                timeProvider.GetLocalNow() + (quietHours.TimeUntilResume ?? TimeSpan.Zero)
+                "Task claiming paused by quiet hours until {ResumeTime}",
+                quietHours.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture)
             );
         }
 

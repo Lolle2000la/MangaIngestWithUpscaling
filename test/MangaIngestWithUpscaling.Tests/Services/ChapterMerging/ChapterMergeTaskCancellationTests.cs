@@ -93,8 +93,7 @@ public class ChapterMergeTaskCancellationTests : IAsyncDisposable
             NullLogger<UpscaleTaskProcessor>.Instance,
             persistence,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
         var standardProcessor = Substitute.For<StandardTaskProcessor>(
             queue,

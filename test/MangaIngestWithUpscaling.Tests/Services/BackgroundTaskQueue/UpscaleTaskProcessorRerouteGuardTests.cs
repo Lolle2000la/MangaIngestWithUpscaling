@@ -221,8 +221,7 @@ public class UpscaleTaskProcessorRerouteGuardTests
             logger,
             taskPersistenceService,
             preprocessedCache,
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         )
     {
         public Task InvokeProcessTaskAsync(

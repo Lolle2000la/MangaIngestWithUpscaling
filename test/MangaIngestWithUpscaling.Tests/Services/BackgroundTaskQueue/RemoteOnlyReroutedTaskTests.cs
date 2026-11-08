@@ -70,8 +70,7 @@ public class RemoteOnlyReroutedTaskTests : IAsyncDisposable
             _provider.GetRequiredService<ILogger<UpscaleTaskProcessor>>(),
             persistence,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
         _distributed = new DistributedUpscaleTaskProcessor(
             _taskQueue,

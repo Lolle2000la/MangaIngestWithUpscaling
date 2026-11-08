@@ -2609,8 +2609,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             processorLogger,
             taskPersistenceService,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
 
         // ApplySplitsTask runs on the standard processor, so its cancellation has to go there.
@@ -2735,8 +2734,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             processorLogger,
             taskPersistenceService,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
@@ -2838,8 +2836,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             processorLogger,
             taskPersistenceService,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();

@@ -30,10 +30,8 @@ public class QuietHoursRegistrationTests
     /// <c>ValidateOnStart</c> is not what the worker relies on before its connection loop — resolving
     /// <see cref="IOptions{TOptions}" />.Value validates eagerly.
     /// </summary>
-    private static ServiceProvider Register(string? start, string? end, bool enabled)
-    {
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.Configuration.AddInMemoryCollection(
+    private static ServiceProvider Register(string? start, string? end, bool enabled) =>
+        RegisterSection(
             new Dictionary<string, string?>
             {
                 [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.Enabled)}"] = enabled
@@ -43,6 +41,11 @@ public class QuietHoursRegistrationTests
                 [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.End)}"] = end,
             }
         );
+
+    private static ServiceProvider RegisterSection(Dictionary<string, string?> section)
+    {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Configuration.AddInMemoryCollection(section);
         builder.RegisterConfig();
         return builder.Services.BuildServiceProvider();
     }
@@ -75,6 +78,43 @@ public class QuietHoursRegistrationTests
         Assert.Equal(TimeSpan.FromHours(6), config.End);
         // The gate cannot read local time without a clock; the registration must supply it.
         Assert.Same(TimeProvider.System, provider.GetRequiredService<TimeProvider>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void RegisterConfig_BindsTheWindowsFormThroughTheWorkersRegistration()
+    {
+        // The worker is the host that builds with the configuration source generator, so the general
+        // form — a list of windows with day names, and Start/End left unset — has to be proven through
+        // its real registration. A nullable TimeSpan that failed to bind would surface as 00:00 and
+        // silently add a midnight-starting window here.
+        using ServiceProvider provider = RegisterSection(
+            new Dictionary<string, string?>
+            {
+                [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.Enabled)}"] = "true",
+                [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.TimeZone)}"] = "UTC",
+                [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.Windows)}:0:Start"] =
+                    "22:00",
+                [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.Windows)}:0:End"] = "06:00",
+                [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.Windows)}:1:Start"] =
+                    "12:00",
+                [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.Windows)}:1:End"] = "13:00",
+                [$"{QuietHoursConfig.Position}:{nameof(QuietHoursConfig.Windows)}:1:Days:0"] =
+                    "Saturday",
+            }
+        );
+
+        QuietHoursConfig config = provider.GetRequiredService<IOptions<QuietHoursConfig>>().Value;
+
+        Assert.Null(config.Start);
+        Assert.Null(config.End);
+        Assert.Equal("UTC", config.TimeZone);
+        Assert.Equal(2, config.Windows.Count);
+        Assert.Equal(TimeSpan.FromHours(22), config.Windows[0].Start);
+        QuietWindow weekend = config.Windows[1];
+        Assert.Equal(DayOfWeek.Saturday, Assert.Single(weekend.Days));
+        Assert.False(config.IsActive(DayOfWeek.Friday, new TimeSpan(12, 30, 0)));
+        Assert.True(config.IsActive(DayOfWeek.Saturday, new TimeSpan(12, 30, 0)));
     }
 
     [Fact]

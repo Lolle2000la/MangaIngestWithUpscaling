@@ -175,8 +175,7 @@ public class TaskRegistryTests
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             persistence,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
         var distributed = new DistributedUpscaleTaskProcessor(
             taskQueue,
@@ -454,8 +453,7 @@ public class TaskRegistryTests
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             persistence,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
         var distributed = new DistributedUpscaleTaskProcessor(
             taskQueue,

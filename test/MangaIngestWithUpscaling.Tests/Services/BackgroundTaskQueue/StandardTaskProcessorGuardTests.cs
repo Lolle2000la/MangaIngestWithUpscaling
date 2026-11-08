@@ -222,8 +222,7 @@ public class StandardTaskProcessorGuardTests : IAsyncDisposable
             provider.GetRequiredService<ILogger<UpscaleTaskProcessor>>(),
             new TaskPersistenceService(scopeFactory),
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
 
         // A same-chapter apply is already in flight (rewriting the CBZ the upscale would stream from).

@@ -92,8 +92,7 @@ public class IngestProcessorSplitDetectionTests : IAsyncDisposable
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             Substitute.For<ITaskPersistenceService>(),
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
         var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
             taskQueue,
@@ -248,8 +247,7 @@ public class IngestProcessorSplitDetectionTests : IAsyncDisposable
             Substitute.For<ILogger<UpscaleTaskProcessor>>(),
             Substitute.For<ITaskPersistenceService>(),
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
         var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
             taskQueue,

@@ -86,8 +86,7 @@ public class IngestProcessorTaskCancellationTests : IAsyncDisposable
             processorLogger,
             taskPersistenceService,
             new PreprocessedInputCache(),
-            Substitute.For<IQuietHoursGate>(),
-            TimeProvider.System
+            Substitute.For<IQuietHoursGate>()
         );
         var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
             taskQueue,

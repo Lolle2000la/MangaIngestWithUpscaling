@@ -1,6 +1,6 @@
 # Quiet Hours
 
-Quiet hours are a configurable local-wall-clock window during which a host **stops starting new
+Quiet hours are a configurable local-wall-clock schedule during which a host **stops starting new
 upscaling work**. Work that has already been claimed keeps running and finishes normally — nothing is
 interrupted, cancelled or requeued.
 
@@ -8,7 +8,7 @@ Only the upscaling pipeline is paused. Ingest, chapter analysis, split detection
 rest of the standard background queue keep running as usual: quiet hours exist to stop the expensive
 GPU/CPU inference, not to make the application inert overnight.
 
-The window is configured per host and there are two independent instances of it:
+The schedule is configured per host and there are two independent instances of it:
 
 | Half | Configured in | What pauses |
 | --- | --- | --- |
@@ -23,44 +23,106 @@ keeps upscaling.
 
 Each worker decides for itself: two workers may have different windows, or none at all.
 
+The tasks page (`/tasks`) shows a *Quiet hours — paused until 06:00* badge while the server's own
+window is open, so a queue that is not moving is explained rather than mysterious.
+
+## Schedule shapes
+
+The daily window is the simple form, and it stays two keys:
+
+```json
+"QuietHours": { "Enabled": true, "Start": "22:00", "End": "06:00" }
+```
+
+Several windows at once, for example a night window every day plus a longer break at the weekend:
+
+```json
+"QuietHours": {
+  "Enabled": true,
+  "TimeZone": "Europe/Berlin",
+  "Windows": [
+    { "Start": "22:00", "End": "06:00" },
+    { "Start": "12:00", "End": "13:00", "Days": ["Saturday", "Sunday"] }
+  ]
+}
+```
+
+Per-weekday scheduling is `Days` on a window, and it composes with the wrap rule below:
+
+```json
+"QuietHours": {
+  "Enabled": true,
+  "Windows": [
+    { "Start": "22:00", "End": "06:00", "Days": ["Friday", "Saturday"] }
+  ]
+}
+```
+
+`Start`/`End` and `Windows` are alternatives: setting both is rejected, and so is setting only one
+half of the daily pair. Windows may overlap — they combine as a union — and an empty `Days` list means
+every day.
+
 ## Semantics
 
-- The window is `[Start, End)` — `Start` is inclusive, `End` is exclusive.
-- Times are the **local wall-clock time of the host that owns the setting** (the server for its local
-  upscale processor, the worker for its own fetching loop). They are not UTC.
+- Every window is `[Start, End)` — `Start` is inclusive, `End` is exclusive.
+- Times are local wall-clock times in the host's own zone, or in `TimeZone` when it is set (below).
 - When `End` is earlier than `Start` the window **wraps past midnight**, which is the common case:
   `22:00 → 06:00` pauses from 22:00 until 06:00 the next morning.
+- **A wrapping window belongs to the day it starts on.** `22:00 → 06:00` with
+  `"Days": ["Friday"]` covers Friday 22:00–24:00 *and* Saturday 00:00–06:00. It does not cover
+  Saturday evening, and it does not cover Saturday morning under a window that starts on Saturday.
+  A non-wrapping window has no such spill: `09:00 → 17:00` on `["Friday"]` is Friday only.
 - Only *starting* new upscaling work is delayed. An upscale that is already `Processing` (locally, or
   streamed by a worker) is untouched and completes. The pause is checked between tasks, never during
   one.
-- When the window ends, the paused host resumes claiming on its own; no restart or manual action is
-  needed.
+- When the schedule opens again, the paused host resumes claiming on its own; no restart or manual
+  action is needed.
 - An upscale task enqueued during the window simply waits. It is not dropped, cancelled or reordered.
+- Daylight saving follows the wall clock, not the elapsed time: a window is read as the configured
+  hours on each side of a transition. A window that falls in a spring-forward gap is honoured as
+  configured (the skipped hour simply does not exist that day); nothing special-cases it.
+
+## Time zone
+
+```json
+"QuietHours": { "Enabled": true, "TimeZone": "Europe/Berlin", "Start": "22:00", "End": "06:00" }
+```
+
+`TimeZone` takes an IANA id (`Europe/Berlin`, `Asia/Tokyo`) or a Windows id (`W. Europe Standard
+Time`); the host resolves it with `TimeZoneInfo.FindSystemTimeZoneById`, and an id it cannot use fails
+the boot. Unset or empty means the host's own local zone.
+
+**The container trap:** a container without `TZ` set runs in UTC, so a `22:00 → 06:00` window silently
+becomes 22:00–06:00 **UTC** — it would pause during the local afternoon in Europe and never during the
+local night. Setting `TimeZone` in the configuration makes the schedule independent of the host's
+environment. A worker's zone may differ from the server's, so set it on each host (or deliberately
+rely on their local zones).
 
 ## Configuration
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `QuietHours:Enabled` | bool | `false` | Turns the window on for this host. |
-| `QuietHours:Start` | time of day | `22:00:00` | Start of the window, inclusive. |
-| `QuietHours:End` | time of day | `06:00:00` | End of the window, exclusive. May be earlier than `Start` to wrap past midnight. |
+| `QuietHours:Enabled` | bool | `false` | Turns the schedule on for this host. |
+| `QuietHours:TimeZone` | string | unset (host local) | Zone id the wall clock is read in. |
+| `QuietHours:Start` | time of day | unset | Start of the daily window, inclusive. Requires `End`. |
+| `QuietHours:End` | time of day | unset | End of the daily window, exclusive. Requires `Start`; earlier than `Start` wraps past midnight. |
+| `QuietHours:Windows` | list | empty | Explicit windows, each with `Start`, `End` and optional `Days`. |
 
-Both boundaries are `TimeSpan`s, so they are written as a time of day (`22:00`, `22:00:00`) or with
-environment variables as `Ingest_QuietHours__Start=22:00`. The `Ingest_`-prefixed environment form is
-the recommended route for Docker deployments and works in both hosts.
+Every time of day is a `TimeSpan`, so it is written as `22:00` or `22:00:00`. With environment
+variables the same settings are `Ingest_QuietHours__Enabled`, `Ingest_QuietHours__Start`,
+`Ingest_QuietHours__End`, `Ingest_QuietHours__TimeZone`, `Ingest_QuietHours__Windows__0__Start`, … —
+the recommended route for Docker deployments, and they work in both hosts.
 
 ```json
 {
   "QuietHours": {
     "Enabled": true,
+    "TimeZone": "Europe/Berlin",
     "Start": "22:00",
     "End": "06:00"
   }
 }
 ```
-
-The equivalent environment variables are `Ingest_QuietHours__Enabled`,
-`Ingest_QuietHours__Start` and `Ingest_QuietHours__End`.
 
 With no `QuietHours` section at all, every host behaves exactly as it does without this feature.
 
@@ -69,15 +131,17 @@ With no `QuietHours` section at all, every host behaves exactly as it does witho
 Configuration is validated at startup, so a mistake fails the boot instead of silently leaving the
 upscale queue running (or paused) at the wrong hour:
 
-- `Start` or `End` outside `[00:00, 24:00)` fails, and names the key that is wrong. This is checked even
-  when `Enabled` is `false`, because an out-of-range value is a typo waiting to be enabled.
-- `Enabled = true` with `Start == End` fails: a zero-length window is ambiguous. Set
-  `Enabled = false` to turn the feature off.
-- `Enabled = false` with `Start == End` is valid (the values are inert).
+- `Start` or `End` outside `[00:00, 24:00)` fails, naming the key — for the daily pair and for every
+  window (`QuietHours:Windows[1].End`), even when `Enabled` is `false`. The same goes for a
+  zero-length window, which can never be active.
+- `Start` without `End` (or the reverse) fails: the pair is one window.
+- Setting both `Start`/`End` **and** a non-empty `Windows` list fails: specify one shape or the other.
+- `Enabled` with no window at all fails: an enabled-but-inert schedule is a configuration bug.
+- An unreadable `TimeZone` fails, echoing the id and the resolver's message.
 
 ## Logging
 
-A host logs one `Information` line when it enters the window —
+A host logs one `Information` line when it enters the schedule —
 
 ```
 Task claiming paused by quiet hours until 06:00
@@ -85,10 +149,3 @@ Task claiming paused by quiet hours until 06:00
 
 — and one when it leaves it (`Task claiming resumed`). The lines are emitted once per pause episode,
 not per poll, so a six-hour window produces two lines, not thousands.
-
-## Note on time zones
-
-The window is read from each host's own local clock, so **a worker's window is in the worker's
-time zone**, which may differ from the server's (for example a container that runs with `TZ=UTC`
-while the server runs in `Europe/Berlin`). Set the same zone on both hosts, or configure the windows
-with that difference in mind.

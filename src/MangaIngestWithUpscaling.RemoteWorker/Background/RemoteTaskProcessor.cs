@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Threading.Channels;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
@@ -373,12 +374,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         if (!_quietHoursPaused)
         {
             _quietHoursPaused = true;
-            var timeProvider = scope.ServiceProvider.GetRequiredService<TimeProvider>();
             scope
                 .ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>()
                 .LogInformation(
-                    "Task claiming paused by quiet hours until {ResumeTime:HH:mm}",
-                    timeProvider.GetLocalNow() + (quietHours.TimeUntilResume ?? TimeSpan.Zero)
+                    "Task claiming paused by quiet hours until {ResumeTime}",
+                    quietHours.ResumeAtLocal?.ToString("HH:mm", CultureInfo.InvariantCulture)
                 );
         }
 
