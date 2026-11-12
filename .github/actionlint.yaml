@@ -1,0 +1,11 @@
+# actionlint validates `runs-on:` against the list of GitHub-hosted runner labels compiled into the
+# binary it ships, so it only knows the labels that existed when that release was cut. The arm64
+# container jobs here run on ubuntu-26.04-arm, which GitHub made generally available on 2026-09-17 —
+# after the newest actionlint release (v1.7.12, 2026-03-30) — so it is reported as an unknown label.
+#
+# `self-hosted-runner.labels` is actionlint's documented list of extra labels to accept; the section
+# name is the only hook it offers for this and does not imply the runner is self-hosted. Remove the
+# entry once a published actionlint version knows the label itself.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04-arm
