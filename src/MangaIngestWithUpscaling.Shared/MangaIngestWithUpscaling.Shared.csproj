@@ -10,7 +10,7 @@
          still fall back to WebGPU. An unknown value fails the build with the list of valid ones
          rather than silently producing a build with no runtime package in it. -->
     <OnnxRuntimeFlavor Condition="'$(OnnxRuntimeFlavor)' == ''">Cpu</OnnxRuntimeFlavor>
-    <OnnxRuntimeVersion Condition="'$(OnnxRuntimeVersion)' == ''">1.31.0</OnnxRuntimeVersion>
+    <OnnxRuntimeVersion Condition="'$(OnnxRuntimeVersion)' == ''">1.31.1</OnnxRuntimeVersion>
   </PropertyGroup>
 
   <Target Name="ValidateOnnxRuntimeFlavor" BeforeTargets="Restore;Build">
