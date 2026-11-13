@@ -19,7 +19,7 @@
     <PackageReference Include="xunit.v3" Version="4.0.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageReference Include="NSubstitute" Version="6.2.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />
     <PackageReference Include="Grpc.AspNetCore.Server.ClientFactory" Version="2.85.0" />
   </ItemGroup>
   <ItemGroup>

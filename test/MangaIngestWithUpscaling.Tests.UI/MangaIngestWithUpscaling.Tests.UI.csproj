@@ -29,8 +29,8 @@
     <PackageReference Include="NSubstitute" Version="6.2.0" />
     <!-- Microsoft.Extensions.Http.Resilience 10.11.0 was built against the 10.0.13 line and pulls
          these transitively at 10.0.13; pin them to the line the rest of this graph uses. -->
-    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
-    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.2" />
