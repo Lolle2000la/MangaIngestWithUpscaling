@@ -21,11 +21,11 @@
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Postgres\MangaIngestWithUpscaling.Data.Postgres.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="System.CommandLine" Version="2.0.14" />
+    <PackageReference Include="System.CommandLine" Version="2.0.15" />
     <!-- Microsoft.Extensions.Http.Resilience/Telemetry 10.11.0 were built against the 10.0.13 line and
          pull these transitively at 10.0.13; pin them to the line the rest of this graph uses. -->
-    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
-    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.14" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.15" />
   </ItemGroup>
 </Project>
