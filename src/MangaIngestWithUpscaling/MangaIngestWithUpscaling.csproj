@@ -59,7 +59,7 @@
     />
     <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
     <PackageReference Include="MudBlazor" Version="9.12.0" />
-    <PackageReference Include="MudBlazor.Translations" Version="3.6.0" />
+    <PackageReference Include="MudBlazor.Translations" Version="3.7.0" />
     <PackageReference Include="Open.ChannelExtensions" Version="10.0.0" />
     <PackageReference Include="PinguApps.Blazor.QRCode" Version="1.1.5" />
     <PackageReference Include="ReactiveUI" Version="26.0.1" />
